@@ -3,7 +3,7 @@
 # in an isolated game dir, with the chosen graphics backend. Prints the log path; find the PID afterwards
 # with:  powershell "Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | ? CommandLine -like '*sf-mc-game*'"
 #
-# usage: ./run-vanilla-mc.sh opengl|vulkan
+# usage: ./run-vanilla-mc.sh opengl|vulkan [extra game args, e.g. --quickPlaySingleplayer SFTest]
 set -euo pipefail
 # Asset index "34" does not exist, so the game runs without sounds/translations (irrelevant for embedding).
 BACKEND="${1:-opengl}"
@@ -31,7 +31,7 @@ mkdir -p "$GD"
 # backend to default once. On this machine some starts died with exit 139 right after "Reloading ResourceManager",
 # with or without the PoC host attached. Check the log for "Using graphics backend ..." before testing.
 if [ -f "$GD/options.txt" ] && grep -q '^version:' "$GD/options.txt"; then
-  sed -i "s/^preferredGraphicsBackend:.*/preferredGraphicsBackend:\"$BACKEND\"/; s/^pauseOnLostFocus:.*/pauseOnLostFocus:false/" "$GD/options.txt"
+  sed -i "s/^preferredGraphicsBackend:.*/preferredGraphicsBackend:\"$BACKEND\"/; s/^pauseOnLostFocus:.*/pauseOnLostFocus:${SF_PAUSE_ON_LOST_FOCUS:-true}/" "$GD/options.txt"
 else
   echo "no game-written options.txt yet: this first run uses the default backend; close the game and run again" >&2
 fi
@@ -40,4 +40,4 @@ echo "log: $LOG"
 cd "${TEMP:-/tmp}"   # log4j writes logs/ relative to the working directory
 exec "$JAVA" -Xmx2G --enable-native-access=ALL-UNNAMED -cp "$CP" net.minecraft.client.main.Main \
   --version 26.3 --gameDir "$(cygpath -w "$GD")" --assetsDir "$(cygpath -w "$LOOM/assets")" \
-  --assetIndex "${SF_ASSET_INDEX:-34}" --accessToken 0 --username SFDev --width 854 --height 480 > "$LOG" 2>&1
+  --assetIndex "${SF_ASSET_INDEX:-34}" --accessToken 0 --username SFDev --width 854 --height 480 "${@:2}" > "$LOG" 2>&1

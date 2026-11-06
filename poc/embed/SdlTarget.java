@@ -10,6 +10,8 @@ import static org.lwjgl.sdl.SDLEvents.*;
 import static org.lwjgl.sdl.SDLInit.*;
 import static org.lwjgl.sdl.SDLKeycode.*;
 import static org.lwjgl.sdl.SDLMouse.SDL_SetWindowRelativeMouseMode;
+import static org.lwjgl.sdl.SDLMouse.SDL_GetMouseFocus;
+import static org.lwjgl.sdl.SDLKeyboard.SDL_GetKeyboardFocus;
 import static org.lwjgl.sdl.SDLProperties.SDL_GetPointerProperty;
 import static org.lwjgl.sdl.SDLVideo.*;
 
@@ -74,7 +76,7 @@ public class SdlTarget {
                     } else if (t == SDL_EVENT_WINDOW_FOCUS_GAINED) out("EVT focus gained");
                     else if (t == SDL_EVENT_WINDOW_FOCUS_LOST) out("EVT focus lost");
                     else if (t == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-                        out("EVT mouse down");
+                        out("EVT mouse down win=" + ev.button().windowID() + " self=" + SDL_GetWindowID(win) + " kbFocus=" + (SDL_GetKeyboardFocus() == win) + " mouseFocus=" + (SDL_GetMouseFocus() == win));
                         // A WS_CHILD window does not take keyboard focus on click by itself. This is the one-line
                         // hook the real mod needs: when embedded, grab focus on click (works because SetParent
                         // attached our input queue to the host's).
@@ -85,7 +87,7 @@ public class SdlTarget {
                     }
                     else if (t == SDL_EVENT_KEY_DOWN) {
                         int k = ev.key().key();
-                        out("EVT key " + k);
+                        out("EVT key " + k + " win=" + ev.key().windowID() + " self=" + SDL_GetWindowID(win) + " kbFocus=" + (SDL_GetKeyboardFocus() == win));
                         if (k == SDLK_S) stallRequestMs = 3000;
                         else if (k == SDLK_G) out("GRAB " + SDL_SetWindowRelativeMouseMode(win, true));
                         else if (k == SDLK_ESCAPE) out("UNGRAB " + SDL_SetWindowRelativeMouseMode(win, false));

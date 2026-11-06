@@ -45,6 +45,7 @@ public class EmbedHost {
     volatile Mode mode;
     final List<String> targetLog = new CopyOnWriteArrayList<>();
     final EdtWatch edtWatch = new EdtWatch();
+    final Throttler throttler = new Throttler(this::log, 5000);
     javax.swing.Timer overlayTimer;
 
     public static void main(String[] args) throws Exception {
@@ -58,6 +59,9 @@ public class EmbedHost {
             long pid = a.contains("--attach") ? Long.parseLong(a.get(a.indexOf("--attach") + 1)) : 0;
             int code = new SelfTest(host, a.contains("--robot"), pid).run();
             System.exit(code);
+        } else if (a.contains("--throttle-probe")) {
+            long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
+            System.exit(new ThrottleProbe(host, pid).run());
         } else if (a.contains("--snapshot")) {
             // embed, let it render, save a screenshot of the whole host window, detach, exit
             long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
@@ -97,6 +101,7 @@ public class EmbedHost {
             if (s != null && !s.isBlank()) attachPid(Long.parseLong(s.trim()), Mode.REPARENT);
         }));
         buttons.add(button("Detach", this::detach));
+        buttons.add(button("Hide/show viewport", () -> setViewportHidden(throttler.state() != Throttler.State.HIDDEN)));
         buttons.add(button("Stall target 3s", () -> sendToTarget("stall 3000")));
         buttons.add(button("Sync resize (blocking)", () -> timedResize(false)));
         buttons.add(status);
@@ -111,6 +116,9 @@ public class EmbedHost {
         frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         frame.addWindowListener(new WindowAdapter() {
             @Override public void windowClosed(WindowEvent e) { shutdown(); System.exit(0); }
+            // IDE minimized = viewport not visible
+            @Override public void windowIconified(WindowEvent e) { setViewportHidden(true); }
+            @Override public void windowDeiconified(WindowEvent e) { setViewportHidden(false); }
         });
         viewport.addComponentListener(new ComponentAdapter() {
             @Override public void componentResized(ComponentEvent e) { syncBounds(); }
@@ -167,13 +175,14 @@ public class EmbedHost {
      */
     private final ExecutorService focusHelper = Executors.newSingleThreadExecutor(r -> Thread.ofPlatform().daemon().name("sf-focus").unstarted(r));
 
-    private void focusGameFromHelper(long g) {
+    void focusGameFromHelper(long g) {
         Win32.ensureGuiThread();
         int me = Win32.currentThreadId(), gameTid = Win32.threadIdOf(g);
         boolean attached = Win32.attachThreadInput(me, gameTid, true);
         try {
             long prev = Win32.setFocus(g);
             log("[host] click in game -> SetFocus(game) attached=" + attached + " prev=" + Win32.hex(prev) + " now=" + Win32.hex(Win32.getFocus()));
+            if (Win32.getFocus() == g) throttler.onGameFocused();
         } finally {
             if (attached) Win32.attachThreadInput(me, gameTid, false);
         }
@@ -209,6 +218,7 @@ public class EmbedHost {
             if (!(e.getSource() instanceof Component c) || c == viewport) return;
             KeyboardFocusManager.getCurrentKeyboardFocusManager().clearGlobalFocusOwner();
             c.requestFocus(FocusEvent.Cause.MOUSE_EVENT);
+            throttler.onEditorFocused();
         }, AWTEvent.MOUSE_EVENT_MASK);
     }
 
@@ -369,6 +379,7 @@ public class EmbedHost {
             long prev = Win32.setParent(hwnd, canvas);
             log("[host] REPARENT: SetParent -> prev parent " + Win32.hex(prev) + ", now " + Win32.hex(Win32.getAncestor(hwnd, Win32.GA_PARENT))
                     + " (canvas " + Win32.hex(canvas) + ")");
+            throttler.bind(hwnd, targetPid);
             if (hostClickToFocus) installClickToFocus(canvas);
         } else {
             // borderless popup, owned by the host frame (owned windows stay above their owner and minimize with it)
@@ -419,6 +430,8 @@ public class EmbedHost {
         if (h == 0) return;
         if (overlayTimer != null) { overlayTimer.stop(); overlayTimer = null; }
         removeClickToFocus();
+        throttler.onViewportShown();   // never hand back a minimized game with tightened GC flags
+        throttler.bind(0, 0);
         if (Win32.isWindow(h)) {
             if (mode == Mode.REPARENT) Win32.setParent(h, 0);
             else Win32.setLongPtr(h, Win32.GWLP_HWNDPARENT, 0);
@@ -432,7 +445,15 @@ public class EmbedHost {
         viewport.repaint();
     }
 
+    /** Stand-in for the IntelliJ tool window being hidden/shown (ToolWindowManagerListener in the real plugin). */
+    void setViewportHidden(boolean hidden) {
+        if (target == 0 || mode != Mode.REPARENT) return;
+        if (hidden) throttler.onViewportHidden();
+        else { throttler.onViewportShown(); syncBounds(Win32.SWP_SHOWWINDOW); }
+    }
+
     void shutdown() {
+        throttler.shutdown();
         detach();
         if (targetProc != null && targetProc.isAlive()) {
             sendToTarget("quit");

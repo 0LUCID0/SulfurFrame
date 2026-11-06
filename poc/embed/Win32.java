@@ -83,6 +83,21 @@ final class Win32 {
      * Closer to a real stall (world load, long frame) than freezing the whole process, and it also works while
      * the window is embedded (NtSuspendProcess returned status 1 in that state).
      */
+    private static final MethodHandle
+            OpenProcess = L.downcallHandle(K32.find("OpenProcess").orElseThrow(), FunctionDescriptor.of(JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT)),
+            EmptyWorkingSet = L.downcallHandle(K32.find("K32EmptyWorkingSet").orElseThrow(), FunctionDescriptor.of(JAVA_INT, JAVA_LONG));
+
+    /** Move all of a process's pages out of its working set (to standby/pagefile): physical RAM is free immediately. */
+    static boolean emptyWorkingSet(long pid) {
+        final int PROCESS_QUERY_INFORMATION = 0x0400, PROCESS_SET_QUOTA = 0x0100;
+        try {
+            long h = (long) OpenProcess.invokeExact(PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA, 0, (int) pid);
+            if (h == 0) return false;
+            try { return (int) EmptyWorkingSet.invokeExact(h) != 0; }
+            finally { int c = (int) CloseHandle.invokeExact(h); }
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
     static void suspendWindowThreadFor(long hwnd, long ms) {
         final int THREAD_SUSPEND_RESUME = 0x0002;
         int tid = threadIdOf(hwnd);
@@ -105,6 +120,24 @@ final class Win32 {
     static final FunctionDescriptor WNDPROC = FunctionDescriptor.of(JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG);
     private static final MethodHandle CallWindowProcW =
             fn("CallWindowProcW", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG);
+
+    static final int SW_HIDE = 0, SW_SHOWNOACTIVATE = 4, SW_MINIMIZE = 6, SW_SHOWMINNOACTIVE = 7, SW_RESTORE = 9;
+    private static final MethodHandle ShowWindow = fn("ShowWindowAsync", JAVA_INT, JAVA_LONG, JAVA_INT),   // async: never wait on the game thread
+            IsIconic = fn("IsIconic", JAVA_INT, JAVA_LONG);
+
+    static boolean showWindow(long h, int cmd) { try { return (int) ShowWindow.invokeExact(h, cmd) != 0; } catch (Throwable t) { throw rethrow(t); } }
+    static boolean isIconic(long h) { try { return (int) IsIconic.invokeExact(h) != 0; } catch (Throwable t) { throw rethrow(t); } }
+
+    private static final MethodHandle GetClipCursor = fn("GetClipCursor", JAVA_INT, ADDRESS);
+
+    /** Current cursor clip rectangle (the whole virtual screen when nothing has grabbed the mouse). */
+    static Rect clipCursor() {
+        try (var a = Arena.ofConfined()) {
+            var r = a.allocate(16);
+            int ok = (int) GetClipCursor.invokeExact(r);
+            return ok == 0 ? null : new Rect(r.get(JAVA_INT, 0), r.get(JAVA_INT, 4), r.get(JAVA_INT, 8), r.get(JAVA_INT, 12));
+        } catch (Throwable t) { throw rethrow(t); }
+    }
 
     static final int WM_APP = 0x8000;
     private static final MethodHandle PostMessageW = fn("PostMessageW", JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG);
