@@ -1,0 +1,11 @@
+# build / IDE
+out/
+build/
+.gradle/
+.idea/
+*.iml
+*.class
+
+# Minecraft / JVM runtime leftovers (the PoC runs the game outside this folder, but just in case)
+logs/
+hs_err_pid*.log
