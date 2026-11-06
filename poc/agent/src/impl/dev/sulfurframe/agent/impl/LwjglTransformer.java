@@ -42,9 +42,9 @@ public final class LwjglTransformer implements ClassFileTransformer {
                     Where.ENTRY, "beforeSdlSwap", "(J)V", new int[]{0}, new int[]{Opcodes.LLOAD}),
             new Patch("org/lwjgl/vulkan/KHRSwapchain", "vkQueuePresentKHR", "(Lorg/lwjgl/vulkan/VkQueue;Lorg/lwjgl/vulkan/VkPresentInfoKHR;)I",
                     Where.ENTRY, "beforeVkPresent", "()V", new int[0], new int[0]),
-            // LWJGL 2 (Minecraft 1.12.2 and older): focus + frame presentation
-            new Patch("org/lwjgl/opengl/Display", "isActive", "()Z",
-                    Where.BEFORE_RETURN, "lwjgl2IsActive", "(Z)Z", new int[0], new int[0]),
+            // LWJGL 2 (Minecraft 1.12.2 and older): frame presentation. Focus needs no patch there: LWJGL 2 tracks
+            // WM_SETFOCUS/WM_KILLFOCUS itself, so Display.isActive() is right for a child window (verified on 1.12.2).
+            // Display.update() delegates to update(true).
             new Patch("org/lwjgl/opengl/Display", "update", "(Z)V",
                     Where.ENTRY, "beforeLwjgl2Update", "()V", new int[0], new int[0]));
 

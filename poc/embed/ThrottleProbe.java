@@ -36,6 +36,9 @@ final class ThrottleProbe {
     private final long pid;
     private final List<Sample> samples = new ArrayList<>();
     static final int MEASURE_S = 8, SETTLE_MS = 4000;
+    /** "Back to Game" in the pause menu, as viewport fractions. Layout differs per version: SF_BTG_X / SF_BTG_Y. */
+    static final double BTG_X = Double.parseDouble(System.getenv().getOrDefault("SF_BTG_X", "0.5")),
+            BTG_Y = Double.parseDouble(System.getenv().getOrDefault("SF_BTG_Y", String.valueOf(155.0 / 480)));
 
     ThrottleProbe(EmbedHost host, long pid) { this.host = host; this.pid = pid; }
 
@@ -56,7 +59,7 @@ final class ThrottleProbe {
         var r = new Robot();
         host.log("[probe] before clicks: focus=" + Win32.hex(Win32.foregroundFocus()) + " clip=" + Win32.clipCursor());
         for (int i = 0; i < 3 && !grabbed(); i++) {
-            clickViewport(r, 0.5, 155.0 / 480);
+            clickViewport(r, BTG_X, BTG_Y);
             EmbedHost.sleep(700);
             host.log("[probe] click " + (i + 1) + ": focus=" + Win32.hex(Win32.foregroundFocus()) + " (game " + Win32.hex(host.target)
                     + ") clip=" + Win32.clipCursor() + " grabbed=" + grabbed());

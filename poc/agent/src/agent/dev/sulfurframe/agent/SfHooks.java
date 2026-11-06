@@ -10,7 +10,7 @@ import java.lang.reflect.Method;
  * Focus ("is the game, not the editor, receiving keys?") comes from:
  *   GLFW      glfwGetWindowAttrib(window, GLFW_FOCUSED): GLFW tracks WM_SETFOCUS, correct for a child window
  *   SDL3      Win32 GetFocus() through LWJGL's JNI invokers: SDL itself never reports focus for a child window
- *   LWJGL 2   not implemented yet (original value is kept)
+ *   LWJGL 2   Display.isActive(): LWJGL 2 tracks WM_SETFOCUS itself, correct for a child window
  */
 public final class SfHooks {
     static volatile int codingFps = 15;
@@ -35,6 +35,10 @@ public final class SfHooks {
     private static Method jniInvokeP, jniInvokePPI, jniInvokeI;
     private static long fnGetFocus, fnGetWindowThreadProcessId, fnGetCurrentThreadId;
     private static boolean win32Tried;
+
+    // ---- LWJGL 2
+    private static volatile boolean lwjgl2;
+    private static Method displayIsActive;
 
     // ---- frame pacing
     private static long lastPresent;
@@ -82,9 +86,8 @@ public final class SfHooks {
 
     public static void beforeVkPresent() { pace(); }
 
-    public static boolean lwjgl2IsActive(boolean original) { return original; }   // TODO LWJGL 2 focus source
-
-    public static void beforeLwjgl2Update() { }                                       // TODO LWJGL 2 pacing
+    /** Display.update(boolean): LWJGL 2 presents the frame here. */
+    public static void beforeLwjgl2Update() { lwjgl2 = true; pace(); }
 
     // =================================================================== focus
 
@@ -98,10 +101,18 @@ public final class SfHooks {
             // GLFW's own GLFW_FOCUSED attribute compares against GetActiveWindow(), which is never a child window,
             // so it reads "unfocused" forever once embedded. Win32 focus by thread is right for GLFW and SDL alike.
             if (glfwWindow != 0 || sdlWindow != 0) f = win32ThreadHasFocus();
+            else if (lwjgl2) f = lwjgl2Active();
         } catch (Throwable ignored) {
         }
         focusCached = f;
         return f;
+    }
+
+    /** LWJGL 2's own focus flag (updated from WM_SETFOCUS/WM_KILLFOCUS, so it is right for a child window). */
+    private static boolean lwjgl2Active() throws Exception {
+        if (displayIsActive == null)
+            displayIsActive = Class.forName("org.lwjgl.opengl.Display", false, loader()).getMethod("isActive");
+        return (Boolean) displayIsActive.invoke(null);
     }
 
     private static boolean glfwFocused() throws Exception {

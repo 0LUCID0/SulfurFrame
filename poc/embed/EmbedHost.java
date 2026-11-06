@@ -64,7 +64,9 @@ public class EmbedHost {
             System.exit(code);
         } else if (a.contains("--input-check")) {
             long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
-            System.exit(detachOnFailure(host, () -> a.contains("--create-world") ? new InputCheck(host, pid).createWorld() : new InputCheck(host, pid).run()));
+            System.exit(detachOnFailure(host, () -> a.contains("--create-world") ? new InputCheck(host, pid).createWorld()
+                    : a.contains("--esc-resize") ? new InputCheck(host, pid).escAndResize()
+                    : a.contains("--open-world") ? new InputCheck(host, pid).openFirstWorld() : new InputCheck(host, pid).run()));
         } else if (a.contains("--throttle-probe")) {
             long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
             System.exit(detachOnFailure(host, () -> new ThrottleProbe(host, pid).run()));
@@ -370,6 +372,11 @@ public class EmbedHost {
             var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(pid));
             try { vm.loadAgent(agentJar.toString(), agentArgs); } finally { vm.detach(); }
             log("[host] agent loaded into " + pid + " (" + agentJar.getFileName() + " " + agentArgs + ")");
+        } catch (com.sun.tools.attach.AgentLoadException e) {
+            // A Java 8 target answers the attach request in the old format: a newer JDK's client reports
+            // "Failed to load agent library: 0" although the agent was loaded fine (seen on 1.12.2/Java 8).
+            if (String.valueOf(e.getMessage()).endsWith(": 0")) log("[host] agent loaded into " + pid + " (Java 8 target; attach reply format quirk)");
+            else log("[host] agent load into " + pid + " failed: " + e);
         } catch (Exception e) {
             // already loaded is fine (premain or an earlier attach); anything else: log and carry on unpatched
             log("[host] agent load into " + pid + " failed: " + e);
@@ -426,6 +433,12 @@ public class EmbedHost {
             overlayTimer = new javax.swing.Timer(50, e -> syncBounds());   // catches moves the listeners miss
             overlayTimer.start();
         }
+        // If the client size happens to match already, no WM_SIZE is sent and some games (seen on 1.16.5) keep a stale
+        // framebuffer/GUI size, which also misplaces every click. Nudge the size by one pixel so a resize always lands.
+        var cr = Win32.clientRect(viewportHwnd());
+        if (cr != null && m == Mode.REPARENT)
+            Win32.setWindowPos(hwnd, 0, 0, 0, Math.max(1, cr.width() - 1), Math.max(1, cr.height() - 1),
+                    Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE | Win32.SWP_ASYNCWINDOWPOS);
         syncBounds(Win32.SWP_FRAMECHANGED | Win32.SWP_SHOWWINDOW);
     }
 
