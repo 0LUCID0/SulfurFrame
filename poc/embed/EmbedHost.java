@@ -52,6 +52,7 @@ public class EmbedHost {
         var a = List.of(args);
         var host = new EmbedHost();
         host.hostClickToFocus = !a.contains("--no-host-focus");
+        if (a.contains("--agent")) host.agentJar = Path.of(a.get(a.indexOf("--agent") + 1)).toAbsolutePath();
         SwingUtilities.invokeAndWait(host::buildUi);
         host.edtWatch.start();
         host.startHangWatchdog();
@@ -341,7 +342,24 @@ public class EmbedHost {
         });
     }
 
+    volatile Path agentJar;   // --agent: SulfurFrame javaagent to load into the game (fixes SDL keyboard focus)
+    String agentArgs = "codingFps=15";
+
+    /** Load the javaagent into a running game JVM via the Attach API (no restart; the agent retransforms). */
+    void injectAgent(long pid) {
+        if (agentJar == null) return;
+        try {
+            var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(pid));
+            try { vm.loadAgent(agentJar.toString(), agentArgs); } finally { vm.detach(); }
+            log("[host] agent loaded into " + pid + " (" + agentJar.getFileName() + " " + agentArgs + ")");
+        } catch (Exception e) {
+            // already loaded is fine (premain or an earlier attach); anything else: log and carry on unpatched
+            log("[host] agent load into " + pid + " failed: " + e);
+        }
+    }
+
     void attachPid(long pid, Mode m) {
+        injectAgent(pid);
         long h = 0;
         for (int i = 0; i < 100 && h == 0; i++) {
             h = Win32.findMainWindowOfProcess(pid);

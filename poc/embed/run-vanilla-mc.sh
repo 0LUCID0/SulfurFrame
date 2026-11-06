@@ -38,6 +38,9 @@ fi
 
 echo "log: $LOG"
 cd "${TEMP:-/tmp}"   # log4j writes logs/ relative to the working directory
-exec "$JAVA" -Xmx2G --enable-native-access=ALL-UNNAMED -cp "$CP" net.minecraft.client.main.Main \
+AGENT_ARGS=()
+# SF_AGENT=/path/to/sf-agent.jar loads the SulfurFrame javaagent at startup (otherwise the host can attach it later)
+[ -n "${SF_AGENT:-}" ] && AGENT_ARGS=("-javaagent:$(cygpath -w "$SF_AGENT")=codingFps=${SF_CODING_FPS:-15}")
+exec "$JAVA" -Xmx2G --enable-native-access=ALL-UNNAMED "${AGENT_ARGS[@]}" -cp "$CP" net.minecraft.client.main.Main \
   --version 26.3 --gameDir "$(cygpath -w "$GD")" --assetsDir "$(cygpath -w "$LOOM/assets")" \
   --assetIndex "${SF_ASSET_INDEX:-34}" --accessToken 0 --username SFDev --width 854 --height 480 "${@:2}" > "$LOG" 2>&1

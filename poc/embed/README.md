@@ -167,3 +167,35 @@ SDL 이벤트를 직접 찍어 보니(`SdlTarget` 로그):
 - 일시정지 메뉴만 떠 있어도 CPU를 한 코어의 2/3쯤 씁니다(메뉴 뒤 월드를 계속 그리므로). CODING 상태에서 FPS를 낮추는 건
   바닐라만으로는 안 되고, 위의 게임 쪽 패치가 있으면 같이 할 수 있습니다.
 - 마인크래프트가 시작 중 `0xC0000005`로 죽는 현상은 이번에도 3번 중 2번 일어났습니다(원인 미확인).
+
+## 해결: SulfurFrame javaagent (`poc/agent`, 2026-11-07)
+
+`./poc/agent/build.sh`로 `sf-agent.jar`를 만듭니다. JDK 25만 있으면 되고, JDK의 Class-File API를 써서 ASM이나 Gradle은 필요 없습니다.
+마인크래프트 메서드 세 개에 대해 "리턴 직전에 훅 호출 하나 끼우기"만 합니다.
+
+| 패치 위치 | 훅 | 하는 일 |
+|---|---|---|
+| `Window.isFocused()` (`Minecraft.isWindowActive()`도 사용) | `SfHooks.focused` | Win32 `GetFocus()`가 이 프로세스의 창이면 포커스로 봄. SetParent로 입력 큐가 묶여 있어서 에디터에 포커스가 있으면 "남의 창"으로 보임 |
+| `SDLEventHandler.getWindowHandle(event)` | `SfHooks.windowHandle` | SDL이 windowID 0으로 보낸 키 이벤트를 게임 창의 것으로 받음 |
+| `FramerateLimitTracker.getFramerateLimit()` | `SfHooks.fpsLimit` | 포커스가 없으면 FPS 상한 적용 (`codingFps=15`) |
+
+- **붙이는 방법:** 호스트가 실행 중인 게임에 Attach API로 붙이고(`EmbedHost --agent poc/agent/sf-agent.jar ...`) 이미 로드된 클래스를 재변환합니다.
+  **게임 재시작이 필요 없습니다.** 시작할 때 붙이려면 `SF_AGENT=poc/agent/sf-agent.jar ./run-vanilla-mc.sh opengl`. 다만 시작 시 붙이는 경로는 아직 실행해 보지 않았습니다.
+- 두 번 붙여도 설정만 갱신하고 패치를 중복으로 넣지 않습니다.
+- 모드 로더(Fabric 등)와 상관없이 바닐라 클래스 이름 그대로 패치합니다. Fabric 환경에서는 검증하지 않았습니다.
+
+### 결과 (바닐라 26.3, GL, 월드 안, 실행 중에 에이전트 attach)
+
+- **실제 플레이 가능:** "Back to Game" 클릭 → 플레이 화면 복귀 확인(스크린샷). **E 키 → 인벤토리 열림**(키보드 입력 확인).
+  에디터를 클릭하면 일시정지 메뉴가 뜨고 저장 로그가 남습니다.
+- 에이전트를 붙인 상태에서 임베딩 셀프테스트의 REPARENT 항목은 전부 통과합니다(멈췄을 때 에디터 입력 169 ms).
+
+| 상태 | CPU (1코어 기준) | 워킹셋 | 힙 사용/확보 |
+|---|---|---|---|
+| **PLAYING (실제 플레이)** | **92~111%** | 880~1380 MB | ~530 / 632~679 MB |
+| **CODING (일시정지 + 15 FPS 상한)** | **9~10%** | 변화 없음 | 변화 없음 |
+| HIDDEN (최소화) | 5~12% | 변화 없음 | 변화 없음 |
+| HIDDEN + 회수 | - | **500 MB** | 384 / **420 MB** |
+| 복원 직후 | 11~22% | 530~570 MB | ~380 / 422~632 MB |
+
+에이전트가 없을 때 CODING은 65~72%였습니다. FPS 상한 덕분에 코딩 중 게임 CPU가 약 1/7로 줄었습니다.

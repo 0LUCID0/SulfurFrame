@@ -65,6 +65,15 @@ final class ThrottleProbe {
         snapshot("playing");
         measure("PLAYING");
 
+        // keyboard reaches the game? E opens the inventory, ESC closes it (SDL sends these with windowID 0)
+        requireGameFocus();
+        r.keyPress(KeyEvent.VK_E); r.keyRelease(KeyEvent.VK_E);
+        EmbedHost.sleep(800);
+        snapshot("inventory");
+        requireGameFocus();
+        r.keyPress(KeyEvent.VK_ESCAPE); r.keyRelease(KeyEvent.VK_ESCAPE);
+        EmbedHost.sleep(800);
+
         // CODING: editor focused -> game loses focus -> vanilla pause menu (mouse released)
         focusEditor();
         host.throttler.onEditorFocused();
