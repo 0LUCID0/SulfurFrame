@@ -108,11 +108,13 @@ final class ThrottleProbe {
     }
 
     /** Screenshot of the viewport, to check which state the game is really in. Dir: SF_SNAP_DIR or temp. */
-    void snapshot(String name) {
+    void snapshot(String name) { snapshotAs("sf-throttle-" + name); }
+
+    void snapshotAs(String file) {
         try {
             var dir = Path.of(System.getenv().getOrDefault("SF_SNAP_DIR", System.getProperty("java.io.tmpdir")));
             var b = EmbedHost.onEdt(() -> { var l = host.viewport.getLocationOnScreen(); return new Rectangle(l.x, l.y, host.viewport.getWidth(), host.viewport.getHeight()); });
-            var f = dir.resolve("sf-throttle-" + name + ".png").toFile();
+            var f = dir.resolve(file + ".png").toFile();
             javax.imageio.ImageIO.write(new Robot().createScreenCapture(b), "png", f);
             host.log("[probe] snapshot " + f);
         } catch (Exception e) {
@@ -196,7 +198,7 @@ final class ThrottleProbe {
     /** {committedMb, usedMb} from "garbage-first heap   total reserved ..., committed X K, used Y K". */
     long[] heapInfo() throws Exception {
         String out = jcmd("GC.heap_info");
-        var m = Pattern.compile("committed (\\d+)K, used (\\d+)K").matcher(out);
+        var m = Pattern.compile("(?:committed|total) (\\d+)K, used (\\d+)K").matcher(out);   // JDK 25 / JDK 21 wording
         if (m.find()) return new long[]{Long.parseLong(m.group(1)) / 1024, Long.parseLong(m.group(2)) / 1024};
         // ZGC style: "ZHeap used 123M, capacity 456M"
         var z = Pattern.compile("used (\\d+)M, capacity (\\d+)M").matcher(out);

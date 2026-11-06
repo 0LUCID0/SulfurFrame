@@ -54,15 +54,20 @@ public class EmbedHost {
         host.hostClickToFocus = !a.contains("--no-host-focus");
         if (a.contains("--agent")) host.agentJar = Path.of(a.get(a.indexOf("--agent") + 1)).toAbsolutePath();
         SwingUtilities.invokeAndWait(host::buildUi);
+        // a WS_CHILD dies with its parent: if this process goes away while embedded, the game window is destroyed
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> { try { host.detach(); } catch (Throwable ignored) {} }));
         host.edtWatch.start();
         host.startHangWatchdog();
         if (a.contains("--selftest")) {
             long pid = a.contains("--attach") ? Long.parseLong(a.get(a.indexOf("--attach") + 1)) : 0;
-            int code = new SelfTest(host, a.contains("--robot"), pid).run();
+            int code = detachOnFailure(host, () -> new SelfTest(host, a.contains("--robot"), pid).run());
             System.exit(code);
+        } else if (a.contains("--input-check")) {
+            long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
+            System.exit(detachOnFailure(host, () -> a.contains("--create-world") ? new InputCheck(host, pid).createWorld() : new InputCheck(host, pid).run()));
         } else if (a.contains("--throttle-probe")) {
             long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
-            System.exit(new ThrottleProbe(host, pid).run());
+            System.exit(detachOnFailure(host, () -> new ThrottleProbe(host, pid).run()));
         } else if (a.contains("--snapshot")) {
             // embed, let it render, save a screenshot of the whole host window, detach, exit
             long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
@@ -80,6 +85,13 @@ public class EmbedHost {
             long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
             host.attachPid(pid, a.contains("--overlay") ? Mode.OVERLAY : Mode.REPARENT);
         }
+    }
+
+    /** Run a test mode; whatever happens, give the game window back before the process exits. */
+    static int detachOnFailure(EmbedHost host, Callable<Integer> body) {
+        try { return body.call(); }
+        catch (Throwable t) { t.printStackTrace(); return 1; }
+        finally { try { onEdt(host::detach); } catch (Throwable ignored) {} }
     }
 
     // ---------------------------------------------------------------- UI
@@ -168,6 +180,7 @@ public class EmbedHost {
 
     /** Runs on the AWT toolkit thread. Must never throw (an exception in an upcall kills the JVM). */
     static final int WM_SF_FOCUS_GAME = Win32.WM_APP + 0x51;
+    static final int WM_MOUSEACTIVATE = 0x0021, MA_ACTIVATE = 1;
 
     /**
      * SetFocus(game) issued from the AWT toolkit thread "succeeds" but AWT immediately takes focus back.
@@ -197,6 +210,11 @@ public class EmbedHost {
                     // AWT reacts to the same click (activation, focus proxy) after us; do our SetFocus once it is done
                     Win32.postMessage(hwnd, WM_SF_FOCUS_GAME, 0, 0);
                 }
+            } else if (msg == WM_MOUSEACTIVATE && target != 0 && mode == Mode.REPARENT) {
+                // The game covers the whole canvas, so this came up from a click in the game window: GLFW passes
+                // WM_MOUSEACTIVATE to DefWindowProc, which forwards it to the parent. Letting AWT see it makes AWT
+                // move keyboard focus to its own frame right after the click. Activate, but keep AWT out of it.
+                return MA_ACTIVATE;
             } else if (msg == WM_SF_FOCUS_GAME) {
                 long g = target;
                 // SetFocus sends WM_SETFOCUS to the game synchronously: never do it while the game is hung,

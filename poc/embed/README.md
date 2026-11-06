@@ -199,3 +199,47 @@ SDL 이벤트를 직접 찍어 보니(`SdlTarget` 로그):
 | 복원 직후 | 11~22% | 530~570 MB | ~380 / 422~632 MB |
 
 에이전트가 없을 때 CODING은 65~72%였습니다. FPS 상한 덕분에 코딩 중 게임 CPU가 약 1/7로 줄었습니다.
+
+## 전 버전 대응: 에이전트 v2 (LWJGL 수준 패치, Java 8)
+
+앞의 에이전트 v1은 마인크래프트 클래스(`Window` 등)를 이름으로 패치했습니다. 26.x는 난독화가 없어서 되지만, 하위 버전은
+환경마다(Mojmap / Yarn / intermediary) 이름이 다르고 구조도 바뀝니다. 그래서 v2는 **리매핑되지 않고 이름이 안정적인 LWJGL 메서드만**
+패치합니다. 한 jar로 모든 버전과 로더를 커버하는 것이 목표입니다.
+
+- **Java 8 바이트코드** (major 52). Java 8~25 어디서나 로드됩니다. 게임 쪽에서는 FFM이나 Class-File API를 쓰지 않습니다.
+- **ASM 9.10.1을 jar 안의 jar(`sf-impl.jar`)에 넣고, 부모가 bootstrap인 클래스로더로 로드합니다.** Fabric·Forge·Mixin의 ASM과 충돌하지 않습니다.
+- **Win32 포커스는 LWJGL 3의 JNI 호출기(`JNI.invokeP` 등, 3.1은 `callP`)로 읽습니다.** 렌더 스레드가 소유한 창에 포커스가 있으면 게임 포커스입니다.
+
+| LWJGL 메서드 | 위치 | 하는 일 |
+|---|---|---|
+| `SDLEvents.SDL_GetWindowFromEvent` | 리턴 직전 | windowID 0 → 게임 창 (26.x 키 입력) |
+| `SDLEvents.SDL_PollEvent` | 리턴 직전 | 큐가 비었고 포커스가 바뀌었으면 `WINDOW_FOCUS_GAINED/LOST`를 만들어 넣음 (26.x 포커스·일시정지) |
+| `GLFW.glfwSwapBuffers`, `SDLVideo.SDL_GL_SwapWindow`, `KHRSwapchain.vkQueuePresentKHR` | 진입 | 포커스가 없으면 `codingFps`에 맞춰 잠깐 재움 (모든 버전) |
+| `Display.isActive`, `Display.update` (LWJGL 2) | - | 자리만 마련. 포커스 소스와 동작은 미구현 |
+
+### 버전별 결과 (같은 `sf-agent.jar`, 시작 시 `-javaagent`로 로드)
+
+| | 26.3 (SDL3, Java 25) | 1.21.1 (GLFW, Java 21) 에이전트 없음 | 1.21.1 에이전트 있음 |
+|---|---|---|---|
+| 클릭·키보드 (Back to Game, E 인벤토리) | ✅ (에이전트 필수) | ✅ | ✅ |
+| PLAYING CPU | 109% | 106% | 124% |
+| CODING CPU | **24%** | 72% | **11%** |
+| HIDDEN CPU | 9% | **72%** (1.21.1은 최소화해도 FPS를 안 낮춤) | **12%** |
+| HIDDEN + 회수 후 워킹셋 | 549 MB | 554 MB | 585 MB |
+
+### 이 단계에서 찾아서 고친 것
+- **GLFW의 `GLFW_FOCUSED` 속성은 자식 창에서 항상 false입니다**(`GetActiveWindow()`와 비교하기 때문). 포커스는 Win32 스레드 기준으로 통일했습니다.
+- **GLFW는 `WM_MOUSEACTIVATE`를 부모에게 넘깁니다.** AWT가 이걸 보면 클릭 직후 포커스를 프레임으로 가져갑니다. 캔버스 서브클래스에서
+  `MA_ACTIVATE`로 처리하고 AWT에는 넘기지 않습니다. 고치기 전에는 1.21.1에서 게임에 복귀하자마자 일시정지가 반복됐습니다.
+- **호스트가 detach 없이 죽으면 게임 창이 같이 파괴됩니다**(자식 창은 부모와 함께 사라짐). 마인크래프트 프로세스는 남는데 창이 없어집니다.
+  셧다운 훅과 테스트 모드의 finally에서 detach하도록 했지만, **IDE 크래시나 강제 종료에는 대책이 없습니다.** 실제 플러그인에서
+  풀어야 할 과제입니다(예: 에이전트가 부모 소실을 감지해 창을 최상위로 되돌리기).
+- `run-vanilla-mc.sh`는 이제 버전을 고를 수 있습니다(`SF_MC_VERSION`). 버전에 맞는 Java를 고르고, 정확한 버전이 없는 라이브러리는
+  ForgeGradle 캐시나 같은 minor 버전으로 대체합니다.
+
+### 아직 검증하지 못한 범위
+- **LWJGL 2 시대(1.7.10~1.12.2, Java 8):** 로컬 캐시에 없어서 다운로드가 필요합니다. 포커스 소스(`Display.isActive`)와 프레임 훅은 미구현입니다.
+- **1.13~1.20(LWJGL 3.1~3.2):** JNI 이름 대비만 해 두었고 실행해 보지 않았습니다.
+- **모드 로더:** Fabric, Forge, NeoForge. 특히 NeoForge·Forge 1.17+는 LWJGL이 이름 있는 모듈 레이어에 있어서, 시스템 클래스패스의
+  `SfHooks`를 못 볼 수 있습니다(모듈 reads 추가가 필요할 수 있음).
+- 26.3에서 동적 attach(실행 중 붙이기)는 v1으로만 확인했습니다. v2는 시작 시 로드만 확인했습니다.
