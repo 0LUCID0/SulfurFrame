@@ -26,7 +26,10 @@ final class AutoTest {
         return System.getProperty("sulfurframe.autotest.pid") != null || Boolean.getBoolean("sulfurframe.autotest.runclient");
     }
 
-    static void maybeRun(SulfurPanel panel, ToolWindow tw) {
+    private static com.intellij.openapi.project.Project project;
+
+    static void maybeRun(SulfurPanel panel, ToolWindow tw, com.intellij.openapi.project.Project prj) {
+        project = prj;
         if (!enabled()) return;
         String pid = System.getProperty("sulfurframe.autotest.pid");
         Thread.ofPlatform().daemon().name("sf-autotest").start(() -> {
@@ -50,7 +53,7 @@ final class AutoTest {
         long game = e.gameHwnd(), canvas = e.canvasNativeHwnd();
         check("embedded in the tool window", game != 0 && Win32Access.parentOf(game) == canvas
                 && Win32Access.className(canvas).equals("SunAwtCanvas"), "game parent " + hex(Win32Access.parentOf(game)) + ", canvas " + hex(canvas));
-        check("game fills the canvas", Win32Access.clientSize(game).equals(Win32Access.clientSize(canvas)),
+        check("game sized to the canvas (16:9 fit)", fits(game, canvas),
                 "game " + Win32Access.clientSize(game) + ", canvas " + Win32Access.clientSize(canvas));
         snapshot(p, "sulfurframe-autotest-1-docked");
 
@@ -78,7 +81,76 @@ final class AutoTest {
                 "iconic " + Win32Access.isIconic(game) + ", state " + e.throttleState());
         snapshot(p, "sulfurframe-autotest-3-shown");
 
+        layoutAndFullscreen(p, game);
+
         if (!Boolean.getBoolean("sulfurframe.autotest.keep")) { onEdt(e::detach); sleep(1000); }
+    }
+
+    /** 16:9 letterbox, F11 out to fullscreen and back, editor tab and back. */
+    private static void layoutAndFullscreen(SulfurPanel p, long game) throws Exception {
+        var e = p.embedder;
+        // 16:9 letterbox inside the (tall) tool window
+        int[] g = Win32Access.screenRect(game), c = Win32Access.screenRect(e.canvasNativeHwnd());
+        double ratio = (double) g[2] / g[3];
+        check("16:9 letterbox", Math.abs(ratio - 16.0 / 9.0) < 0.02 && g[2] <= c[2] && g[3] <= c[3],
+                "game " + g[2] + "x" + g[3] + " (" + String.format("%.3f", ratio) + ") in canvas " + c[2] + "x" + c[3]);
+
+        // F11: out of the IDE, covering the monitor
+        var robot = new Robot();
+        onEdt(() -> javax.swing.SwingUtilities.getWindowAncestor(p).toFront());
+        sleep(500);
+        e.focusGame();
+        sleep(800);
+        // never send a real key to another application
+        if (Win32Access.keyboardFocus() != game) { check("F11 -> fullscreen", false, "game does not have keyboard focus, key not sent"); return; }
+        robot.keyPress(java.awt.event.KeyEvent.VK_F11); robot.keyRelease(java.awt.event.KeyEvent.VK_F11);
+        sleep(3000);
+        int[] fs = Win32Access.screenRect(game);
+        var mon = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
+        check("F11 -> fullscreen", e.isFullscreen() && !Win32Access.isChild(game) && fs[2] >= mon.getWidth() && fs[3] >= mon.getHeight(),
+                "fullscreen " + e.isFullscreen() + ", child " + Win32Access.isChild(game) + ", rect " + fs[2] + "x" + fs[3] + ", monitor " + mon.getWidth() + "x" + mon.getHeight());
+        screen("sulfurframe-autotest-4-fullscreen");
+        // F11 again: back into the panel, without the caption GLFW adds when leaving fullscreen
+        if (Win32Access.keyboardFocus() != game) { check("F11 again -> embedded, no title bar", false, "game lost keyboard focus while fullscreen, key not sent"); return; }
+        robot.keyPress(java.awt.event.KeyEvent.VK_F11); robot.keyRelease(java.awt.event.KeyEvent.VK_F11);
+        sleep(3000);
+        check("F11 again -> embedded, no title bar", !e.isFullscreen() && e.gameHwnd() == game
+                        && Win32Access.parentOf(game) == e.canvasNativeHwnd() && !Win32Access.hasCaption(game),
+                "fullscreen " + e.isFullscreen() + ", parent " + hex(Win32Access.parentOf(game)) + ", canvas " + hex(e.canvasNativeHwnd()) + ", caption " + Win32Access.hasCaption(game));
+        snapshot(p, "sulfurframe-autotest-5-after-f11");
+
+        // editor tab: wider area, then back to the tool window when the tab closes
+        int toolWidth = Win32Access.screenRect(e.canvasNativeHwnd())[2];
+        onEdt(() -> GameTab.open(project));
+        sleep(4000);
+        int[] tabCanvas = Win32Access.screenRect(e.canvasNativeHwnd());
+        check("open as editor tab", PanelHost.of(project).inEditor() && e.gameHwnd() == game && Win32Access.parentOf(game) == e.canvasNativeHwnd() && fits(game, e.canvasNativeHwnd()),
+                "canvas " + tabCanvas[2] + "x" + tabCanvas[3] + " (tool window was " + toolWidth + " wide)");
+        snapshot(p, "sulfurframe-autotest-6-tab");
+        onEdt(() -> {
+            var fem = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project);
+            for (var f : fem.getOpenFiles()) if (f instanceof GameTab.GameFile) fem.closeFile(f);
+        });
+        sleep(4000);
+        check("tab closed -> back in the tool window", e.gameHwnd() == game && Win32Access.parentOf(game) == e.canvasNativeHwnd()
+                        && Win32Access.screenRect(e.canvasNativeHwnd())[2] == toolWidth,
+                "canvas width " + Win32Access.screenRect(e.canvasNativeHwnd())[2]);
+    }
+
+    /** The game is the largest 16:9 rectangle that fits the canvas (one side equal, within a pixel or two). */
+    static boolean fits(long game, long canvas) {
+        int[] g = Win32Access.screenRect(game), c = Win32Access.screenRect(canvas);
+        if (g == null || c == null) return false;
+        boolean inside = g[2] <= c[2] + 1 && g[3] <= c[3] + 1;
+        boolean touches = Math.abs(g[2] - c[2]) <= 2 || Math.abs(g[3] - c[3]) <= 2;
+        return inside && touches && Math.abs((double) g[2] / g[3] - 16.0 / 9.0) < 0.02;
+    }
+
+    private static void screen(String name) {
+        try {
+            ImageIO.write(new Robot().createScreenCapture(new Rectangle(Toolkit.getDefaultToolkit().getScreenSize())), "png",
+                    new File(System.getProperty("java.io.tmpdir"), name + ".png"));
+        } catch (Exception ex) { lines.add("screen " + name + " failed: " + ex); }
     }
 
     /** -Dsulfurframe.autotest.runclient=true: press "Run client" and expect the project's game to end up embedded. */
@@ -107,7 +179,7 @@ final class AutoTest {
         check("Run client -> game embedded", game != 0 && Win32Access.parentOf(game) == canvas,
                 "after " + secs + " s, game pid " + e.gamePid() + ", parent " + hex(Win32Access.parentOf(game)) + ", canvas " + hex(canvas));
         sleep(15000);   // let the dev client finish loading resources
-        check("game fills the canvas", game != 0 && Win32Access.clientSize(game).equals(Win32Access.clientSize(canvas)),
+        check("game sized to the canvas (16:9 fit)", game != 0 && fits(game, canvas),
                 "game " + Win32Access.clientSize(game) + ", canvas " + Win32Access.clientSize(canvas));
         snapshot(p, "sulfurframe-autotest-runclient");
         lines.add("game pid " + e.gamePid() + " left running for inspection");

@@ -66,7 +66,8 @@ public class EmbedHost {
             long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
             System.exit(detachOnFailure(host, () -> a.contains("--create-world") ? new InputCheck(host, pid).createWorld()
                     : a.contains("--esc-resize") ? new InputCheck(host, pid).escAndResize()
-                    : a.contains("--open-world") ? new InputCheck(host, pid).openFirstWorld() : new InputCheck(host, pid).run()));
+                    : a.contains("--open-world") ? new InputCheck(host, pid).openFirstWorld()
+                    : a.contains("--f11") ? new InputCheck(host, pid).f11() : new InputCheck(host, pid).run()));
         } else if (a.contains("--throttle-probe")) {
             long pid = Long.parseLong(a.get(a.indexOf("--attach") + 1));
             System.exit(detachOnFailure(host, () -> new ThrottleProbe(host, pid).run()));

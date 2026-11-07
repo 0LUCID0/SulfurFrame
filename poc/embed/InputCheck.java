@@ -86,6 +86,38 @@ final class InputCheck {
         return 0;
     }
 
+    /** What does the game do to its (embedded) window on F11? Logs parent/style/rect over time, screenshots the screen. */
+    int f11() throws Exception {
+        host.attachPid(pid, EmbedHost.Mode.REPARENT);
+        if (host.target == 0) return 1;
+        EmbedHost.onEdt(host.frame::toFront);
+        EmbedHost.sleep(2000);
+        long g = host.target;
+        host.log("[f11] before: " + state(g));
+        var r = new Robot();
+        for (int round = 1; round <= 2; round++) {
+            host.focusGameFromHelper(g);
+            EmbedHost.sleep(600);
+            host.log("[f11] focus=" + Win32.hex(Win32.foregroundFocus()) + " game=" + Win32.hex(g));
+            r.keyPress(KeyEvent.VK_F11); r.keyRelease(KeyEvent.VK_F11);
+            for (int i = 0; i < 8; i++) { EmbedHost.sleep(400); host.log("[f11] press " + round + " +" + (i + 1) * 400 + "ms: " + state(g)); }
+            var screen = new Robot().createScreenCapture(new Rectangle(Toolkit.getDefaultToolkit().getScreenSize()));
+            javax.imageio.ImageIO.write(screen, "png", java.nio.file.Path.of(System.getenv().getOrDefault("SF_SNAP_DIR",
+                    System.getProperty("java.io.tmpdir")), "sf-f11-" + round + ".png").toFile());
+        }
+        EmbedHost.onEdt(host::detach);
+        return 0;
+    }
+
+    static String state(long g) {
+        if (!Win32.isWindow(g)) return "window gone";
+        long st = Win32.getLongPtr(g, Win32.GWL_STYLE);
+        var wr = Win32.windowRect(g);
+        return "parent=" + Win32.hex(Win32.getAncestor(g, Win32.GA_PARENT)) + " child=" + ((st & Win32.WS_CHILD) != 0)
+                + " popup=" + ((st & Win32.WS_POPUP) != 0) + " caption=" + ((st & Win32.WS_CAPTION) == Win32.WS_CAPTION)
+                + " rect=" + wr.left() + "," + wr.top() + " " + wr.width() + "x" + wr.height() + " iconic=" + Win32.isIconic(g);
+    }
+
     int run() throws Exception {
         host.attachPid(pid, EmbedHost.Mode.REPARENT);
         if (host.target == 0) return 1;

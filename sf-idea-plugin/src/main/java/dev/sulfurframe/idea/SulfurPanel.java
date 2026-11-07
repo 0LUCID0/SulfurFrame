@@ -30,7 +30,7 @@ final class SulfurPanel extends JPanel {
     /** Profile of the selected target (null if none). */
     ProjectProfile profile;
 
-    SulfurPanel(Path projectDir, Supplier<String> savedTarget, Consumer<String> saveTarget) {
+    SulfurPanel(Path projectDir, Supplier<String> savedTarget, Consumer<String> saveTarget, Runnable openAsTab) {
         super(new BorderLayout());
         this.projectDir = projectDir;
         this.savedTarget = savedTarget;
@@ -50,6 +50,11 @@ final class SulfurPanel extends JPanel {
         }));
         buttons.add(button("Detach", embedder::detach));
         buttons.add(button("Rescan", this::scan));
+        buttons.add(button("Open as tab", openAsTab));
+        var keepRatio = new JCheckBox("16:9", true);
+        keepRatio.setToolTipText("Keep the game at 16:9 (black bars) instead of stretching it to the panel");
+        keepRatio.addActionListener(e -> embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0));
+        buttons.add(keepRatio);
         var north = new JPanel(new BorderLayout());
         north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);

@@ -23,6 +23,9 @@ final class Win32 {
 
     // lazy holder: the linker fields below are not initialized yet at this point of the class body
     private static final class Wfp { static final MethodHandle H = fn("WindowFromPoint", JAVA_LONG, JAVA_LONG); }
+    private static final class Sfw { static final MethodHandle H = fn("SetForegroundWindow", JAVA_INT, JAVA_LONG); }
+
+    static boolean setForeground(long h) { try { return (int) Sfw.H.invokeExact(h) != 0; } catch (Throwable t) { throw rethrow(t); } }
 
     /** POINT is passed by value as one 64-bit integer: x in the low half, y in the high half. Physical pixels. */
     static long windowFromPoint(int x, int y) {

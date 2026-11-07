@@ -13,5 +13,6 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="SulfurFrame" anchor="right" factoryClass="dev.sulfurframe.idea.SulfurToolWindowFactory"/>
         <postStartupActivity implementation="dev.sulfurframe.idea.AutoTestStartup"/>
+        <fileEditorProvider implementation="dev.sulfurframe.idea.GameTab$Provider"/>
     </extensions>
 </idea-plugin>

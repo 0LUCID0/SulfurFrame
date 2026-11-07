@@ -24,8 +24,10 @@ public final class GameEmbedder {
     final Canvas canvas = new Canvas() {
         @Override public void update(Graphics g) { }
         @Override public void paint(Graphics g) {
-            if (game == 0) { g.setColor(new Color(0x2B2D30)); g.fillRect(0, 0, getWidth(), getHeight());
-                g.setColor(Color.GRAY); g.drawString("no game attached", 12, 20); }
+            // with a game attached this only shows in the letterbox bars (WS_CLIPCHILDREN keeps it off the game)
+            g.setColor(game == 0 ? new Color(0x2B2D30) : Color.BLACK);
+            g.fillRect(0, 0, getWidth(), getHeight());
+            if (game == 0) { g.setColor(Color.GRAY); g.drawString(fullscreen ? "game is fullscreen (F11 to come back)" : "no game attached", 12, 20); }
         }
         @Override public void removeNotify() { park(); super.removeNotify(); }
         @Override public void addNotify() { super.addNotify(); SwingUtilities.invokeLater(GameEmbedder.this::unpark); }
@@ -40,6 +42,15 @@ public final class GameEmbedder {
     private final AWTEventListener reclaim = this::onAwtMouse;
     private volatile Path agentJar;
     private volatile boolean disposed;
+    /** Keep the game at this width/height ratio inside the canvas (letterbox); 0 = fill the canvas. */
+    private volatile double aspect = 16.0 / 9.0;
+    /** The game asked for fullscreen (F11): it is out of the IDE, covering the IDE's monitor. */
+    private volatile boolean fullscreen;
+    private volatile long fullscreenHwnd;
+
+    public void setAspect(double a) { aspect = a; syncBounds(0); canvas.repaint(); }
+    public double aspect() { return aspect; }
+    public boolean isFullscreen() { return fullscreen; }
 
     public GameEmbedder(Consumer<String> log) {
         this.log = log;
@@ -200,7 +211,61 @@ public final class GameEmbedder {
         if (h == 0 || !Win32.isWindow(h)) return;
         var cr = Win32.clientRect(canvasHwnd());
         if (cr == null) return;
-        Win32.setWindowPos(h, 0, 0, 0, cr.width(), cr.height(), Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE | Win32.SWP_ASYNCWINDOWPOS | extra);
+        int w = cr.width(), ht = cr.height(), x = 0, y = 0;
+        if (aspect > 0 && w > 0 && ht > 0) {          // letterbox: largest aspect-correct rectangle, centred
+            if ((double) w / ht > aspect) { int nw = (int) Math.round(ht * aspect); x = (w - nw) / 2; w = nw; }
+            else { int nh = (int) Math.round(w / aspect); y = (ht - nh) / 2; ht = nh; }
+        }
+        Win32.setWindowPos(h, 0, x, y, w, ht, Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE | Win32.SWP_ASYNCWINDOWPOS | extra);
+    }
+
+    // ------------------------------------------------------------------ fullscreen (F11)
+
+    /**
+     * Minecraft's F11 makes GLFW/SDL add WS_POPUP to the window and try to cover the monitor, which a child window
+     * cannot do; F11 again removes WS_POPUP and adds a caption, leaving a title bar inside the panel. So: when the
+     * embedded game turns WS_POPUP, take it out of the IDE and cover the IDE's monitor; when it drops WS_POPUP, put it
+     * back as a clean child. Polled from the watchdog thread.
+     */
+    private void watchFullscreen() {
+        long h = fullscreen ? fullscreenHwnd : game;
+        if (h == 0 || !Win32.isWindow(h)) return;
+        boolean popup = (Win32.getLongPtr(h, Win32.GWL_STYLE) & Win32.WS_POPUP) != 0;
+        if (!fullscreen && popup) SwingUtilities.invokeLater(() -> enterFullscreen(h));
+        else if (fullscreen && !popup) SwingUtilities.invokeLater(() -> exitFullscreen(h));
+    }
+
+    private void enterFullscreen(long h) {
+        if (fullscreen || game != h) return;
+        Rectangle mon = monitorOfCanvas();
+        unsubclass();
+        throttler.bind(0, 0);
+        Win32.setParent(h, 0);
+        long st = Win32.getLongPtr(h, Win32.GWL_STYLE);
+        Win32.setLongPtr(h, Win32.GWL_STYLE, (st & ~(Win32.WS_CHILD | Win32.WS_CAPTION | Win32.WS_THICKFRAME)) | Win32.WS_POPUP | Win32.WS_VISIBLE);
+        Win32.setWindowPos(h, 0, mon.x, mon.y, mon.width, mon.height, Win32.SWP_FRAMECHANGED | Win32.SWP_SHOWWINDOW | Win32.SWP_ASYNCWINDOWPOS);
+        fullscreen = true; fullscreenHwnd = h; game = 0; canvasHwnd = 0;
+        focusHelper.execute(() -> { Win32.ensureGuiThread(); Win32.setForeground(h); });
+        log.accept("game went fullscreen (F11): out of the IDE, covering " + mon.width + "x" + mon.height);
+        canvas.repaint();
+    }
+
+    private void exitFullscreen(long h) {
+        if (!fullscreen) return;
+        fullscreen = false; fullscreenHwnd = 0;
+        if (!Win32.isWindow(h)) { log.accept("game window closed while fullscreen"); canvas.repaint(); return; }
+        long s = savedStyle, x = savedExStyle;      // keep the pre-embed styles for a later detach
+        boolean ok = attachWindow(h, gamePid);       // strips the caption GLFW just added, WS_CHILD, reparents
+        savedStyle = s; savedExStyle = x;
+        log.accept(ok ? "game left fullscreen: embedded again" : "could not re-embed after fullscreen");
+    }
+
+    /** Physical-pixel bounds of the monitor showing the canvas. */
+    private Rectangle monitorOfCanvas() {
+        var gc = canvas.getGraphicsConfiguration();
+        Rectangle b = gc.getBounds();
+        double sx = gc.getDefaultTransform().getScaleX(), sy = gc.getDefaultTransform().getScaleY();
+        return new Rectangle((int) Math.round(b.x * sx), (int) Math.round(b.y * sy), (int) Math.round(b.width * sx), (int) Math.round(b.height * sy));
     }
 
     public void setHidden(boolean hidden) {
@@ -270,6 +335,7 @@ public final class GameEmbedder {
             int misses = 0;
             while (!disposed) {
                 sleep(100);
+                try { watchFullscreen(); } catch (Throwable ignored) { }
                 long h = game, c = canvasHwnd;
                 if (h == 0 || c == 0 || !Win32.isWindow(h)) { misses = 0; continue; }
                 misses = Win32.isResponsive(h, 200) ? 0 : misses + 1;
