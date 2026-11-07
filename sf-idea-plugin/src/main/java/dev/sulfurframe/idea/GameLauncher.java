@@ -52,9 +52,14 @@ final class GameLauncher {
 
     private void pump(Process p) {
         try (var r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-            for (String line; (line = r.readLine()) != null; )
-                if (line.startsWith("> Task") || line.contains("BUILD") || line.contains("FAILURE") || line.contains("error"))
+            boolean why = false;   // after "* What went wrong:" show the reason lines, they are the useful part
+            for (String line; (line = r.readLine()) != null; ) {
+                if (line.startsWith("* What went wrong")) { why = true; continue; }
+                if (line.startsWith("* Try")) why = false;
+                if (why && !line.isBlank()) log.accept("[gradle] " + line.strip());
+                else if (line.startsWith("> Task :runClient") || line.contains("BUILD") || line.contains("error:"))
                     log.accept("[gradle] " + line);
+            }
         } catch (IOException ignored) { }
     }
 

@@ -22,12 +22,16 @@ final class AutoTest {
     private static final List<String> lines = new ArrayList<>();
     private static int failures;
 
+    static boolean enabled() {
+        return System.getProperty("sulfurframe.autotest.pid") != null || Boolean.getBoolean("sulfurframe.autotest.runclient");
+    }
+
     static void maybeRun(SulfurPanel panel, ToolWindow tw) {
+        if (!enabled()) return;
         String pid = System.getProperty("sulfurframe.autotest.pid");
-        if (pid == null) return;
         Thread.ofPlatform().daemon().name("sf-autotest").start(() -> {
             try {
-                run(panel, tw, Long.parseLong(pid));
+                if (pid == null) runClientFlow(panel, tw); else run(panel, tw, Long.parseLong(pid));
             } catch (Throwable t) {
                 check("exception", false, t.toString());
             } finally {
@@ -75,6 +79,28 @@ final class AutoTest {
         snapshot(p, "sulfurframe-autotest-3-shown");
 
         if (!Boolean.getBoolean("sulfurframe.autotest.keep")) { onEdt(e::detach); sleep(1000); }
+    }
+
+    /** -Dsulfurframe.autotest.runclient=true: press "Run client" and expect the project's game to end up embedded. */
+    private static void runClientFlow(SulfurPanel p, ToolWindow tw) {
+        onEdt(tw::show);
+        sleep(3000);
+        check("profile detected", p.profile != null && p.profile.isComplete(), String.valueOf(p.profile));
+        long t0 = System.currentTimeMillis();
+        onEdt(p::runClient);
+        var e = p.embedder;
+        // attached() turns true just before SetParent: wait for the reparent itself, not only the flag
+        while (!(e.attached() && Win32Access.parentOf(e.gameHwnd()) == e.canvasNativeHwnd())
+                && System.currentTimeMillis() - t0 < 10 * 60_000) sleep(500);
+        long secs = (System.currentTimeMillis() - t0) / 1000;
+        long game = e.gameHwnd(), canvas = e.canvasNativeHwnd();
+        check("Run client -> game embedded", game != 0 && Win32Access.parentOf(game) == canvas,
+                "after " + secs + " s, game pid " + e.gamePid() + ", parent " + hex(Win32Access.parentOf(game)) + ", canvas " + hex(canvas));
+        sleep(15000);   // let the dev client finish loading resources
+        check("game fills the canvas", game != 0 && Win32Access.clientSize(game).equals(Win32Access.clientSize(canvas)),
+                "game " + Win32Access.clientSize(game) + ", canvas " + Win32Access.clientSize(canvas));
+        snapshot(p, "sulfurframe-autotest-runclient");
+        lines.add("game pid " + e.gamePid() + " left running for inspection");
     }
 
     private static void snapshot(SulfurPanel p, String name) {

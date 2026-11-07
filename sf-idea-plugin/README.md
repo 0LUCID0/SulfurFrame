@@ -52,6 +52,18 @@ PASS hidden -> game minimized  [iconic true, state HIDDEN]
 PASS shown -> game restored  [iconic false, state CODING]
 failures: 0
 ```
+**Run client 흐름** (`-Dsulfurframe.autotest.runclient=true`, lucid-study-mod 안쪽 프로젝트의 임시 사본, Fabric 1.21.1):
+```
+PASS profile detected  [FABRIC 1.21.1 0.17.2 (Java 21)]
+PASS Run client -> game embedded  [after 25 s (첫 실행 97 s)]
+PASS game fills the canvas  [game 450x725, canvas 450x725]
+```
+- 버튼을 누르면 프로젝트의 `gradlew.bat runClient`가 실행되고, 개발 클라이언트 창이 뜨면 에이전트를 붙인 뒤 툴윈도우에 넣습니다.
+- 리소스를 로드하는 동안은 게임이 바빠서 와치독이 잠깐씩 입력 큐를 뗐다 붙입니다. 정상 동작입니다.
+- **실제 프로젝트에서 찾은 문제:** 이 프로젝트의 wrapper는 Gradle 8.12인데, 쓰는 Loom 1.11-SNAPSHOT은 8.14 이상이 필요해서
+  `runClient`가 실패합니다(원본의 `gradle-wrapper.properties`는 git에서 수정된 상태). 테스트는 사본의 wrapper만 캐시에 있는 9.4.1로 바꿔서 진행했고,
+  원본은 건드리지 않았습니다. 플러그인은 이제 Gradle의 "What went wrong" 내용을 툴윈도우 로그에 그대로 보여 줍니다.
+
 버전 감지기 fixture 테스트:
 ```bash
 javac -d out sf-idea-plugin/src/main/java/dev/sulfurframe/idea/profile/ProjectProfile.java sf-idea-plugin/src/test/java/dev/sulfurframe/idea/profile/ProfileSelfTest.java
@@ -60,6 +72,5 @@ java -cp out dev.sulfurframe.idea.profile.ProfileSelfTest sf-idea-plugin/src/tes
 fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접 선언, 버전 카탈로그)와 로컬 실제 프로젝트 4개를 정확히 감지했습니다.
 
 ## 아직 안 된 것
-- **"Run client" 버튼으로 실제 모드 프로젝트의 `runClient`를 실행해서 붙이는 흐름은 검증하지 않았습니다.** 샌드박스 테스트는 이미 떠 있는 게임에 붙이는 경로만 확인했습니다.
 - 여러 버전·여러 로더를 한 빌드에 담은 프로젝트(예: buildpali)는 "알 수 없음"으로 나옵니다. `detectAll`로 하위 프로젝트를 고르는 UI가 필요합니다.
 - 모드마다 빌드와 월드가 따로인 불편(공유 인스턴스/월드), Gradle 플러그인 기반 정식 빌드, 마켓플레이스 배포 형태는 아직입니다.

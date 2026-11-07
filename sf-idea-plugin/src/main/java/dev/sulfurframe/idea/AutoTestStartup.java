@@ -10,7 +10,7 @@ import com.intellij.openapi.wm.ToolWindowManager;
 public final class AutoTestStartup implements StartupActivity, DumbAware {
     @Override
     public void runActivity(Project project) {
-        if (System.getProperty("sulfurframe.autotest.pid") == null) return;
+        if (!AutoTest.enabled()) return;
         ApplicationManager.getApplication().invokeLater(() -> {
             var tw = ToolWindowManager.getInstance(project).getToolWindow("SulfurFrame");
             if (tw != null) tw.show();
