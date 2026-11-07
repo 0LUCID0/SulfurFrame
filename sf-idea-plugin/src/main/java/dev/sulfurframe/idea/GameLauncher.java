@@ -28,7 +28,18 @@ final class GameLauncher {
         if (wrapper == null) { log.accept("no gradlew.bat in " + dir + " or its parents"); return; }
         Set<Long> before = new HashSet<>(dev.sulfurframe.idea.embed.NativeWindows.gameWindows());
         try {
-            var pb = new ProcessBuilder(wrapper.toString(), target.runTask(), "--console=plain").directory(dir.toFile()).redirectErrorStream(true);
+            var cmd = new ArrayList<>(List.of(wrapper.toString(), target.runTask(), "--console=plain"));
+            Path jbr = Jbr.find(profile.javaMajor());
+            if (jbr != null) {   // DCEVM: hotswap may then add/remove methods and fields
+                Path init = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "sf-jbr.init.gradle");
+                Files.createDirectories(init.getParent());
+                Files.writeString(init, Jbr.INIT_SCRIPT, StandardCharsets.UTF_8);
+                cmd.addAll(List.of("--init-script", init.toString(), "-PsfJbr=" + jbr));
+                log.accept("game runs on JetBrains Runtime " + jbr.getParent().getParent().getFileName() + " (enhanced hotswap: methods and fields can change)");
+            } else {
+                log.accept("no JetBrains Runtime " + profile.javaMajor() + " found (~/.jdks): hotswap limited to method bodies");
+            }
+            var pb = new ProcessBuilder(cmd).directory(dir.toFile()).redirectErrorStream(true);
             gradle = pb.start();
             log.accept("started " + wrapper + " " + target.runTask() + " for " + profile);
             Thread.ofPlatform().daemon().name("sf-gradle-out").start(() -> pump(gradle));

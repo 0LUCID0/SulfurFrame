@@ -223,13 +223,28 @@ final class AutoTest {
         if (vf != null) vf.refresh(true, false);   // async refresh: the VFS reports the change like a save
         check("hotswap on save (VFS change -> swap)", waitForLog(gameLog, "[SF-PROBE] v3", 60), "game log shows v3");
 
-        // structural change: a new method cannot be redefined on a standard JVM
-        Files.writeString(src, original.replace("return \"v1\";", "return \"v3\";")
-                .replace("private SfHotswapProbe() {}", "static String extra() { return \"x\"; }\n\n    private SfHotswapProbe() {}"));
+        // structural change: a new field + method. On JBR (enhanced redefinition) it applies and the new method runs;
+        // on a standard JVM it is refused and reported as needing a restart.
+        boolean enhanced = Jbr.find(t.profile().javaMajor()) != null;
+        Files.writeString(src, original.replace("return \"v1\";", "return \"v4 \" + extra();")
+                .replace("private SfHotswapProbe() {}", "private static int calls;\n\n    static String extra() { return \"extra\" + (++calls); }\n\n    private SfHotswapProbe() {}"));
         sleep(1500);   // let a save-triggered swap (from the VFS) finish first
         while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(500);
-        check("hotswap: added method -> restart needed", p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed")),
-                String.valueOf(p.hotswapper.lastResult));
+        if (enhanced) {
+            check("hotswap (JBR): added field + method applied and running", redefinedAny(p.hotswapper.lastResult)
+                            && p.hotswapper.lastResult.stream().noneMatch(s -> s.startsWith("restart needed")) && waitForLog(gameLog, "[SF-PROBE] v4 extra", 20),
+                    String.valueOf(p.hotswapper.lastResult));
+            // and take them out again
+            Files.writeString(src, original.replace("return \"v1\";", "return \"v5\";"));
+            sleep(1500);
+            while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(500);
+            check("hotswap (JBR): removed field + method applied", redefinedAny(p.hotswapper.lastResult)
+                            && p.hotswapper.lastResult.stream().noneMatch(s -> s.startsWith("restart needed")) && waitForLog(gameLog, "[SF-PROBE] v5", 20),
+                    String.valueOf(p.hotswapper.lastResult));
+        } else {
+            check("hotswap: added method -> restart needed (no JBR)", p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed")),
+                    String.valueOf(p.hotswapper.lastResult));
+        }
         Files.writeString(src, original);
     }
 

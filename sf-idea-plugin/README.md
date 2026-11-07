@@ -185,7 +185,11 @@ F11 검사는 실제 키를 보냅니다. 그래서 키보드 포커스가 게�
 - **javac 경로의 범위:** 고친 파일만 컴파일하고(나머지는 출력 폴더의 클래스를 참조), 어노테이션 프로세서는 끕니다(`-proc:none`, Mixin refmap은 건드리지 않음). 핫스왑이 반영할 수 있는 것은 어차피 메서드 본문뿐이라 이걸로 충분합니다. 컴파일 오류가 나면 그 파일들은 다음 교체 때 다시 시도합니다.
 
 - **디버거를 쓰지 않는 이유:** IntelliJ의 HotSwap(JDWP)은 게임을 디버거로 띄워야 하는데, `runClient`에 디버그 포트를 끼우면 Gradle 데몬과 충돌하기 쉽습니다. 이미 붙어 있는 에이전트를 쓰면 이 문제가 없습니다.
-- **반영되는 범위:** 일반 JVM이라 **메서드 본문 변경**만 반영됩니다. 메서드나 필드를 추가·삭제하면 해당 클래스만 "restart needed"로 알려 주고, 나머지 클래스는 그대로 반영합니다(한 번에 실패하면 클래스별로 다시 시도).
+- **반영되는 범위:** Run client는 게임을 **JetBrains Runtime(JBR)**과 `-XX:+AllowEnhancedClassRedefinition`으로 띄웁니다(`Jbr.java`, Gradle init script로 runClient의 실행 파일과 JVM 인자만 바꾸고 프로젝트 빌드 파일은 건드리지 않음). JBR에 들어 있는 DCEVM 덕분에 **메서드와 필드를 추가하거나 지워도** 그대로 교체됩니다.
+  - JBR은 게임이 필요한 Java 버전과 같아야 합니다. `~/.jdks`(IntelliJ의 SDK 다운로드)에서 찾고, 버전이 맞으면 IDE 자신의 JBR(2026.x는 25, 마인크래프트 26.x용)도 씁니다. 1.21.x는 `jbr-21`이 필요합니다.
+  - 맞는 JBR이 없으면 일반 JVM으로 띄우고, 그때는 **메서드 본문 변경**만 반영됩니다. 메서드나 필드를 추가·삭제하면 해당 클래스만 "restart needed"로 알려 주고, 나머지 클래스는 그대로 반영합니다(한 번에 실패하면 클래스별로 다시 시도).
+  - 새로 추가한 필드는 초기값 없이(0, null) 시작합니다. 클래스 초기화(static 블록)가 다시 돌지 않고, 이미 있는 객체의 생성자도 다시 돌지 않기 때문입니다.
+  - 새 클래스는 교체할 필요가 없습니다. 처음 쓰일 때 build/classes에서 읽힙니다.
 - **아직 로드되지 않은 클래스:** 할 일이 없습니다. 나중에 로드될 때 새 파일을 읽습니다.
 - **저장 감지:** `VFS_CHANGES`의 `.java`/`.kt` 내용 변경을 0.5초 디바운스해서 받습니다. "Save All"로 파일 여러 개를 저장해도 한 번만 실행됩니다.
   고른 대상 폴더 안의 파일일 때만 동작하고, 툴윈도우의 "Hotswap on save" 체크로 켜고 끕니다.
@@ -197,13 +201,14 @@ PASS fast compile: class path read from Gradle   [최초 1회 13 s, 이후 캐�
 PASS hotswap: method body change applied   [redefined 1, 에이전트 41 ms, 전체 2.4 s (javac)]
 PASS hotswap compiled with javac, not Gradle
 PASS hotswap on save (VFS change -> swap)  [game log shows v3]
-PASS hotswap: added method -> restart needed  [restart needed: kr.kro.lucid.SfHotswapProbe (methods or fields added/removed)]
+PASS hotswap (JBR): added field + method applied and running   [redefined 1; game log "[SF-PROBE] v4 extra1"]
+PASS hotswap (JBR): removed field + method applied              [redefined 1; "[SF-PROBE] v5"]
 ```
 게임 로그는 `v1 ×5 → v2 → v3`로 바뀌었고, **게임은 재시작하지 않았습니다.**
 
 ### 한계와 다음 과제
 - **컴파일 시간:** javac 경로는 약 2.4초입니다(이전 Gradle 경로는 약 15초). 대부분 javac JVM 기동과 Minecraft 클래스패스 읽기라, 상주 컴파일러를 쓰면 더 줄일 수 있습니다.
-- **구조 변경:** 메서드나 필드 추가처럼 구조가 바뀌면 재시작해야 합니다. 게임을 JBR로 실행하고 `-XX:+AllowEnhancedClassRedefinition`을 쓰면 풀 수 있습니다.
+- **구조 변경:** JBR이 있으면 됩니다(위). Java 8/17 게임용 JBR은 시험하지 않았습니다. Attach PID로 붙인 게임은 이미 떠 있는 JVM이라, 직접 JBR과 플래그로 띄운 경우에만 구조 변경이 됩니다.
 - **Mixin 클래스:** 교체돼도 이미 적용된 Mixin은 다시 적용되지 않습니다.
 - **Fabric 환경 어노테이션:** 바뀐 바이트에는 Knot의 `@Environment` 정리가 적용되지 않습니다. 클라이언트 개발 환경에서는 대개 문제가 없습니다.
 - **게임 안 토스트 알림:** 아직 없습니다. 결과는 툴윈도우 로그에만 나옵니다.
