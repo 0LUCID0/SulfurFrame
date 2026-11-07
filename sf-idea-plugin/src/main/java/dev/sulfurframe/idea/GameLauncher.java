@@ -27,7 +27,10 @@ final class GameLauncher {
      * @param gameArgs extra program arguments for the game (e.g. --quickPlaySingleplayer world). They reach runClient
      *                 through an init script as Base64, so names with spaces or non-ASCII survive cmd.exe and Gradle.
      */
-    void runClient(Workspace.Target target, List<String> gameArgs, BiConsumer<Long, Long> onWindow) {
+    void runClient(Workspace.Target target, List<String> gameArgs, BiConsumer<Long, Long> onWindow) { runClient(target, gameArgs, onWindow, () -> { }); }
+
+    /** @param onEnd runs when the Gradle build that runs the game ends (the game exited). */
+    void runClient(Workspace.Target target, List<String> gameArgs, BiConsumer<Long, Long> onWindow, Runnable onEnd) {
         ProjectProfile profile = target.profile();
         Path dir = target.buildRoot();
         Path wrapper = findWrapper(dir);
@@ -66,6 +69,7 @@ final class GameLauncher {
             }
             var pb = new ProcessBuilder(cmd).directory(dir.toFile()).redirectErrorStream(true);
             gradle = pb.start();
+            gradle.onExit().thenRun(onEnd);
             log.accept("started " + wrapper + " " + target.runTask() + " for " + profile);
             Thread.ofPlatform().daemon().name("sf-gradle-out").start(() -> pump(gradle));
         } catch (IOException e) {

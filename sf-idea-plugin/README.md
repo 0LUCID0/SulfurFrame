@@ -306,3 +306,12 @@ failures: 0
 ![linux](snapshot-linux.png)
 
 Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client + 핫스왑 자동 테스트를 다시 돌려 전부 통과(javac 핫스왑 2.4초).
+
+## 공유 인스턴스 (모드끼리 월드·설정 공유)
+패널의 **Shared worlds**를 켜면 같은 마인크래프트 버전의 모든 프로젝트가 게임 폴더 하나를 같이 씁니다(`SharedInstance.java`, 기본은 꺼짐).
+- `~/.sulfurframe/instances/<버전>/`에 공용 폴더를 두고, 각 프로젝트 `run/`의 `saves`, `resourcepacks`, `screenshots`, `shaderpacks`를 거기로 연결합니다. Windows는 디렉터리 정션(관리자 권한 불필요), 그 밖에는 심볼릭 링크입니다. `config/`, `logs/`, `mods/`는 프로젝트마다 그대로입니다.
+- `options.txt`, `servers.dat`, `hotbar.nbt`는 게임이 통째로 다시 써서 링크가 끊어지므로, 실행 전에 공용 폴더에서 복사해 오고 게임이 끝나면 돌려놓습니다(더 최근 것이 이김).
+- 처음 연결할 때 프로젝트에 있던 월드는 공용 폴더로 옮깁니다. 이름이 겹치면 `이름 (프로젝트)`로 보존하고, 아무것도 지우지 않습니다.
+- 프로젝트의 버전이 바뀌면 링크만 새 버전 폴더로 바꿉니다. 이전 버전 폴더의 월드는 그대로 남습니다.
+
+검증(임시 홈 폴더, 가짜 프로젝트 두 개): 링크 생성(정션), 겹친 월드 `World1 (projB)` 보존, A의 `options.txt`가 B로 넘어감, 다시 적용해도 변화 없음, 한글·공백 경로, 버전 변경 시 이전 버전 월드 보존.

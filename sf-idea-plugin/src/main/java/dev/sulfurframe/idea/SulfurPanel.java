@@ -69,6 +69,10 @@ final class SulfurPanel extends JPanel {
         buttons.add(restart);
         swapOnSave.setToolTipText("Compile and reload changed classes into the running game whenever a source file is saved");
         buttons.add(swapOnSave);
+        shareWorlds.setToolTipText("Worlds, options and resource packs shared by all projects of the same Minecraft version ("
+                + SharedInstance.root() + "). Existing worlds of a project move there when it is first launched; nothing is deleted.");
+        shareWorlds.addActionListener(e -> com.intellij.ide.util.PropertiesComponent.getInstance().setValue("sulfurframe.sharedInstance", shareWorlds.isSelected(), false));
+        buttons.add(shareWorlds);
         var north = new JPanel(new BorderLayout());
         north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);
@@ -120,8 +124,25 @@ final class SulfurPanel extends JPanel {
         var t = (Workspace.Target) targets.getSelectedItem();
         if (t == null || !t.profile().isComplete()) { log("pick a client to run (none detected)"); return; }
         if (!t.hasWrapper()) log("note: " + t.where() + " has no Gradle wrapper of its own; using the nearest parent's");
-        launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> { embedder.attach(pid); hotswapper.snapshot(t); }));
+        launch(t, gameArgs);
     }
+
+    /** Every launch (Run client, Restart): shared instance first if on, Gradle, embed, and collect when the game ends. */
+    private void launch(Workspace.Target t, List<String> gameArgs) {
+        String mc = t.profile().minecraftVersion();
+        Path run = SharedInstance.runDir(t);
+        boolean share = shareWorlds.isSelected();
+        if (share) {
+            try { SharedInstance.apply(run, mc, t.dir().getFileName().toString(), this::log); }
+            catch (Exception e) { log("shared instance not set up: " + e); }
+        }
+        launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> { embedder.attach(pid); hotswapper.snapshot(t); }),
+                () -> { if (share) SharedInstance.collect(run, mc); });
+    }
+
+    /** One game folder per Minecraft version for all projects (worlds, options, resource packs). */
+    final JCheckBox shareWorlds = new JCheckBox("Shared worlds",
+            com.intellij.ide.util.PropertiesComponent.getInstance().getBoolean("sulfurframe.sharedInstance", false));
 
     Workspace.Target selectedTarget() { return (Workspace.Target) targets.getSelectedItem(); }
 
@@ -172,8 +193,7 @@ final class SulfurPanel extends JPanel {
             }
             var args = !world.isEmpty() && quickPlay(t.profile().minecraftVersion()) ? List.of("--quickPlaySingleplayer", world) : List.<String>of();
             lastRestartWorld = world;
-            SwingUtilities.invokeLater(() -> launcher.runClient(t, args,
-                    (p, h) -> SwingUtilities.invokeLater(() -> { embedder.attach(p); hotswapper.snapshot(t); })));
+            SwingUtilities.invokeLater(() -> launch(t, args));
         } catch (Exception e) {
             log("restart failed: " + e);
         } finally {
