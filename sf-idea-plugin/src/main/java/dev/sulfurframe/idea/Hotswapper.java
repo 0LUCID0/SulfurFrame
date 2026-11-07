@@ -33,6 +33,61 @@ final class Hotswapper {
     volatile String lastCompiler = "";
 
     /** Wait (up to {@code seconds}) until the fast path has its class path; false if it never got one. */
+    /** What the last resource reload did (self-test). */
+    volatile String lastResources = "";
+
+    /**
+     * Saved resource files: copy them where the dev game reads resources (the source set's resource output, what
+     * processResources fills), then ask the agent to reload: assets/ -> client reload (F3+T), data/ -> /reload.
+     * Files processResources expands (mod metadata) are left alone: they need a restart anyway.
+     */
+    boolean reloadResources(Workspace.Target t, long gamePid, Path agentJar, List<Path> files) {
+        if (t == null || gamePid <= 0 || agentJar == null) return false;
+        var sets = fast.sourceSets(t);
+        if (sets == null) { log.accept("resources: class path not read yet (Run client first)"); return false; }
+        boolean assets = false, data = false;
+        int copied = 0;
+        try {
+            for (Path f : files) {
+                Path abs = f.toAbsolutePath().normalize();
+                String name = abs.getFileName().toString();
+                if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json") || name.endsWith("mods.toml")) {
+                    log.accept("resources: " + name + " changed: restart the game to apply"); continue;
+                }
+                for (var s : sets) {
+                    if (s.resOut() == null) continue;
+                    for (Path srcDir : s.resSrcDirs()) {
+                        Path root = srcDir.toAbsolutePath().normalize();
+                        if (!abs.startsWith(root)) continue;
+                        Path rel = root.relativize(abs);
+                        Path to = s.resOut().resolve(rel);
+                        Files.createDirectories(to.getParent());
+                        if (Files.exists(abs)) Files.copy(abs, to, StandardCopyOption.REPLACE_EXISTING); else Files.deleteIfExists(to);
+                        copied++;
+                        String top = rel.getName(0).toString();
+                        if (top.equals("assets")) assets = true;
+                        else if (top.equals("data")) data = true;
+                        else assets = true;   // pack.mcmeta and friends: a client reload picks them up
+                    }
+                }
+            }
+            if (copied == 0) return false;
+            String what = (assets ? "assets" : "") + (assets && data ? "+" : "") + (data ? "data" : "");
+            try {
+                var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(gamePid));
+                try { vm.loadAgent(agentJar.toString(), "codingFps=15,reload=" + what); } finally { vm.detach(); }
+            } catch (com.sun.tools.attach.AgentLoadException e) {
+                if (!String.valueOf(e.getMessage()).endsWith(": 0")) throw e;
+            }
+            lastResources = what + " (" + copied + " file(s))";
+            log.accept("resources: " + copied + " file(s) copied, reload " + what);
+            return true;
+        } catch (Exception e) {
+            log.accept("resources failed: " + e);
+            return false;
+        }
+    }
+
     boolean awaitFastCompile(Workspace.Target t, int seconds) throws InterruptedException {
         fast.prepareAsync(t);
         for (int i = 0; i < seconds * 4 && !fast.ready(t); i++) {
@@ -64,7 +119,7 @@ final class Hotswapper {
             int[] n = {0};
             if (!fresh) r = fast.compile(t, sourcesSince - 1000, n);   // 1 s slack for coarse file times
             if (r == FastCompile.Result.FAILED) return false;           // real compile errors: keep sourcesSince, retry them next time
-            if (r == FastCompile.Result.OK) lastCompiler = "javac";
+            if (r == FastCompile.Result.OK) lastCompiler = fast.lastMode;
             else {
                 fast.prepareAsync(t);
                 if (!compile(t)) return false;

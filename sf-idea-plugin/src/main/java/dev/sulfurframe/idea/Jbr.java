@@ -58,6 +58,11 @@ final class Jbr {
                         try { t.javaLauncher.set((org.gradle.jvm.toolchain.JavaLauncher) null) } catch (Throwable ignored) { }
                         t.executable = sfJbr
                         t.jvmArgs('-XX:+AllowEnhancedClassRedefinition')
+                        // Mixin's own hotswap agent: re-applies a changed mixin to its targets when the mixin is redefined
+                        t.doFirst {
+                            def mixin = t.classpath.files.find { it.name ==~ /(sponge-)?mixin-[0-9].*\\.jar/ }
+                            if (mixin != null) t.jvmArgs("-javaagent:" + mixin.absolutePath, '-Dmixin.hotSwap=true')
+                        }
                     }
                 }
             }

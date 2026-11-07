@@ -41,7 +41,7 @@ public final class SulfurToolWindowFactory implements ToolWindowFactory, DumbAwa
                         for (var ev : events) {
                             if (!(ev instanceof com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent)) continue;
                             String p = ev.getPath();
-                            if (p.endsWith(".java") || p.endsWith(".kt")) { pending.add(Path.of(p)); any = true; }
+                            if (p.endsWith(".java") || p.endsWith(".kt") || p.contains("/resources/")   /* VFS paths always use '/' */) { pending.add(Path.of(p)); any = true; }
                         }
                         if (any) javax.swing.SwingUtilities.invokeLater(timer::restart);
                     }

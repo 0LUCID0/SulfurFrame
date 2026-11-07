@@ -214,7 +214,7 @@ final class AutoTest {
         long ms = System.currentTimeMillis() - t0;
         check("hotswap: method body change applied", ran && redefinedAny(p.hotswapper.lastResult) && waitForLog(gameLog, "[SF-PROBE] v2", 15),
                 "result " + p.hotswapper.lastResult + ", " + ms + " ms incl. compile (" + p.hotswapper.lastCompiler + ")");
-        check("hotswap compiled with javac, not Gradle", "javac".equals(p.hotswapper.lastCompiler) && ms < 8000,
+        check("hotswap compiled with javac, not Gradle", p.hotswapper.lastCompiler.startsWith("javac") && ms < 8000,
                 p.hotswapper.lastCompiler + ", " + ms + " ms");
 
         // save path: change on disk -> VFS refresh -> BulkFileListener -> debounce -> hotswap
@@ -245,7 +245,40 @@ final class AutoTest {
             check("hotswap: added method -> restart needed (no JBR)", p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed")),
                     String.valueOf(p.hotswapper.lastResult));
         }
+
+        // warm compile in the IDE: the whole swap (compile + attach + redefine) well under the old 2.4 s
+        Files.writeString(src, original.replace("return \"v1\";", "return \"v6\";"));
+        sleep(1500);
+        long t1 = System.currentTimeMillis();
+        while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(200);
+        long ms6 = System.currentTimeMillis() - t1;
+        check("hotswap compiled in the IDE (warm), whole swap fast", "javac in the IDE".equals(p.hotswapper.lastCompiler) && ms6 < 1500
+                        && waitForLog(gameLog, "[SF-PROBE] v6", 20), p.hotswapper.lastCompiler + ", " + ms6 + " ms");
+        check("in-game message after a swap", waitForLog(gameLog, "in-game message shown: Hotswap", 10), "agent log line");
         Files.writeString(src, original);
+
+        // a mixin: Mixin's own hotswap agent (put on the game JVM by Run client) re-applies it to its target
+        Path mixin = src.getParent().resolve("mixin/SfMixinProbe.java");
+        if (Files.exists(mixin) && waitForLog(gameLog, "[SF-MIXIN] m1", 30)) {
+            String m = Files.readString(mixin);
+            Files.writeString(mixin, m.replace("\"m1\"", "\"m2\""));
+            sleep(1500);
+            while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(500);
+            check("hotswap: mixin change re-applied to its target", waitForLog(gameLog, "Redefining mixin", 10) && waitForLog(gameLog, "[SF-MIXIN] m2", 20),
+                    String.valueOf(p.hotswapper.lastResult));
+            Files.writeString(mixin, m);
+        }
+
+        // resources: copy into the dev resource dir + client reload (F3+T)
+        Path lang = t.dir().resolve("src/main/resources/assets/lcd/lang/ko_kr.json");
+        if (Files.exists(lang)) {
+            String l = Files.readString(lang);
+            Files.writeString(lang, l + "\n");
+            boolean ok = p.hotswapper.reloadResources(t, p.embedder.gamePid(), agentJarOf(p), java.util.List.of(lang));
+            check("resource change -> client reload", ok && p.hotswapper.lastResources.startsWith("assets")
+                            && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
+            Files.writeString(lang, l);
+        }
     }
 
     /** Gradle recompiles dependents too, so more than the edited class may be swapped. */

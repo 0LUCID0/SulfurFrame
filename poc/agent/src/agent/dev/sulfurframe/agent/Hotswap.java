@@ -50,6 +50,8 @@ final class Hotswap {
             for (String r : restart) out.add("restart needed: " + r);
             out.add("ms " + (System.nanoTime() - t0) / 1_000_000);
             SfHooks.log("hotswap: redefined " + ok + " class(es)" + (restart.isEmpty() ? "" : ", " + restart.size() + " need a restart"));
+            if (!restart.isEmpty()) GameMessage.show(inst, "§eHotswap: " + ok + " applied, " + restart.size() + " need a restart");
+            else if (ok > 0) GameMessage.show(inst, "§aHotswap: " + ok + (ok == 1 ? " class" : " classes") + " reloaded");
         } catch (Throwable t) {
             out.add("error " + t);
             SfHooks.log("hotswap failed: " + t);

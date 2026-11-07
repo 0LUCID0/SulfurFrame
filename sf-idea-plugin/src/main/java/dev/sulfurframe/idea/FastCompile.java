@@ -1,5 +1,4 @@
 package dev.sulfurframe.idea;
-
 import dev.sulfurframe.idea.profile.Workspace;
 
 import java.io.IOException;
@@ -23,8 +22,11 @@ import java.util.stream.Stream;
 final class FastCompile {
     enum Result { OK, FAILED, UNAVAILABLE }
 
+    /** "javac in the IDE" or "javac process": how the last compile ran. */
+    volatile String lastMode = "";
+
     record SourceSet(String name, List<Path> srcDirs, Path out, List<Path> classpath, String release, String encoding,
-                     Path javac, List<String> args) { }
+                     Path javac, List<String> args, List<Path> resSrcDirs, Path resOut) { }
 
     private final Consumer<String> log;
     private final Path cacheDir;
@@ -36,7 +38,7 @@ final class FastCompile {
     private static String key(Workspace.Target t) { return t.buildRoot().toAbsolutePath().normalize() + "|" + t.projectPath(); }
 
     private Path cacheFile(Workspace.Target t) {
-        return cacheDir.resolve("classpath-" + Integer.toHexString(key(t).hashCode()) + ".txt");
+        return cacheDir.resolve("classpath2-" + Integer.toHexString(key(t).hashCode()) + ".txt");
     }
 
     /** The cached source sets, or null if there is no cache or a build file is newer than it. */
@@ -54,11 +56,14 @@ final class FastCompile {
 
     /** Ask Gradle for the class paths in the background, unless cached or already running. */
     void prepareAsync(Workspace.Target t) {
-        if (ready(t) || !preparing.add(key(t))) return;
+        if (ready(t)) { if (warmed.add(key(t))) warmUp(t); return; }
+        if (!preparing.add(key(t))) return;
         Thread.ofPlatform().daemon().name("sf-classpath").start(() -> {
-            try { prepare(t); } finally { preparing.remove(key(t)); }
+            try { prepare(t); if (ready(t) && warmed.add(key(t))) warmUp(t); } finally { preparing.remove(key(t)); }
         });
     }
+
+    private final Set<String> warmed = Collections.synchronizedSet(new HashSet<>());
 
     boolean preparing(Workspace.Target t) { return preparing.contains(key(t)); }
 
@@ -104,8 +109,14 @@ final class FastCompile {
             if (s.name().equals("test") || s.name().endsWith("Test")) continue;   // not on the game's class path
             var files = changedSources(s, since);
             if (files.isEmpty()) continue;
-            if (s.javac() == null || !Files.isExecutable(s.javac())) return Result.UNAVAILABLE;
-            if (!javac(s, sets, files)) return Result.FAILED;
+            Boolean ok = inProcess(s, sets, files);   // null: no compiler in this runtime
+            lastMode = "javac in the IDE";
+            if (ok == null) {
+                if (s.javac() == null || !Files.isExecutable(s.javac())) return Result.UNAVAILABLE;
+                ok = javac(s, sets, files);
+                lastMode = "javac process";
+            }
+            if (!ok) return Result.FAILED;
             total += files.size();
         }
         compiled[0] = total;
@@ -139,6 +150,100 @@ final class FastCompile {
         } finally {
             Files.deleteIfExists(argfile);
         }
+    }
+
+    // ------------------------------------------------------------------ in-process javac (warm, no JVM start)
+
+    /**
+     * The IDE runs on JBR, which ships jdk.compiler and ct.sym: compile right here with javax.tools, --release of the
+     * project. One file manager per source set, kept between swaps, so jar indexes of the (large) Minecraft class path
+     * are read once. Returns null if this runtime has no compiler.
+     */
+    private Boolean inProcess(SourceSet s, List<SourceSet> all, List<Path> files) throws IOException {
+        var jc = compiler();
+        if (jc == null) return null;
+        var fm = fileManager(jc, s, all);
+        var diags = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
+        var opts = new ArrayList<>(List.of("-implicit:none", "-proc:none", "-nowarn", "-g",
+                "-encoding", s.encoding().isEmpty() ? "UTF-8" : s.encoding()));
+        if (!s.release().isEmpty()) { opts.add("--release"); opts.add(s.release()); }
+        for (String x : s.args()) if (!x.startsWith("-A") && !x.startsWith("-Xplugin") && !x.startsWith("-processor")) opts.add(x);
+        boolean ok;
+        synchronized (fm) {
+            ok = jc.getTask(null, fm, diags, opts, null, fm.getJavaFileObjectsFromPaths(files)).call();
+        }
+        if (!ok) {
+            log.accept("hotswap: compile failed");
+            diags.getDiagnostics().stream().filter(d -> d.getKind() == javax.tools.Diagnostic.Kind.ERROR).limit(8)
+                    .forEach(d -> log.accept("  " + (d.getSource() == null ? "" : Path.of(d.getSource().toUri()).getFileName() + ":" + d.getLineNumber() + ": ") + d.getMessage(null)));
+        }
+        return ok;
+    }
+
+    private static volatile javax.tools.JavaCompiler compiler;
+    private static volatile boolean compilerLooked;
+
+    /**
+     * The runtime's javac. ToolProvider finds nothing inside IntelliJ (its own system class loader), but the IDE starts
+     * with --add-opens jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED, so JavacTool.create() is reachable.
+     */
+    static javax.tools.JavaCompiler compiler() {
+        if (compilerLooked) return compiler;
+        javax.tools.JavaCompiler c = javax.tools.ToolProvider.getSystemJavaCompiler();
+        if (c == null) {
+            try { c = (javax.tools.JavaCompiler) Class.forName("com.sun.tools.javac.api.JavacTool").getMethod("create").invoke(null); }
+            catch (Throwable ignored) { }
+        }
+        compiler = c;
+        compilerLooked = true;
+        return c;
+    }
+
+    private final Map<SourceSet, javax.tools.StandardJavaFileManager> managers = new HashMap<>();
+
+    private synchronized javax.tools.StandardJavaFileManager fileManager(javax.tools.JavaCompiler jc, SourceSet s, List<SourceSet> all) throws IOException {
+        var fm = managers.get(s);
+        if (fm != null) return fm;
+        managers.keySet().removeIf(k -> k.name().equals(s.name()));   // a re-read class path replaces the old set
+        fm = jc.getStandardFileManager(null, null, StandardCharsets.UTF_8);
+        var cp = new LinkedHashSet<Path>();
+        for (SourceSet o : all) cp.add(o.out());
+        cp.addAll(s.classpath());
+        cp.removeIf(p -> !Files.exists(p));
+        fm.setLocationFromPaths(javax.tools.StandardLocation.CLASS_PATH, cp);
+        fm.setLocationFromPaths(javax.tools.StandardLocation.SOURCE_PATH, List.of());
+        Files.createDirectories(s.out());
+        fm.setLocationFromPaths(javax.tools.StandardLocation.CLASS_OUTPUT, List.of(s.out()));
+        managers.put(s, fm);
+        return fm;
+    }
+
+    /** Compile one source of each set into a scratch dir in the background, so the first real swap is warm. */
+    void warmUp(Workspace.Target t) {
+        var sets = sourceSets(t);
+        if (sets == null || compiler() == null) return;
+        Thread.ofPlatform().daemon().name("sf-javac-warmup").start(() -> {
+            long t0 = System.currentTimeMillis();
+            try {
+                for (SourceSet s : sets) {
+                    if (s.name().equals("test") || s.name().endsWith("Test")) continue;
+                    var files = changedSources(s, 0);
+                    if (files.isEmpty()) continue;
+                    var jc = compiler();
+                    var fm = fileManager(jc, s, sets);
+                    Path scratch = Files.createTempDirectory(cacheDir, "warmup-");
+                    var opts = new ArrayList<>(List.of("-implicit:none", "-proc:none", "-nowarn"));
+                    if (!s.release().isEmpty()) { opts.add("--release"); opts.add(s.release()); }
+                    synchronized (fm) {   // output to the scratch dir for this one, then back
+                        fm.setLocationFromPaths(javax.tools.StandardLocation.CLASS_OUTPUT, List.of(scratch));
+                        try { jc.getTask(null, fm, d -> { }, opts, null, fm.getJavaFileObjectsFromPaths(files.subList(0, 1))).call(); }
+                        finally { fm.setLocationFromPaths(javax.tools.StandardLocation.CLASS_OUTPUT, List.of(s.out())); }
+                    }
+                    try (var w = Files.walk(scratch)) { w.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete()); }
+                }
+                log.accept("javac warmed up in " + (System.currentTimeMillis() - t0) + " ms");
+            } catch (Exception e) { log.accept("javac warm-up skipped: " + e); }
+        });
     }
 
     private static String q(Object o) { return "\"" + o.toString().replace('\\', '/') + "\""; }
@@ -182,8 +287,8 @@ final class FastCompile {
     static List<SourceSet> parse(List<String> lines) {
         var sets = new ArrayList<SourceSet>();
         String name = null, release = "", enc = "";
-        Path out = null, javac = null, javaHome = null;
-        List<Path> src = new ArrayList<>(), cp = new ArrayList<>();
+        Path out = null, javac = null, javaHome = null, resOut = null;
+        List<Path> src = new ArrayList<>(), cp = new ArrayList<>(), resSrc = new ArrayList<>();
         List<String> args = new ArrayList<>();
         for (String line : lines) {
             int tab = line.indexOf('\t');
@@ -192,10 +297,12 @@ final class FastCompile {
             switch (k) {
                 case "javahome" -> javaHome = Path.of(v);
                 case "set" -> {
-                    if (name != null && out != null) sets.add(new SourceSet(name, src, out, cp, release, enc, javac(javac, javaHome), args));
-                    name = v; release = ""; enc = ""; out = null; javac = null;
-                    src = new ArrayList<>(); cp = new ArrayList<>(); args = new ArrayList<>();
+                    if (name != null && out != null) sets.add(new SourceSet(name, src, out, cp, release, enc, javac(javac, javaHome), args, resSrc, resOut));
+                    name = v; release = ""; enc = ""; out = null; javac = null; resOut = null;
+                    src = new ArrayList<>(); cp = new ArrayList<>(); args = new ArrayList<>(); resSrc = new ArrayList<>();
                 }
+                case "ressrc" -> resSrc.add(Path.of(v));
+                case "resout" -> resOut = Path.of(v);
                 case "src" -> src.add(Path.of(v));
                 case "out" -> out = Path.of(v);
                 case "cp" -> cp.add(Path.of(v));
@@ -206,7 +313,7 @@ final class FastCompile {
                 default -> { }
             }
         }
-        if (name != null && out != null) sets.add(new SourceSet(name, src, out, cp, release, enc, javac(javac, javaHome), args));
+        if (name != null && out != null) sets.add(new SourceSet(name, src, out, cp, release, enc, javac(javac, javaHome), args, resSrc, resOut));
         return sets;
     }
 
@@ -233,6 +340,8 @@ final class FastCompile {
                             ss.java.srcDirs.each { lines << "src\\t" + it.absolutePath }
                             def out = jc.hasProperty('destinationDirectory') ? jc.destinationDirectory.get().asFile : jc.destinationDir
                             lines << "out\\t" + out.absolutePath
+                            ss.resources.srcDirs.each { lines << "ressrc\\t" + it.absolutePath }
+                            if (ss.output.resourcesDir != null) lines << "resout\\t" + ss.output.resourcesDir.absolutePath
                             ss.compileClasspath.files.each { lines << "cp\\t" + it.absolutePath }
                             def rel = null
                             try { rel = jc.options.release.orNull } catch (Throwable ignored) { }

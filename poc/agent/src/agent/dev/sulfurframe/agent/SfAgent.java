@@ -57,11 +57,18 @@ public final class SfAgent {
 
     private static synchronized void install(String args, Instrumentation inst, boolean attached) {
         // "redefine=<list file>": hotswap request from the IDE (each request is a fresh attach)
-        String redefine = null;
-        if (args != null) for (String kv : args.split(",")) if (kv.startsWith("redefine=")) redefine = kv.substring("redefine=".length());
-        if (redefine != null) {
-            if (!installed) install(args.replace("redefine=" + redefine, "").replaceAll(",+$", ""), inst, attached);
-            Hotswap.redefine(inst, redefine);
+        // "reload=assets+data": resources changed (the IDE copied them into the dev resource dir)
+        String redefine = null, reload = null;
+        StringBuilder rest = new StringBuilder();
+        if (args != null) for (String kv : args.split(",")) {
+            if (kv.startsWith("redefine=")) redefine = kv.substring("redefine=".length());
+            else if (kv.startsWith("reload=")) reload = kv.substring("reload=".length());
+            else if (!kv.isEmpty()) rest.append(rest.length() == 0 ? "" : ",").append(kv);
+        }
+        if (redefine != null || reload != null) {
+            if (!installed) install(rest.toString(), inst, attached);
+            if (redefine != null) Hotswap.redefine(inst, redefine);
+            if (reload != null) ResourceReload.reload(inst, reload.contains("assets"), reload.contains("data"));
             return;
         }
         SfHooks.configure(args);

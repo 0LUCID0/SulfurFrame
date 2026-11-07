@@ -129,7 +129,14 @@ final class SulfurPanel extends JPanel {
         var t = selectedTarget();
         if (!swapOnSave.isSelected() || t == null || !embedder.attached()) return;
         Path dir = t.dir().toAbsolutePath().normalize();
-        if (files.stream().anyMatch(f -> f.toAbsolutePath().normalize().startsWith(dir))) hotswapAsync();
+        var mine = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(dir)).toList();
+        var code = mine.stream().filter(f -> f.toString().endsWith(".java") || f.toString().endsWith(".kt")).toList();
+        var res = mine.stream().filter(f -> !code.contains(f)).toList();
+        if (!code.isEmpty()) hotswapAsync();
+        if (!res.isEmpty()) {
+            long pid = embedder.gamePid();
+            Thread.ofPlatform().daemon().name("sf-resources").start(() -> hotswapper.reloadResources(t, pid, agentJar, res));
+        }
     }
 
     void log(String s) {

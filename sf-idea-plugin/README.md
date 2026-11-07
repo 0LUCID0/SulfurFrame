@@ -206,12 +206,34 @@ PASS hotswap (JBR): removed field + method applied              [redefined 1; "[
 ```
 게임 로그는 `v1 ×5 → v2 → v3`로 바뀌었고, **게임은 재시작하지 않았습니다.**
 
+### 보강 (IDE 안 컴파일, Mixin, 리소스, 게임 안 알림)
+- **IDE 안에서 컴파일:** javac를 매번 새 프로세스로 띄우지 않고, IDE의 JBR에 들어 있는 javac(`jdk.compiler`, `ct.sym`)로 IDE 안에서 바로 컴파일합니다(`--release`는 프로젝트 것).
+  소스셋마다 파일 매니저를 유지해서 Minecraft 클래스패스 jar 색인을 한 번만 읽고, 클래스패스를 받은 직후 백그라운드에서 한 번 미리 컴파일해 둡니다.
+  IntelliJ 안에서는 `ToolProvider`가 javac를 못 찾아서(IDE 자체 시스템 클래스 로더), IDE가 실행 옵션으로 열어 둔 `com.sun.tools.javac.api.JavacTool`을 직접 씁니다. 없으면 예전처럼 javac 프로세스로 돌아갑니다.
+  결과: 교체 한 번(컴파일 + attach + 교체)이 **0.47~0.86초**, 구조 변경 직후 등은 1.3초 안팎(이전 2.4초, 그 전 Gradle 15초).
+- **Mixin:** Run client가 게임에 Mixin 자체의 핫스왑 에이전트(`-javaagent:<클래스패스의 (sponge-)mixin jar>`, `-Dmixin.hotSwap=true`)를 붙입니다. Mixin은 이때 Mixin 클래스마다 같은 이름의 가짜 클래스를 로드해 두고, 그 클래스가 교체되면 Mixin을 다시 읽어 대상 클래스에 다시 적용합니다. 그래서 우리 핫스왑이 Mixin 클래스를 그대로 교체하면 됩니다(로그 "Redefining mixin ...").
+- **리소스:** `src/*/resources` 저장을 감지해, Gradle이 알려 준 소스셋의 리소스 출력 폴더(`processResources`가 채우는 곳, dev 게임이 읽는 곳)에 바로 복사하고 에이전트를 부릅니다.
+  - `assets/` 아래(텍스처, 모델, 언어, 소리 등): 클라이언트 리소스 다시 불러오기(F3+T와 같음)
+  - `data/` 아래(레시피, 루트 테이블, 태그 등): 내장 서버에서 `/reload`. 월드가 열려 있을 때만 됩니다.
+  - `fabric.mod.json`, `mods.toml` 같은 모드 메타데이터는 `processResources`가 값을 채워 넣는 파일이라 복사하지 않고 "재시작 필요"로 알립니다.
+- **게임 안 알림:** 교체나 리소스 새로고침이 끝나면 핫바 위 액션바에 "Hotswap: 1 class reloaded" / "Resources reloaded (assets)" 같은 줄을 띄웁니다. 재시작이 필요한 클래스가 있으면 노란색으로 알립니다. 월드 안(HUD가 있을 때)에서만 보입니다.
+  - 게임 안 알림과 리소스 새로고침은 개발 환경의 이름(Mojang 매핑: NeoForge/Forge 개발 환경과 바닐라 26.x, Yarn: Fabric 개발 환경)으로 Minecraft 클래스를 찾습니다. 난독화된 게임에서는 동작하지 않습니다.
+
+검증(Windows 샌드박스 IDE, lucid-study-mod 사본 1.21.1 Fabric, jbr-21, 시험용 Mixin `SfMixinProbe`를 사본에 추가):
+```
+PASS hotswap: method body change applied            [864 ms incl. compile (javac in the IDE)]
+PASS hotswap compiled in the IDE (warm), whole swap fast
+PASS in-game message after a swap                   (에이전트 로그 "in-game message shown: Hotswap: 1 class reloaded")
+PASS hotswap: mixin change re-applied to its target ("Redefining mixin kr/kro/lucid/mixin/SfMixinProbe", 로그 m1 -> m2)
+PASS resource change -> client reload               (언어 파일 -> "Reloading ResourceManager")
+```
+데이터 리로드는 월드를 연 게임에 직접 attach해서 확인했습니다("resources: /reload on the integrated server", 서버 스레드 "Loaded 1295 recipes").
+
 ### 한계와 다음 과제
-- **컴파일 시간:** javac 경로는 약 2.4초입니다(이전 Gradle 경로는 약 15초). 대부분 javac JVM 기동과 Minecraft 클래스패스 읽기라, 상주 컴파일러를 쓰면 더 줄일 수 있습니다.
 - **구조 변경:** JBR이 있으면 됩니다(위). Java 8/17 게임용 JBR은 시험하지 않았습니다. Attach PID로 붙인 게임은 이미 떠 있는 JVM이라, 직접 JBR과 플래그로 띄운 경우에만 구조 변경이 됩니다.
-- **Mixin 클래스:** 교체돼도 이미 적용된 Mixin은 다시 적용되지 않습니다.
+- **새로 추가한 정적 필드의 초기값, 생성자 변경:** 이미 만들어진 객체와 클래스 초기화에는 반영되지 않습니다.
 - **Fabric 환경 어노테이션:** 바뀐 바이트에는 Knot의 `@Environment` 정리가 적용되지 않습니다. 클라이언트 개발 환경에서는 대개 문제가 없습니다.
-- **게임 안 토스트 알림:** 아직 없습니다. 결과는 툴윈도우 로그에만 나옵니다.
+- NeoForge/Forge, Linux에서의 Mixin·리소스·게임 안 알림은 아직 시험하지 않았습니다.
 
 ## Linux (X11)
 
