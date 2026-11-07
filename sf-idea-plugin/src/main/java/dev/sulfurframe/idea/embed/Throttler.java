@@ -33,7 +33,26 @@ final class Throttler {
     volatile long reclaimDelayOverrideMs = -1;
     final long reclaimDelayMs;
 
-    Throttler(Consumer<String> log, long reclaimDelayMs) { this.log = log; this.reclaimDelayMs = reclaimDelayMs; }
+    /** How the platform hides/shows the game window and hands physical memory back. */
+    interface WindowOps {
+        void hide(long window);
+        void show(long window);
+        /** true if pages were returned to the OS */
+        boolean trim(long pid);
+    }
+
+    /** Windows: minimize (vanilla caps an iconified window at 10 fps), restore, EmptyWorkingSet. */
+    static final WindowOps WIN32 = new WindowOps() {
+        public void hide(long w) { Win32.showWindow(w, Win32.SW_SHOWMINNOACTIVE); }
+        public void show(long w) { Win32.showWindow(w, Win32.SW_SHOWNOACTIVATE); }
+        public boolean trim(long pid) { return Win32.emptyWorkingSet(pid); }
+    };
+
+    private final WindowOps ops;
+
+    Throttler(Consumer<String> log, long reclaimDelayMs) { this(log, reclaimDelayMs, WIN32); }
+
+    Throttler(Consumer<String> log, long reclaimDelayMs, WindowOps ops) { this.log = log; this.reclaimDelayMs = reclaimDelayMs; this.ops = ops; }
 
     void bind(long hwnd, long pid) { this.hwnd = hwnd; this.pid = pid; }
 
@@ -54,7 +73,7 @@ final class Throttler {
     }
 
     private void enterHidden() {
-        Win32.showWindow(hwnd, Win32.SW_SHOWMINNOACTIVE);   // vanilla: iconified -> 10 fps
+        ops.hide(hwnd);
         long d = reclaimDelayOverrideMs >= 0 ? reclaimDelayOverrideMs : reclaimDelayMs;
         pendingReclaim = worker.schedule(this::reclaim, d, TimeUnit.MILLISECONDS);
     }
@@ -68,14 +87,14 @@ final class Throttler {
         flagsTightened = true;
         jcmd("GC.run");
         if (state != State.HIDDEN) return;                  // came back during the GC: keep the pages
-        boolean trimmed = Win32.emptyWorkingSet(pid);
+        boolean trimmed = ops.trim(pid);
         reclaimedAtNanos = System.nanoTime();
         log.accept("[throttle] reclaimed (heap shrink + working-set trim=" + trimmed + ") in " + (System.nanoTime() - t0) / 1_000_000 + " ms");
     }
 
     private void leaveHidden() {
         if (pendingReclaim != null) pendingReclaim.cancel(false);
-        Win32.showWindow(hwnd, Win32.SW_SHOWNOACTIVATE);
+        ops.show(hwnd);
         worker.execute(() -> {
             if (!flagsTightened) return;
             // JVM defaults; order matters (Min must stay <= Max)
@@ -95,11 +114,13 @@ final class Throttler {
     static String jcmdFor(long pid) {
         var game = ProcessHandle.of(pid).flatMap(p -> p.info().command()).map(Path::of).orElse(null);
         if (game != null) {
-            Path j = game.resolveSibling("jcmd.exe");
+            Path j = game.resolveSibling(EXE);
             if (java.nio.file.Files.exists(j)) return j.toString();
         }
-        return Path.of(System.getProperty("java.home"), "bin", "jcmd.exe").toString();
+        return Path.of(System.getProperty("java.home"), "bin", EXE).toString();
     }
+
+    private static final String EXE = System.getProperty("os.name", "").startsWith("Windows") ? "jcmd.exe" : "jcmd";
 
     String jcmd(String cmd) {
         try {

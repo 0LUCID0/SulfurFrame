@@ -72,6 +72,7 @@ java -cp out dev.sulfurframe.idea.profile.ProfileSelfTest sf-idea-plugin/src/tes
 fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접 선언, 버전 카탈로그)와 로컬 실제 프로젝트 4개를 정확히 감지했습니다.
 
 ## 아직 안 된 것
+- Linux: F11 전체화면, 실제 Linux 데스크톱(GNOME/KDE)과 GPU 드라이버 확인, 26.x(SDL3)와 1.12.2 이하(LWJGL 2). 아래 "Linux (X11)" 참고.
 - 모드마다 빌드와 월드가 따로인 불편(공유 인스턴스/월드), Gradle 플러그인 기반 정식 빌드, 마켓플레이스 배포 형태는 아직입니다.
 
 ## 컨테이너 폴더와 멀티 버전 프로젝트 (`profile/Workspace.java`)
@@ -206,3 +207,35 @@ PASS hotswap: added method -> restart needed  [restart needed: kr.kro.lucid.SfHo
 - **Mixin 클래스:** 교체돼도 이미 적용된 Mixin은 다시 적용되지 않습니다.
 - **Fabric 환경 어노테이션:** 바뀐 바이트에는 Knot의 `@Environment` 정리가 적용되지 않습니다. 클라이언트 개발 환경에서는 대개 문제가 없습니다.
 - **게임 안 토스트 알림:** 아직 없습니다. 결과는 툴윈도우 로그에만 나옵니다.
+
+## Linux (X11)
+
+같은 플러그인이 Linux에서는 `embed/X11Embedder.java`를 씁니다(`GameView.create`가 OS로 고름).
+Windows의 `GameEmbedder`와 같은 기능 묶음(`GameView` 인터페이스)이고, X11 호출은 `embed/X11.java`(libX11 FFM)에 모았습니다.
+창 조회는 `embed/NativeWindows.java`가 두 OS를 감쌉니다(런처와 자가 테스트가 사용).
+
+- **IDE가 X11로 돌아야 합니다.** Wayland 세션의 IntelliJ는 Wayland 툴킷을 쓰는데, Wayland에는 다른 프로그램의 창을 자식으로 넣는 방법이 없습니다. `-Dawt.toolkit.name=XToolkit`로 실행하면 됩니다. 아니면 Canvas에 안내 문구가 나오고 attach를 거절합니다.
+- **임베드:** `XWithdrawWindow` → `override_redirect` 켜기 → 창 관리자가 프레임에서 뺄 때까지 대기 → Canvas 아래로 `XReparentWindow`, 매핑. 창 관리자가 되가져가면 다시 시도하고, 에이전트도 즉시 돌려놓습니다.
+- **키보드:** X11에서는 자식 창을 클릭해도 포커스가 옮겨지지 않습니다. 창 관리자들이 쓰는 방식대로 게임 창의 버튼에 패시브 그랩(`XGrabButton`, 동기 모드)을 걸고, 클릭이 오면 `XSetInputFocus` 후 `XAllowEvents(ReplayPointer)`로 그 클릭을 게임에 그대로 넘깁니다. IDE의 다른 곳을 클릭하면 키보드를 AWT로 돌려줍니다.
+- **숨김/이동:** 툴윈도우를 숨기거나 옮기기 전에 게임을 루트로 옮기고 매핑을 해제(park)합니다. 다시 보이면 새 Canvas로 넣습니다. 숨김 상태에서는 Windows의 최소화 대신 매핑 해제를 씁니다(자식 창에는 "최소화"가 없음, FPS는 에이전트가 제한). 힙 축소(jcmd)는 같고, 워킹셋 트림은 Windows 전용입니다.
+- **IDE 종료:** 셧다운 훅이 `override_redirect`를 끄고 루트로 돌려 일반 창으로 남깁니다. 크래시 때는 에이전트의 X11 구명보트가 월드를 저장하고 게임을 끝냅니다(`poc/embed/README.md`).
+- 폴더 탐색, 버전 결정, Run client(`gradlew`), 핫스왑은 OS와 무관한 코드라 그대로 씁니다. Run client와 핫스왑을 Linux IDE에서 실제로 돌려 보지는 않았습니다.
+
+검증(WSL2 Ubuntu 24.04 + WSLg, IntelliJ IDEA 2026.2.3 Linux판 `-Dawt.toolkit.name=XToolkit`, 바닐라 1.21.1, `-Dsulfurframe.autotest.pid`):
+```
+PASS profile detected                 [FABRIC 1.21.1 0.17.2 (Java 21)]
+PASS embedded in the tool window
+PASS game sized to the canvas (16:9 fit)
+PASS survives floating the tool window
+PASS survives re-docking
+PASS hidden -> game minimized         (X11: 매핑 해제, state HIDDEN)
+PASS shown -> game restored
+PASS 16:9 letterbox
+F11 fullscreen: not handled on Linux yet (skipped)
+PASS open as editor tab
+PASS tab closed -> back in the tool window
+failures: 0
+```
+![linux](snapshot-linux.png)
+
+Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client + 핫스왑 자동 테스트를 다시 돌려 전부 통과(javac 핫스왑 2.4초).

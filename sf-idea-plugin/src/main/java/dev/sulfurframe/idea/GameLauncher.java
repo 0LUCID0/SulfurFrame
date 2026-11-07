@@ -26,7 +26,7 @@ final class GameLauncher {
         Path dir = target.buildRoot();
         Path wrapper = findWrapper(dir);
         if (wrapper == null) { log.accept("no gradlew.bat in " + dir + " or its parents"); return; }
-        Set<Long> before = new HashSet<>(dev.sulfurframe.idea.embed.Win32Access.gameWindows());
+        Set<Long> before = new HashSet<>(dev.sulfurframe.idea.embed.NativeWindows.gameWindows());
         try {
             var pb = new ProcessBuilder(wrapper.toString(), target.runTask(), "--console=plain").directory(dir.toFile()).redirectErrorStream(true);
             gradle = pb.start();
@@ -39,9 +39,9 @@ final class GameLauncher {
         Thread.ofPlatform().daemon().name("sf-wait-window").start(() -> {
             long deadline = System.currentTimeMillis() + 10 * 60_000;
             while (System.currentTimeMillis() < deadline && gradle.isAlive()) {
-                for (long h : dev.sulfurframe.idea.embed.Win32Access.gameWindows()) {
+                for (long h : dev.sulfurframe.idea.embed.NativeWindows.gameWindows()) {
                     if (before.contains(h)) continue;
-                    long pid = dev.sulfurframe.idea.embed.Win32Access.pidOf(h);
+                    long pid = dev.sulfurframe.idea.embed.NativeWindows.pidOf(h);
                     log.accept("game window appeared (pid " + pid + ")");
                     onWindow.accept(pid, h);
                     return;
@@ -67,7 +67,7 @@ final class GameLauncher {
 
     static Path findWrapper(Path dir) {
         for (Path d = dir; d != null; d = d.getParent()) {
-            Path w = d.resolve("gradlew.bat");
+            Path w = d.resolve(System.getProperty("os.name", "").startsWith("Windows") ? "gradlew.bat" : "gradlew");
             if (Files.exists(w)) return w;
         }
         return null;

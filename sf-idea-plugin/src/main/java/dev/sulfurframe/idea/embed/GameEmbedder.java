@@ -19,7 +19,7 @@ import java.util.function.Consumer;
  *   - the canvas' native window must never die with the game inside: park the game before removeNotify
  *   - SulfurFrame javaagent (FPS cap while editing, SDL3 focus fix) loaded through the Attach API
  */
-public final class GameEmbedder {
+public final class GameEmbedder implements GameView {
     private final Consumer<String> log;
     final Canvas canvas = new Canvas() {
         @Override public void update(Graphics g) { }

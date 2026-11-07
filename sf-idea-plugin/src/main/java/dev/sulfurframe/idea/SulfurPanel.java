@@ -1,6 +1,6 @@
 package dev.sulfurframe.idea;
 
-import dev.sulfurframe.idea.embed.GameEmbedder;
+import dev.sulfurframe.idea.embed.GameView;
 import dev.sulfurframe.idea.profile.ProjectProfile;
 import dev.sulfurframe.idea.profile.Workspace;
 
@@ -20,7 +20,7 @@ import java.util.function.Supplier;
  * embedded game, a short log.
  */
 final class SulfurPanel extends JPanel {
-    final GameEmbedder embedder;
+    final GameView embedder;
     private final GameLauncher launcher;
     private final JComboBox<Workspace.Target> targets = new JComboBox<>();
     private final JTextArea log = new JTextArea(5, 40);
@@ -38,7 +38,7 @@ final class SulfurPanel extends JPanel {
         this.projectDir = projectDir;
         this.savedTarget = savedTarget;
         this.saveTarget = saveTarget;
-        embedder = new GameEmbedder(this::log);
+        embedder = GameView.create(this::log);
         launcher = new GameLauncher(this::log);
         hotswapper = new Hotswapper(this::log, Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe"));
         agentJar = extractAgent();
