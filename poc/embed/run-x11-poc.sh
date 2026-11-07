@@ -9,7 +9,7 @@ JAVA25="${JAVA25:-/usr/lib/jvm/java-25-openjdk-amd64/bin/java}"
 export DISPLAY="${DISPLAY:-:0}"
 unset WAYLAND_DISPLAY            # GLFW 3.4 would pick Wayland under WSLg; the PoC is about X11
 if ! pgrep -f "client.main.Main" >/dev/null; then
-  setsid nohup "$JAVA25" McFetch.java launch "$V" ${SF_AGENT:+--agent "$SF_AGENT"} >/tmp/sf-x11-launch.log 2>&1 < /dev/null &
+  setsid nohup "$JAVA25" McFetch.java launch "$V" ${SF_AGENT:+--agent "$SF_AGENT"} ${SF_GAME_ARGS:+-- $SF_GAME_ARGS} >/tmp/sf-x11-launch.log 2>&1 < /dev/null &
   echo "[poc] launching Minecraft $V (log /tmp/sf-mc-$V.log)"
 fi
 exec "$JAVA25" --add-opens java.desktop/sun.awt=ALL-UNNAMED --add-opens java.desktop/sun.awt.X11=ALL-UNNAMED \

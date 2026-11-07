@@ -22,6 +22,7 @@ import static java.lang.foreign.ValueLayout.*;
  *        --enable-native-access=ALL-UNNAMED X11Host.java [--hold <s>] [--halt]
  *   --hold <s>   keep the game embedded for s seconds before ending (default 20)
  *   --halt       end with Runtime.halt (a crash, no cleanup) instead of a normal detach
+ *   --focus-test <game pid>  compare the game's CPU with keyboard focus vs focus on the host (agent FPS cap)
  * Prints "RESULT <PASS|FAIL> <check> [detail]" lines.
  */
 public class X11Host {
@@ -51,12 +52,41 @@ public class X11Host {
     static long root;
     static volatile long game, canvasWin;
     static int failures;
+    static long gamePid;
+
+    /** CPU use of a process over a few seconds, in % of one core (utime + stime from /proc, 100 ticks/s). */
+    static double cpu(long pid, int seconds) throws Exception {
+        long a = ticks(pid), t0 = System.nanoTime();
+        Thread.sleep(seconds * 1000L);
+        long b = ticks(pid);
+        return (b - a) / 100.0 / ((System.nanoTime() - t0) / 1e9) * 100;
+    }
+
+    /**
+     * Only the threads that draw: the render thread and Mesa's llvmpipe workers. The integrated server and chunk
+     * workers are busy right after joining a world whatever the frame rate, and would drown the difference.
+     */
+    static long ticks(long pid) throws Exception {
+        long sum = 0;
+        try (var tasks = java.nio.file.Files.list(java.nio.file.Path.of("/proc/" + pid + "/task"))) {
+            for (var t : tasks.toList()) {
+                String s;
+                try { s = java.nio.file.Files.readString(t.resolve("stat")); } catch (Exception e) { continue; }
+                String comm = s.substring(s.indexOf('(') + 1, s.lastIndexOf(')'));
+                if (!comm.startsWith("Render thread") && !comm.startsWith("llvmpipe")) continue;
+                String[] f = s.substring(s.lastIndexOf(')') + 2).split(" ");
+                sum += Long.parseLong(f[11]) + Long.parseLong(f[12]);   // utime, stime (fields 14, 15)
+            }
+        }
+        return sum;
+    }
 
     public static void main(String[] a) throws Throwable {
         int hold = 20; boolean halt = false;
         for (int i = 0; i < a.length; i++) {
             if (a[i].equals("--hold")) hold = Integer.parseInt(a[++i]);
             if (a[i].equals("--halt")) halt = true;
+            if (a[i].equals("--focus-test")) gamePid = Long.parseLong(a[++i]);
         }
         int unused = (int) XInitThreads.invokeExact();
         dpy = (MemorySegment) XOpenDisplay.invokeExact(MemorySegment.NULL);
@@ -125,6 +155,17 @@ public class X11Host {
         check("game follows a host resize", sizeMatches(canvas), size(game) + " vs canvas " + canvas.getWidth() + "x" + canvas.getHeight());
 
         focusGame();
+        if (gamePid > 0) {   // --focus-test: the agent caps the frame rate while the "editor" (host) has the keyboard
+            Thread.sleep(3000);
+            double busy = cpu(gamePid, 6);
+            int rr = (int) XSetInputFocus.invokeExact(dpy, canvasWin, 1, 0L);
+            rr = (int) XSync.invokeExact(dpy, 0);
+            Thread.sleep(3000);
+            double coding = cpu(gamePid, 6);
+            focusGame();
+            check("agent caps the game while the editor has focus", coding < busy * 0.6,
+                    String.format("render + llvmpipe CPU %.0f%% with focus, %.0f%% while coding", busy, coding));
+        }
         System.out.println("[host] embedded; holding " + hold + " s" + (halt ? ", then halting (crash)" : ", then detaching"));
         Thread.sleep(hold * 1000L);
 

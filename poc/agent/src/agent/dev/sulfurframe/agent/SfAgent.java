@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.BiFunction;
 import java.util.function.LongConsumer;
+import java.util.function.LongPredicate;
 import java.util.function.LongUnaryOperator;
 
 /**
@@ -47,7 +48,7 @@ public final class SfAgent {
         Object[] hooks = new Object[6];
         hooks[0] = (LongUnaryOperator) SfHooks::sdlWindowFromEvent;
         hooks[1] = (BiFunction<Object, Object, Object>) (got, event) -> SfHooks.sdlPollEvent((Boolean) got, event);
-        hooks[2] = (LongConsumer) SfHooks::beforeGlfwSwap;
+        hooks[2] = (LongPredicate) SfHooks::beforeGlfwSwap;
         hooks[3] = (LongConsumer) SfHooks::beforeSdlSwap;
         hooks[4] = (Runnable) SfHooks::beforeVkPresent;
         hooks[5] = (Runnable) SfHooks::beforeLwjgl2Update;

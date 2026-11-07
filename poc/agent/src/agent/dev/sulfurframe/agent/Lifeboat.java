@@ -29,6 +29,7 @@ final class Lifeboat {
     static void glfw(long window) {
         if (started || window == 0) return;
         glfwWindow = window;
+        if (SfHooks.LINUX) { X11Lifeboat.glfw(window); started = true; return; }
         try {
             Class<?> c = Class.forName("org.lwjgl.glfw.GLFWNativeWin32", false, SfHooks.lwjglClassLoader());
             start((Long) c.getMethod("glfwGetWin32Window", long.class).invoke(null, window));
@@ -93,7 +94,7 @@ final class Lifeboat {
         }
     }
 
-    private static void requestQuit() throws Exception {
+    static void requestQuit() throws Exception {
         ClassLoader l = SfHooks.lwjglClassLoader();
         if (glfwWindow != 0) {
             Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwSetWindowShouldClose", long.class, boolean.class).invoke(null, glfwWindow, true);

@@ -365,9 +365,29 @@ RESULT PASS detached back to the root             (분리 후 창 관리자 프�
   순서: `XWithdrawWindow` → `override_redirect` 켜기(창 관리자가 손대지 않는 창이 됨) → 창 관리자가 프레임에서 뺄 때까지 대기 → Canvas 아래로 옮기고 매핑. 그래도 되가져가면 다시 시도합니다(보통 1~2번).
   분리할 때는 반대로 `override_redirect`를 끄고 루트에 매핑하면, 창 관리자가 다시 프레임을 씌웁니다.
 - **크래시 때는 X11도 게임 창을 지킬 수 없음:** `XAddToSaveSet`은 Canvas를 만든 연결(AWT의 XToolkit 연결)에 등록해야 합니다. 그런데 그렇게 해도 서버가 게임 창을 옮겨 주는 곳은 "죽은 클라이언트가 만들지 않은 가장 가까운 조상"인 **창 관리자의 프레임**이고, 창 관리자는 호스트 창이 사라지면 그 프레임을 지웁니다. 게임 창도 함께 지워지고, GLFW가 지워진 창에 `XGetGeometry`를 보내 `BadDrawable`이 나면 Xlib 기본 오류 처리기가 게임 프로세스를 끝냅니다(월드 저장 없음).
-  프레임을 씌우는 창 관리자(Weston, Mutter, KWin 등)에서는 호스트 쪽 처리만으로 막을 수 없습니다. Windows처럼 게임 안 에이전트의 구명보트가 필요합니다(X 오류 처리기를 바꾸고, 창이 사라지면 `glfwSetWindowShouldClose`로 저장하고 종료).
+  프레임을 씌우는 창 관리자(Weston, Mutter, KWin 등)에서는 호스트 쪽 처리만으로 막을 수 없습니다. → 아래 에이전트의 X11 구명보트로 해결(창은 잃지만 월드는 저장).
+
+## 에이전트의 Linux/X11 부분 (`X11Lifeboat.java`, 같은 `sf-agent.jar`)
+
+- **포커스(FPS 제한):** X11에서는 `GLFW_FOCUSED`가 `XGetInputFocus() == 게임 창`이라 임베드된 자식 창에도 맞습니다(호스트가 클릭 때 `XSetInputFocus`). Linux에서는 이것을 씁니다.
+- **임베드 감지:** 호스트가 창 관리자에게서 창을 빼올 때 켜는 `override_redirect`를 250ms마다 확인합니다.
+- **임베드 중에는 X 오류가 치명적이지 않게:** `XSetErrorHandler`에 인자를 무시하는 C 함수(libc `getpid`)를 넣습니다(Xlib은 처리기 반환값을 쓰지 않음). GLFW는 오류가 필요한 호출 앞뒤로 자기 처리기를 잠깐 걸었다가 우리 것으로 되돌립니다. 분리되면 원래 처리기로 복구합니다.
+- **창이 사라지면:** `glfwSwapBuffers`를 건너뛰고(패치를 "훅이 true면 바로 return"으로 바꿈), `glfwSetWindowShouldClose`로 정상 종료를 요청합니다. 스왑을 건너뛰지 않으면 Mesa llvmpipe가 지워진 창에 화면을 내보내다 래스터라이저 스레드에서 SIGSEGV로 JVM이 죽습니다("Stopping!" 직후, 저장 전).
+- **창을 구하려는 시도(이벤트 스레드):** save-set이 게임 창을 창 관리자 프레임에 옮기는 ReparentNotify를 `XNextEvent`로 기다렸다가 조회 없이 즉시 루트로 옮깁니다. WSLg의 Weston은 매번 더 빨라서 창은 잃었지만, 같은 스레드가 임베드 도중 창 관리자가 창을 되가져가는 경우를 바로 돌려놓아 호스트가 첫 시도에 임베드합니다. 이전 부모(Canvas)가 아직 있으면 되가져간 것이고, 없으면 호스트가 죽은 것입니다.
+
+검증(WSLg, 바닐라 1.21.1, 월드 안, `run-x11-poc.sh ... --focus-test <pid> --halt`):
+```
+RESULT PASS reparented under the canvas (and stays)   [1 attempt(s)]
+RESULT PASS agent caps the game while the editor has focus  [render + llvmpipe CPU 365% with focus, 190% while coding]  (codingFps=3)
+[host] halt
+[SF-Agent] x11: host gone and the window manager was faster: window lost
+[SF-Agent] game window destroyed while embedded (IDE gone?): asking the game to quit so the world is saved
+Stopping! → Saving worlds → All dimensions are saved → 2초 뒤 종료, level.dat 갱신
+```
+- 정상 분리(`--halt` 없이): X 오류 처리기 복구, 게임은 프레임이 붙은 일반 창으로 계속 실행
+- FPS 제한은 llvmpipe가 월드를 원래 15fps 안팎으로 그려서 15로는 차이가 안 보였고, 3으로 시험했습니다. CPU는 서버·청크 스레드가 섞이지 않게 렌더 스레드와 llvmpipe 스레드만 셉니다.
+- Windows 회귀 확인: `glfwSwapBuffers` 패치가 분기를 갖게 돼서 1.21.1(LWJGL 3.3, 시작 시 로드와 실행 중 attach)과 1.13.2(LWJGL 3.1)를 다시 실행 → 패치·구명보트·포커스 정상, VerifyError 없음
 
 ### 아직 안 한 것
-- 에이전트의 Linux 부분: X11 포커스 판단(FPS 제한), 구명보트
 - IntelliJ 플러그인의 Linux 구현(`Win32` 대신 X11 백엔드), 실제 Linux 데스크톱(GNOME/KDE, Wayland 세션의 XWayland) 확인
 - SDL3(26.x)와 LWJGL 2(1.12.2 이하) 게임의 X11 임베드

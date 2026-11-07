@@ -13,6 +13,7 @@ import java.lang.reflect.Method;
  *   LWJGL 2   Display.isActive(): LWJGL 2 tracks WM_SETFOCUS itself, correct for a child window
  */
 public final class SfHooks {
+    static final boolean LINUX = System.getProperty("os.name", "").startsWith("Linux");
     public static volatile int codingFps = 15;   // public: SfAgent (app loader) and SfHooks (boot loader) are different runtime packages
     private static volatile ClassLoader lwjglLoader;
 
@@ -80,7 +81,14 @@ public final class SfHooks {
         }
     }
 
-    public static void beforeGlfwSwap(long window) { glfwWindow = window; Lifeboat.glfw(window); pace(); }
+    /** glfwSwapBuffers entry. True = skip the swap: the window is gone (X11 host died), presenting into it crashes Mesa. */
+    public static boolean beforeGlfwSwap(long window) {
+        glfwWindow = window;
+        Lifeboat.glfw(window);
+        if (X11Lifeboat.windowGone) return true;
+        pace();
+        return false;
+    }
 
     public static void beforeSdlSwap(long window) { if (window != 0) { sdlWindow = window; Lifeboat.sdl(window); } pace(); }
 
@@ -100,10 +108,14 @@ public final class SfHooks {
         try {
             // GLFW's own GLFW_FOCUSED attribute compares against GetActiveWindow(), which is never a child window,
             // so it reads "unfocused" forever once embedded. Win32 focus by thread is right for GLFW and SDL alike.
-            if (glfwWindow != 0 || sdlWindow != 0) f = win32ThreadHasFocus();
+            // On X11, GLFW_FOCUSED is XGetInputFocus() == the game's own X window: right for an embedded child too
+            // (the host gives it focus with XSetInputFocus). Render thread = GLFW's thread, so the call is safe.
+            if (glfwWindow != 0 && LINUX) f = glfwFocused();
+            else if (glfwWindow != 0 || sdlWindow != 0) f = win32ThreadHasFocus();
             else if (lwjgl2) f = lwjgl2Active();
         } catch (Throwable ignored) {
         }
+        if (f != focusCached) log(f ? "game has the keyboard: full frame rate" : "editor has the keyboard: capping at " + codingFps + " fps");
         focusCached = f;
         return f;
     }

@@ -31,7 +31,9 @@ public final class LwjglTransformer implements ClassFileTransformer {
         /** at entry, arg0 is a long: LongConsumer.accept(arg0) */
         LONG_ARG0_AT_ENTRY,
         /** at entry: Runnable.run() */
-        RUN_AT_ENTRY
+        RUN_AT_ENTRY,
+        /** at entry of a void method, arg0 a long: if LongPredicate.test(arg0) return at once (skip the native call) */
+        LONG_SKIP_IF_AT_ENTRY
     }
 
     static final class Patch {
@@ -53,7 +55,7 @@ public final class LwjglTransformer implements ClassFileTransformer {
             new Patch("org/lwjgl/sdl/SDLEvents", "SDL_PollEvent", "(Lorg/lwjgl/sdl/SDL_Event;)Z",
                     Kind.BOOL_FILTER_WITH_ARG0_BEFORE_IRETURN, SLOT_SDL_POLL_EVENT),
             // frame presentation, every backend: cap the frame rate while the editor has focus
-            new Patch("org/lwjgl/glfw/GLFW", "glfwSwapBuffers", "(J)V", Kind.LONG_ARG0_AT_ENTRY, SLOT_GLFW_SWAP),
+            new Patch("org/lwjgl/glfw/GLFW", "glfwSwapBuffers", "(J)V", Kind.LONG_SKIP_IF_AT_ENTRY, SLOT_GLFW_SWAP),
             new Patch("org/lwjgl/sdl/SDLVideo", "SDL_GL_SwapWindow", "(J)Z", Kind.LONG_ARG0_AT_ENTRY, SLOT_SDL_SWAP),
             new Patch("org/lwjgl/vulkan/KHRSwapchain", "vkQueuePresentKHR",
                     "(Lorg/lwjgl/vulkan/VkQueue;Lorg/lwjgl/vulkan/VkPresentInfoKHR;)I", Kind.RUN_AT_ENTRY, SLOT_VK_PRESENT),
@@ -106,6 +108,17 @@ public final class LwjglTransformer implements ClassFileTransformer {
                                     } else if (p.kind == Kind.RUN_AT_ENTRY) {
                                         fetchHook(this, p.slot, "java/lang/Runnable");
                                         visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/lang/Runnable", "run", "()V", true);
+                                    } else if (p.kind == Kind.LONG_SKIP_IF_AT_ENTRY) {
+                                        // if (hook.test(arg0)) return;   The frame at the join point is the method's
+                                        // entry frame (nothing stored, empty stack): F_SAME, valid as the first frame.
+                                        fetchHook(this, p.slot, "java/util/function/LongPredicate");
+                                        visitVarInsn(Opcodes.LLOAD, 0);
+                                        visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/LongPredicate", "test", "(J)Z", true);
+                                        Label go = new Label();
+                                        visitJumpInsn(Opcodes.IFEQ, go);
+                                        super.visitInsn(Opcodes.RETURN);
+                                        visitLabel(go);
+                                        visitFrame(Opcodes.F_SAME, 0, null, 0, null);
                                     }
                                 }
                                 @Override public void visitInsn(int op) {
