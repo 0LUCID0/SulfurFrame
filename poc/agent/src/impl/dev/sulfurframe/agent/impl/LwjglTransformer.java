@@ -7,46 +7,60 @@ import java.security.ProtectionDomain;
 import java.util.*;
 
 /**
- * Inserts static hook calls into a few LWJGL methods. LWJGL class/method names are stable across releases and are
- * never remapped by mod loaders, unlike Minecraft's own classes, so one agent covers every game version and loader.
+ * Inserts hook calls into a few LWJGL methods. LWJGL class/method names are stable across releases and are never
+ * remapped by mod loaders, unlike Minecraft's own classes, so one agent covers every game version and loader.
  *
- * Loaded in an isolated class loader (parent = bootstrap) together with its own copy of ASM, so it can never clash
- * with the ASM that Fabric/Forge/Mixin put on the game's class path. Talks to the game side only through
- * java.lang.instrument and class-name strings. Java 8 bytecode.
+ * The inserted code never names an agent class. Mod loaders decide which classes the game may see (Fabric's Knot
+ * refuses classes from class-path entries "not exposed to the game", and NeoForge/Forge put LWJGL in named modules),
+ * so instead the hooks are JDK functional-interface objects that the agent stores in an Object[] under the system
+ * property key {@link #REGISTRY_KEY}. The patched code fetches one and calls it through the JDK interface, which
+ * every class loader and module can see.
+ *
+ * Loaded in an isolated class loader (parent = bootstrap) together with its own copy of ASM, so it never clashes with
+ * the ASM that Fabric/Forge/Mixin bring. Java 8 bytecode.
  */
 public final class LwjglTransformer implements ClassFileTransformer {
-    static final String HOOKS = "dev/sulfurframe/agent/SfHooks";
+    public static final String REGISTRY_KEY = "dev.sulfurframe.hooks";
 
-    enum Where { ENTRY, BEFORE_RETURN }
+    /** How a hook is called. The index is its slot in the registry array (see SfAgent). */
+    enum Kind {
+        /** before LRETURN: long -> LongUnaryOperator.applyAsLong -> long */
+        LONG_FILTER_BEFORE_LRETURN,
+        /** before IRETURN of a boolean method with arg0 an object: BiFunction.apply(Boolean, arg0) -> Boolean */
+        BOOL_FILTER_WITH_ARG0_BEFORE_IRETURN,
+        /** at entry, arg0 is a long: LongConsumer.accept(arg0) */
+        LONG_ARG0_AT_ENTRY,
+        /** at entry: Runnable.run() */
+        RUN_AT_ENTRY
+    }
 
-    /** hook descriptor: ENTRY hooks receive the listed args; BEFORE_RETURN hooks get (returnValue[, args]) and return it. */
     static final class Patch {
-        final String owner, name, desc, hook, hookDesc; final Where where; final int[] argSlots; final int[] argOps;
-        Patch(String owner, String name, String desc, Where where, String hook, String hookDesc, int[] argSlots, int[] argOps) {
-            this.owner = owner; this.name = name; this.desc = desc; this.where = where; this.hook = hook; this.hookDesc = hookDesc;
-            this.argSlots = argSlots; this.argOps = argOps;
+        final String owner, name, desc; final Kind kind; final int slot;
+        Patch(String owner, String name, String desc, Kind kind, int slot) {
+            this.owner = owner; this.name = name; this.desc = desc; this.kind = kind; this.slot = slot;
         }
     }
+
+    /** Registry slots, in the order SfAgent fills the array. */
+    public static final int SLOT_SDL_WINDOW_FROM_EVENT = 0, SLOT_SDL_POLL_EVENT = 1, SLOT_GLFW_SWAP = 2,
+            SLOT_SDL_SWAP = 3, SLOT_VK_PRESENT = 4, SLOT_LWJGL2_UPDATE = 5, SLOTS = 6;
 
     static final List<Patch> PATCHES = Arrays.asList(
             // SDL3 (Minecraft 26.x): key events of a child window carry windowID 0
             new Patch("org/lwjgl/sdl/SDLEvents", "SDL_GetWindowFromEvent", "(Lorg/lwjgl/sdl/SDL_Event;)J",
-                    Where.BEFORE_RETURN, "sdlWindowFromEvent", "(J)J", new int[0], new int[0]),
+                    Kind.LONG_FILTER_BEFORE_LRETURN, SLOT_SDL_WINDOW_FROM_EVENT),
             // SDL3: never reports focus for a child window -> synthesize focus events from real Win32 focus
             new Patch("org/lwjgl/sdl/SDLEvents", "SDL_PollEvent", "(Lorg/lwjgl/sdl/SDL_Event;)Z",
-                    Where.BEFORE_RETURN, "sdlPollEvent", "(ZLjava/lang/Object;)Z", new int[]{0}, new int[]{Opcodes.ALOAD}),
+                    Kind.BOOL_FILTER_WITH_ARG0_BEFORE_IRETURN, SLOT_SDL_POLL_EVENT),
             // frame presentation, every backend: cap the frame rate while the editor has focus
-            new Patch("org/lwjgl/glfw/GLFW", "glfwSwapBuffers", "(J)V",
-                    Where.ENTRY, "beforeGlfwSwap", "(J)V", new int[]{0}, new int[]{Opcodes.LLOAD}),
-            new Patch("org/lwjgl/sdl/SDLVideo", "SDL_GL_SwapWindow", "(J)Z",
-                    Where.ENTRY, "beforeSdlSwap", "(J)V", new int[]{0}, new int[]{Opcodes.LLOAD}),
-            new Patch("org/lwjgl/vulkan/KHRSwapchain", "vkQueuePresentKHR", "(Lorg/lwjgl/vulkan/VkQueue;Lorg/lwjgl/vulkan/VkPresentInfoKHR;)I",
-                    Where.ENTRY, "beforeVkPresent", "()V", new int[0], new int[0]),
+            new Patch("org/lwjgl/glfw/GLFW", "glfwSwapBuffers", "(J)V", Kind.LONG_ARG0_AT_ENTRY, SLOT_GLFW_SWAP),
+            new Patch("org/lwjgl/sdl/SDLVideo", "SDL_GL_SwapWindow", "(J)Z", Kind.LONG_ARG0_AT_ENTRY, SLOT_SDL_SWAP),
+            new Patch("org/lwjgl/vulkan/KHRSwapchain", "vkQueuePresentKHR",
+                    "(Lorg/lwjgl/vulkan/VkQueue;Lorg/lwjgl/vulkan/VkPresentInfoKHR;)I", Kind.RUN_AT_ENTRY, SLOT_VK_PRESENT),
             // LWJGL 2 (Minecraft 1.12.2 and older): frame presentation. Focus needs no patch there: LWJGL 2 tracks
             // WM_SETFOCUS/WM_KILLFOCUS itself, so Display.isActive() is right for a child window (verified on 1.12.2).
             // Display.update() delegates to update(true).
-            new Patch("org/lwjgl/opengl/Display", "update", "(Z)V",
-                    Where.ENTRY, "beforeLwjgl2Update", "()V", new int[0], new int[0]));
+            new Patch("org/lwjgl/opengl/Display", "update", "(Z)V", Kind.RUN_AT_ENTRY, SLOT_LWJGL2_UPDATE));
 
     static final Set<String> OWNERS = new HashSet<>();
     static { for (Patch p : PATCHES) OWNERS.add(p.owner); }
@@ -85,12 +99,32 @@ public final class LwjglTransformer implements ClassFileTransformer {
                             return new MethodVisitor(Opcodes.ASM9, mv) {
                                 @Override public void visitCode() {
                                     super.visitCode();
-                                    if (p.where == Where.ENTRY) { loadArgs(this, p); callHook(this, p); }
+                                    if (p.kind == Kind.LONG_ARG0_AT_ENTRY) {
+                                        fetchHook(this, p.slot, "java/util/function/LongConsumer");
+                                        visitVarInsn(Opcodes.LLOAD, 0);
+                                        visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/LongConsumer", "accept", "(J)V", true);
+                                    } else if (p.kind == Kind.RUN_AT_ENTRY) {
+                                        fetchHook(this, p.slot, "java/lang/Runnable");
+                                        visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/lang/Runnable", "run", "()V", true);
+                                    }
                                 }
                                 @Override public void visitInsn(int op) {
-                                    if (p.where == Where.BEFORE_RETURN && op >= Opcodes.IRETURN && op <= Opcodes.ARETURN) {
-                                        loadArgs(this, p);
-                                        callHook(this, p);
+                                    if (p.kind == Kind.LONG_FILTER_BEFORE_LRETURN && op == Opcodes.LRETURN) {
+                                        // [J] -> [op, J] -> applyAsLong -> [J]
+                                        fetchHook(this, p.slot, "java/util/function/LongUnaryOperator");
+                                        super.visitInsn(Opcodes.DUP_X2);   // [op, J, op]
+                                        super.visitInsn(Opcodes.POP);      // [op, J]
+                                        visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/LongUnaryOperator", "applyAsLong", "(J)J", true);
+                                    } else if (p.kind == Kind.BOOL_FILTER_WITH_ARG0_BEFORE_IRETURN && op == Opcodes.IRETURN) {
+                                        // [Z] -> [Boolean] -> [fn, Boolean, arg0] -> apply -> Boolean -> [Z]
+                                        visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
+                                        fetchHook(this, p.slot, "java/util/function/BiFunction");
+                                        super.visitInsn(Opcodes.SWAP);
+                                        visitVarInsn(Opcodes.ALOAD, 0);
+                                        visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/BiFunction", "apply",
+                                                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", true);
+                                        visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Boolean");
+                                        visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Boolean", "booleanValue", "()Z", false);
                                     }
                                     super.visitInsn(op);
                                 }
@@ -109,11 +143,14 @@ public final class LwjglTransformer implements ClassFileTransformer {
         }
     }
 
-    static void loadArgs(MethodVisitor mv, Patch p) {
-        for (int i = 0; i < p.argSlots.length; i++) mv.visitVarInsn(p.argOps[i], p.argSlots[i]);
-    }
-
-    static void callHook(MethodVisitor mv, Patch p) {
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, HOOKS, p.hook, p.hookDesc, false);
+    /** ((Object[]) System.getProperties().get(REGISTRY_KEY))[slot], cast to the JDK interface. */
+    static void fetchHook(MethodVisitor mv, int slot, String iface) {
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperties", "()Ljava/util/Properties;", false);
+        mv.visitLdcInsn(REGISTRY_KEY);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/Properties", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "[Ljava/lang/Object;");
+        mv.visitIntInsn(Opcodes.BIPUSH, slot);
+        mv.visitInsn(Opcodes.AALOAD);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, iface);
     }
 }

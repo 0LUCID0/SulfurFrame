@@ -50,6 +50,23 @@ for n in $(grep -o '"name": *"[^"]*:[^"]*"' "$INFO" | sed 's/"name": *"//;s/"$//
 done
 CP="${CP:1};$(cygpath -w "$LOOM/$VERSION/minecraft-client.jar")"
 
+# SF_LOADER=fabric: Fabric Loader in production mode (Knot, intermediary namespace), from the Gradle cache.
+# Libraries as in Fabric's launcher profile for loader 0.16.10 on 1.21.1.
+MAIN=net.minecraft.client.main.Main
+if [ "${SF_LOADER:-}" = fabric ]; then
+  for coord in "net.fabricmc:fabric-loader:${SF_FABRIC_LOADER:-0.16.10}" "net.fabricmc:intermediary:$VERSION" \
+               "net.fabricmc:sponge-mixin:0.15.4+mixin.0.8.7" org.ow2.asm:asm:9.7.1 org.ow2.asm:asm-analysis:9.7.1 \
+               org.ow2.asm:asm-commons:9.7.1 org.ow2.asm:asm-tree:9.7.1 org.ow2.asm:asm-util:9.7.1; do
+    IFS=: read -r g a v <<< "$coord"
+    # intermediary is published with a -v2 classifier
+    p=$(find "$M2/$g/$a/$v" \( -name "$a-$v.jar" -o -name "$a-$v-v2.jar" \) 2>/dev/null | head -1 || true)
+    [ -n "$p" ] || { echo "Fabric library $coord not in the Gradle cache" >&2; exit 1; }
+    CP="$CP;$(cygpath -w "$p")"
+  done
+  MAIN=net.fabricmc.loader.impl.launch.knot.KnotClient
+  GD="$GD-fabric"; LOG="${LOG%.log}-fabric.log"
+fi
+
 ASSETS=$(grep -o '"assets": *"[^"]*"' "$INFO" | sed 's/.*"\([^"]*\)"$/\1/')
 INDEX="$VERSION-$ASSETS"                               # Loom names the cached index <version>-<assets>.json
 [ -f "$LOOM/assets/indexes/$INDEX.json" ] || INDEX="$ASSETS"
@@ -65,6 +82,6 @@ JVM_ARGS=(-Xmx2G)
 
 echo "Minecraft $VERSION on Java $JAVA_MAJOR, assets $INDEX, log: $LOG"
 cd "${TEMP:-/tmp}"   # log4j writes logs/ relative to the working directory
-exec "$JAVA" "${JVM_ARGS[@]}" -cp "$CP" net.minecraft.client.main.Main \
+exec "$JAVA" "${JVM_ARGS[@]}" -cp "$CP" "$MAIN" \
   --version "$VERSION" --gameDir "$(cygpath -w "$GD")" --assetsDir "$(cygpath -w "$LOOM/assets")" \
   --assetIndex "$INDEX" --accessToken 0 --username SFDev --width 854 --height 480 "${@:2}" > "$LOG" 2>&1

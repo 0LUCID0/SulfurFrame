@@ -49,7 +49,9 @@ final class InputCheck {
         EmbedHost.sleep(500);
         util.requireGameFocus();
         var r = new Robot();
-        r.keyPress(KeyEvent.VK_ESCAPE); r.keyRelease(KeyEvent.VK_ESCAPE);
+        // SF_KEY=F2: a key whose effect shows up in the game log (screenshot), for windows the screen capture does not refresh
+        int key = "F2".equals(System.getenv("SF_KEY")) ? KeyEvent.VK_F2 : KeyEvent.VK_ESCAPE;
+        r.keyPress(key); r.keyRelease(key);
         EmbedHost.sleep(800);
         util.snapshotAs("sf-resize-0-after-esc");
         var orig = EmbedHost.onEdt(() -> host.frame.getSize());

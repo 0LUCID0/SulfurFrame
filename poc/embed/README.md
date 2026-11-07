@@ -276,3 +276,34 @@ CPU는 1코어 기준입니다. 모든 버전에서 클릭(Back to Game)과 키�
   호스트에서 이 경우를 구분해서 처리합니다.
 - 버전마다 메뉴 배치가 달라서 프로브의 "Back to Game" 위치를 `SF_BTG_X`/`SF_BTG_Y`로, 1.12.2의 월드 목록 버튼을
   `SF_CREATE_LIST_BTN`으로 지정할 수 있게 했습니다. `InputCheck`에 `--open-world`와 `--esc-resize`를 추가했습니다.
+
+## 남은 버전과 모드 로더 (1.7.10, 1.13.2, Fabric)
+
+| 대상 | 창 / LWJGL / Java | PLAYING | CODING | HIDDEN | 회수 후 워킹셋 | 입력 확인 |
+|---|---|---|---|---|---|---|
+| 1.7.10 | LWJGL 2.9.1 / 8 | 102% | **10.5%** | **9.5%** | 52 MB | F2 스크린샷 저장, "Taking Inventory" 업적 (E) |
+| 1.13.2 | GLFW / LWJGL 3.1.6 / 8 | 85% | **14%** | **12%** | 52 MB | E 인벤토리 |
+| 1.21.1 + **Fabric Loader 0.16.10** | GLFW / 3.3.3 / 21 | 107% | **13%** | **12%** | 530 MB | E 인벤토리 |
+| 26.3 (재측정, 새 훅 방식) | SDL3 / 3.4.3 / 25 | 129% | **9.9%** | **8.3%** | 558 MB | E 인벤토리 |
+| 1.16.5 (재측정, 새 훅 방식) | GLFW / 3.2.2 / 8 | 91% | **13%** | **15%** | 128 MB | - |
+
+이제 **1.7.10부터 26.3까지 바닐라 6개 버전**과 **Fabric**에서 같은 `sf-agent.jar`가 동작합니다.
+- 1.7.10의 창은 화면 캡처에 갱신되지 않습니다. 그래서 게임 자신의 스크린샷(F2)과 로그로 확인했습니다.
+- `run-vanilla-mc.sh`에 `SF_LOADER=fabric`을 추가했습니다. 캐시에 있는 Fabric Loader, intermediary, Mixin, ASM으로 Knot을 실행합니다.
+
+### 이 단계에서 찾아서 고친 것
+- **LWJGL 3.1.x는 JNI 호출기의 인자 순서가 반대입니다**(함수 주소가 첫 번째). 3.2식으로 호출하다가 **1.13.2가 크래시**했습니다
+  (창 핸들을 함수로 호출함). `org.lwjgl.Version`을 읽어서 순서를 맞춥니다.
+- **Fabric의 Knot은 "게임에 노출되지 않은" 클래스패스 항목(에이전트 jar)의 클래스를 로드하지 않습니다.** Fabric에서는 LWJGL도 Knot이
+  로드하므로, 패치된 코드가 `SfHooks`를 직접 부르면 `NoClassDefFoundError`로 크래시합니다. bootstrap 경로에 추가해도 소용이 없었습니다(출처 검사).
+  → **패치 코드가 에이전트 클래스를 아예 참조하지 않게 바꿨습니다.** 훅은 JDK 함수형 인터페이스 객체(`LongUnaryOperator`,
+  `BiFunction`, `LongConsumer`, `Runnable`)로 `System.getProperties()`의 `dev.sulfurframe.hooks`(Object[])에 등록되고,
+  패치 코드는 이걸 꺼내 인터페이스로 호출합니다. JDK 타입은 어떤 클래스로더나 모듈에서도 보이므로, NeoForge·Forge의 모듈 레이어에서도
+  같은 이유로 막히지 않을 것으로 예상합니다(미검증).
+  - 주의: 시스템 프로퍼티에 문자열이 아닌 값이 하나 들어갑니다. 모든 값을 String으로 캐스팅하는 코드가 있으면 문제가 될 수 있습니다.
+
+### Forge / NeoForge: 보류
+NeoForge 21.1.265 인스톨러는 공식 Maven에서 받아 SHA-1까지 확인했습니다. 하지만 **인스톨러 실행(외부 코드 실행)이 자동 모드에서
+거부되어** 설치하지 못했습니다. Forge와 NeoForge는 인스톨러가 클라이언트를 바이너리 패치해야 실행할 수 있습니다.
+- 테스트 예정: NeoForge 1.21.1 (21.1.265), Forge 1.20.1 (47.4.28), Forge 1.12.2 (14.23.5.2860, LaunchWrapper)
+- 설치 명령(예): `java -jar neoforge-21.1.265-installer.jar --install-client <폴더>`. 폴더에는 `launcher_profiles.json`이 있어야 합니다.

@@ -13,7 +13,7 @@ import java.lang.reflect.Method;
  *   LWJGL 2   Display.isActive(): LWJGL 2 tracks WM_SETFOCUS itself, correct for a child window
  */
 public final class SfHooks {
-    static volatile int codingFps = 15;
+    public static volatile int codingFps = 15;   // public: SfAgent (app loader) and SfHooks (boot loader) are different runtime packages
     private static volatile ClassLoader lwjglLoader;
 
     private static final long FOCUS_CACHE_NS = 20_000_000L;
@@ -34,7 +34,7 @@ public final class SfHooks {
     // ---- Win32 through LWJGL's JNI invokers (LWJGL 3)
     private static Method jniInvokeP, jniInvokePPI, jniInvokeI;
     private static long fnGetFocus, fnGetWindowThreadProcessId, fnGetCurrentThreadId;
-    private static boolean win32Tried;
+    private static boolean win32Tried, fnAddressFirst;
 
     // ---- LWJGL 2
     private static volatile boolean lwjgl2;
@@ -43,7 +43,7 @@ public final class SfHooks {
     // ---- frame pacing
     private static long lastPresent;
 
-    static void configure(String args) {
+    public static void configure(String args) {
         if (args == null) return;
         for (String kv : args.split(",")) {
             String[] p = kv.split("=", 2);
@@ -51,7 +51,7 @@ public final class SfHooks {
         }
     }
 
-    static void lwjglLoader(ClassLoader l) { if (l != null && lwjglLoader == null) lwjglLoader = l; }
+    public static void lwjglLoader(ClassLoader l) { if (l != null && lwjglLoader == null) lwjglLoader = l; }
 
     // =================================================================== hooks
 
@@ -132,7 +132,9 @@ public final class SfHooks {
         if (fnGetFocus == 0) return true;
         long h = (Long) jniInvokeP.invoke(null, fnGetFocus);
         if (h == 0) return false;
-        int owner = (Integer) jniInvokePPI.invoke(null, h, 0L, fnGetWindowThreadProcessId);
+        int owner = (Integer) (fnAddressFirst
+                ? jniInvokePPI.invoke(null, fnGetWindowThreadProcessId, h, 0L)
+                : jniInvokePPI.invoke(null, h, 0L, fnGetWindowThreadProcessId));
         int me = (Integer) jniInvokeI.invoke(null, fnGetCurrentThreadId);
         return owner == me;
     }
@@ -154,7 +156,12 @@ public final class SfHooks {
             fnGetFocus = (Long) addr.invoke(user32, "GetFocus");
             fnGetWindowThreadProcessId = (Long) addr.invoke(user32, "GetWindowThreadProcessId");
             fnGetCurrentThreadId = (Long) addr.invoke(kernel32, "GetCurrentThreadId");
-            log("Win32 focus source ready");
+            // LWJGL 3.1.x passes the function address FIRST (invokePPI(fn, p0, p1)); 3.2+ passes it LAST.
+            // Getting this wrong calls the HWND as a function and kills the game (seen on 1.13.2 / LWJGL 3.1.6).
+            Class<?> ver = Class.forName("org.lwjgl.Version", false, l);
+            int major = ver.getField("VERSION_MAJOR").getInt(null), minor = ver.getField("VERSION_MINOR").getInt(null);
+            fnAddressFirst = major == 3 && minor < 2;
+            log("Win32 focus source ready (LWJGL " + major + "." + minor + ", function address " + (fnAddressFirst ? "first" : "last") + ")");
         } catch (Throwable t) {
             fnGetFocus = 0;
             log("Win32 focus source unavailable: " + t);
@@ -203,7 +210,7 @@ public final class SfHooks {
         lastPresent = now;
     }
 
-    static void log(String s) {
+    public static void log(String s) {
         System.out.println("[SF-Agent] " + s);
     }
 

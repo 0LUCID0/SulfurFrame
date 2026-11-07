@@ -14,6 +14,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.BiFunction;
+import java.util.function.LongConsumer;
+import java.util.function.LongUnaryOperator;
 
 /**
  * SulfurFrame javaagent. Java 8 bytecode, runs on every Java a moddable Minecraft uses (8 .. 25).
@@ -31,11 +34,32 @@ public final class SfAgent {
 
     public static void agentmain(String args, Instrumentation inst) { install(args, inst, true); }
 
+    /** Must match LwjglTransformer.REGISTRY_KEY and its SLOT_* order. */
+    static final String REGISTRY_KEY = "dev.sulfurframe.hooks";
+
+    /**
+     * The patched LWJGL code may not be able to see any class of ours: Fabric's Knot refuses classes from class-path
+     * entries "not exposed to the game" (calling SfHooks directly crashed 1.21.1 + Fabric with NoClassDefFoundError),
+     * and NeoForge/Forge keep LWJGL in named modules. So the hooks are handed over as JDK functional-interface
+     * objects in a system property, which the patched code reads and calls through the JDK interface.
+     */
+    private static void registerHooks() {
+        Object[] hooks = new Object[6];
+        hooks[0] = (LongUnaryOperator) SfHooks::sdlWindowFromEvent;
+        hooks[1] = (BiFunction<Object, Object, Object>) (got, event) -> SfHooks.sdlPollEvent((Boolean) got, event);
+        hooks[2] = (LongConsumer) SfHooks::beforeGlfwSwap;
+        hooks[3] = (LongConsumer) SfHooks::beforeSdlSwap;
+        hooks[4] = (Runnable) SfHooks::beforeVkPresent;
+        hooks[5] = (Runnable) SfHooks::beforeLwjgl2Update;
+        System.getProperties().put(REGISTRY_KEY, hooks);
+    }
+
     private static synchronized void install(String args, Instrumentation inst, boolean attached) {
         SfHooks.configure(args);
         if (installed) { SfHooks.log("already installed; settings updated (coding fps cap " + SfHooks.codingFps + ")"); return; }
         installed = true;
         try {
+            registerHooks();   // before any class is patched
             ClassLoader impl = implLoader();
             Class<?> tc = Class.forName("dev.sulfurframe.agent.impl.LwjglTransformer", true, impl);
             Consumer<String> log = SfHooks::log;
