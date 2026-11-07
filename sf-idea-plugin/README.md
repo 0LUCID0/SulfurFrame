@@ -170,10 +170,15 @@ F11 검사는 실제 키를 보냅니다. 그래서 키보드 포커스가 게�
 ## 핫스왑 (디버거 없이)
 
 **흐름:** 저장하거나 "Hotswap" 버튼을 누르면 다음 순서로 진행됩니다.
-1. 고른 대상의 wrapper로 `<경로>:classes`를 실행합니다. Loom에 `src/client`가 있으면 `clientClasses`도 함께 실행합니다.
+1. 마지막 교체 이후 바뀐 `.java` 파일만 javac로 바로 컴파일해서 소스셋의 `build/classes/...`에 씁니다(`FastCompile.java`).
+   javac에 필요한 정보(소스 폴더, 출력 폴더, 컴파일 클래스패스, release, 인코딩, toolchain javac)는 Run client 때 Gradle init script(`sfClasspath` 태스크)로 **한 번만** 받아서
+   `%TEMP%\sulfurframe\classpath-*.txt`에 캐시합니다. 빌드 파일(`build.gradle*`, `settings.gradle*`, `gradle.properties`, `libs.versions.toml`)이 바뀌면 다시 받습니다.
+   캐시가 아직 없거나, Kotlin 파일이 바뀌었거나, PID로 붙여서 어떤 소스가 바뀌었는지 모르면 예전처럼 Gradle `<경로>:classes`(+ `clientClasses`)로 컴파일합니다.
 2. `build/classes` 아래에서 수정 시각이 바뀐 `.class` 파일을 찾습니다.
 3. 목록 파일을 ASCII 경로에 쓰고, Attach API로 에이전트에 `redefine=<목록>`을 보냅니다.
 4. 에이전트(`poc/agent/.../Hotswap.java`)가 이미 로드된 클래스를 `Instrumentation.redefineClasses`로 교체하고 결과 파일을 씁니다.
+
+- **javac 경로의 범위:** 고친 파일만 컴파일하고(나머지는 출력 폴더의 클래스를 참조), 어노테이션 프로세서는 끕니다(`-proc:none`, Mixin refmap은 건드리지 않음). 핫스왑이 반영할 수 있는 것은 어차피 메서드 본문뿐이라 이걸로 충분합니다. 컴파일 오류가 나면 그 파일들은 다음 교체 때 다시 시도합니다.
 
 - **디버거를 쓰지 않는 이유:** IntelliJ의 HotSwap(JDWP)은 게임을 디버거로 띄워야 하는데, `runClient`에 디버그 포트를 끼우면 Gradle 데몬과 충돌하기 쉽습니다. 이미 붙어 있는 에이전트를 쓰면 이 문제가 없습니다.
 - **반영되는 범위:** 일반 JVM이라 **메서드 본문 변경**만 반영됩니다. 메서드나 필드를 추가·삭제하면 해당 클래스만 "restart needed"로 알려 주고, 나머지 클래스는 그대로 반영합니다(한 번에 실패하면 클래스별로 다시 시도).
@@ -184,15 +189,16 @@ F11 검사는 실제 키를 보냅니다. 그래서 키보드 포커스가 게�
 검증: 샌드박스 IDE에서 lucid-study-mod 사본에 관찰용 클래스(5초마다 `[SF-PROBE] <message()>` 로그)를 넣고 진행했습니다.
 ```
 PASS probe running (v1 in game log)
-PASS hotswap: method body change applied   [redefined 2 (고친 클래스 + 그걸 참조해서 다시 컴파일된 클래스), 에이전트 44 ms, 전체 14.8 s]
+PASS fast compile: class path read from Gradle   [최초 1회 13 s, 이후 캐시]
+PASS hotswap: method body change applied   [redefined 1, 에이전트 41 ms, 전체 2.4 s (javac)]
+PASS hotswap compiled with javac, not Gradle
 PASS hotswap on save (VFS change -> swap)  [game log shows v3]
 PASS hotswap: added method -> restart needed  [restart needed: kr.kro.lucid.SfHotswapProbe (methods or fields added/removed)]
 ```
 게임 로그는 `v1 ×5 → v2 → v3`로 바뀌었고, **게임은 재시작하지 않았습니다.**
 
 ### 한계와 다음 과제
-- **느린 컴파일:** 매번 약 15초 걸리고, 에이전트 교체는 50ms 이하입니다. Gradle(Loom)이 매번 설정을 다시 평가하기 때문입니다.
-  Gradle이 쓰는 컴파일 클래스패스를 한 번 받아 두고 javac를 직접 돌리거나 IntelliJ 빌드를 쓰면 1초 안쪽으로 줄일 수 있을 것으로 봅니다.
+- **컴파일 시간:** javac 경로는 약 2.4초입니다(이전 Gradle 경로는 약 15초). 대부분 javac JVM 기동과 Minecraft 클래스패스 읽기라, 상주 컴파일러를 쓰면 더 줄일 수 있습니다.
 - **구조 변경:** 메서드나 필드 추가처럼 구조가 바뀌면 재시작해야 합니다. 게임을 JBR로 실행하고 `-XX:+AllowEnhancedClassRedefinition`을 쓰면 풀 수 있습니다.
 - **Mixin 클래스:** 교체돼도 이미 적용된 Mixin은 다시 적용되지 않습니다.
 - **Fabric 환경 어노테이션:** 바뀐 바이트에는 Knot의 `@Environment` 정리가 적용되지 않습니다. 클라이언트 개발 환경에서는 대개 문제가 없습니다.

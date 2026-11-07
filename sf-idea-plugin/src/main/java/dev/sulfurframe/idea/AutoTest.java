@@ -199,13 +199,17 @@ final class AutoTest {
         Path gameLog = t.dir().resolve("run/logs/latest.log");
         check("probe running (v1 in game log)", waitForLog(gameLog, "[SF-PROBE] v1", 120), String.valueOf(gameLog));
 
+        check("fast compile: class path read from Gradle", p.hotswapper.awaitFastCompile(t, 180), "cached under " + agentJarOf(p).getParent());
+
         String original = Files.readString(src);
         Files.writeString(src, original.replace("return \"v1\";", "return \"v2\";"));
         long t0 = System.currentTimeMillis();
         boolean ran = p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p));
         long ms = System.currentTimeMillis() - t0;
         check("hotswap: method body change applied", ran && redefinedAny(p.hotswapper.lastResult) && waitForLog(gameLog, "[SF-PROBE] v2", 15),
-                "result " + p.hotswapper.lastResult + ", " + ms + " ms incl. Gradle compile");
+                "result " + p.hotswapper.lastResult + ", " + ms + " ms incl. compile (" + p.hotswapper.lastCompiler + ")");
+        check("hotswap compiled with javac, not Gradle", "javac".equals(p.hotswapper.lastCompiler) && ms < 8000,
+                p.hotswapper.lastCompiler + ", " + ms + " ms");
 
         // save path: change on disk -> VFS refresh -> BulkFileListener -> debounce -> hotswap
         Files.writeString(src, original.replace("return \"v1\";", "return \"v3\";"));

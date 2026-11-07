@@ -23,15 +23,33 @@ final class Hotswapper {
     private final Consumer<String> log;
     private final AtomicBoolean busy = new AtomicBoolean();
     private Map<Path, Long> snapshot;
+    private long sourcesSince;   // .java files modified after this (millis) are compiled by the fast path
     private int counter;
+    private final FastCompile fast;
 
-    Hotswapper(Consumer<String> log) { this.log = log; }
+    Hotswapper(Consumer<String> log, Path cacheDir) { this.log = log; this.fast = new FastCompile(log, cacheDir); }
+
+    /** "javac" or "gradle": how the last swap compiled (self-test). */
+    volatile String lastCompiler = "";
+
+    /** Wait (up to {@code seconds}) until the fast path has its class path; false if it never got one. */
+    boolean awaitFastCompile(Workspace.Target t, int seconds) throws InterruptedException {
+        fast.prepareAsync(t);
+        for (int i = 0; i < seconds * 4 && !fast.ready(t); i++) {
+            if (!fast.preparing(t)) return fast.ready(t);
+            Thread.sleep(250);
+        }
+        return fast.ready(t);
+    }
 
     /** What the last swap did, for callers that want to check (self-test). */
     volatile List<String> lastResult = List.of();
 
     /** Remember the current class files (call when the game starts, so the first swap only sends what changed since). */
-    void snapshot(Workspace.Target t) { try { snapshot = scan(t); } catch (IOException e) { snapshot = null; } }
+    void snapshot(Workspace.Target t) {
+        try { snapshot = scan(t); sourcesSince = System.currentTimeMillis(); } catch (IOException e) { snapshot = null; }
+        fast.prepareAsync(t);   // ask Gradle for the class path once, in the background
+    }
 
     /** Compile, diff, redefine. Blocking; call off the EDT. Returns false if it could not run. */
     boolean swap(Workspace.Target t, long gamePid, Path agentJar) {
@@ -39,8 +57,20 @@ final class Hotswapper {
         if (!busy.compareAndSet(false, true)) { log.accept("hotswap: already running"); return false; }
         try {
             long t0 = System.currentTimeMillis();
-            if (snapshot == null) snapshot = scan(t);
-            if (!compile(t)) return false;
+            boolean fresh = snapshot == null;   // attached without a snapshot: don't know which sources changed
+            if (fresh) snapshot = scan(t);
+            long started = System.currentTimeMillis();
+            FastCompile.Result r = FastCompile.Result.UNAVAILABLE;
+            int[] n = {0};
+            if (!fresh) r = fast.compile(t, sourcesSince - 1000, n);   // 1 s slack for coarse file times
+            if (r == FastCompile.Result.FAILED) return false;           // real compile errors: keep sourcesSince, retry them next time
+            if (r == FastCompile.Result.OK) lastCompiler = "javac";
+            else {
+                fast.prepareAsync(t);
+                if (!compile(t)) return false;
+                lastCompiler = "gradle";
+            }
+            sourcesSince = started;
             Map<Path, Long> now = scan(t);
             var changed = new ArrayList<Path>();
             for (var e : now.entrySet()) {
@@ -69,7 +99,7 @@ final class Hotswapper {
             lastResult = Files.readAllLines(result, StandardCharsets.UTF_8);
             Files.deleteIfExists(list); Files.deleteIfExists(result);
             String summary = String.join(", ", lastResult.stream().filter(s -> !s.startsWith("ms ")).toList());
-            log.accept("hotswap (" + changed.size() + " changed file(s), " + (System.currentTimeMillis() - t0) + " ms): " + summary);
+            log.accept("hotswap (" + lastCompiler + ", " + changed.size() + " class file(s), " + (System.currentTimeMillis() - t0) + " ms): " + summary);
             return true;
         } catch (Exception e) {
             log.accept("hotswap failed: " + e);

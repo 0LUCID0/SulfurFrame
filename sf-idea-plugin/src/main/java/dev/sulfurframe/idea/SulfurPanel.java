@@ -40,7 +40,7 @@ final class SulfurPanel extends JPanel {
         this.saveTarget = saveTarget;
         embedder = new GameEmbedder(this::log);
         launcher = new GameLauncher(this::log);
-        hotswapper = new Hotswapper(this::log);
+        hotswapper = new Hotswapper(this::log, Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe"));
         agentJar = extractAgent();
         embedder.setAgentJar(agentJar);
 
