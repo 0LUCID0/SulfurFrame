@@ -388,6 +388,23 @@ Stopping! → Saving worlds → All dimensions are saved → 2초 뒤 종료, le
 - FPS 제한은 llvmpipe가 월드를 원래 15fps 안팎으로 그려서 15로는 차이가 안 보였고, 3으로 시험했습니다. CPU는 서버·청크 스레드가 섞이지 않게 렌더 스레드와 llvmpipe 스레드만 셉니다.
 - Windows 회귀 확인: `glfwSwapBuffers` 패치가 분기를 갖게 돼서 1.21.1(LWJGL 3.3, 시작 시 로드와 실행 중 attach)과 1.13.2(LWJGL 3.1)를 다시 실행 → 패치·구명보트·포커스 정상, VerifyError 없음
 
+### SDL3(26.x)와 LWJGL 2(1.12.2)도 X11에서 (같은 `sf-agent.jar`)
+
+| | 26.3 (SDL3, LWJGL 3.4) | 1.12.2 (LWJGL 2.9.4, Java 8) | 1.21.1 (GLFW) |
+|---|---|---|---|
+| 임베드·크기·창 크기 따라가기 | PASS | PASS | PASS |
+| FPS 제한 (렌더+llvmpipe CPU, 포커스 → 코딩, codingFps=3) | 724% → 81% | 324% → 32% | 365% → 190% |
+| 호스트 크래시 | 창 구조 성공, 게임 계속 | 창 구조 성공, 게임 계속 | 창 관리자가 이김(이번에 2/2, 앞서 3/3) → 저장하고 종료 |
+
+- **창 찾기:** SDL3는 `WM_NAME`을 `UTF8_STRING` 타입으로 넣어서 `XFetchName`이 못 읽습니다. 이름을 `XGetWindowProperty`로 바이트째 읽고, 같은 이름으로 시작하는 숨은 보조 창("RenderPearl OpenGL Hidden Utility Window")을 피하려고 화면에 보이는(`IsViewable`) 창만 고릅니다. 플러그인 `X11.name`도 같은 방식입니다.
+- **포커스:** SDL3와 LWJGL 2는 호스트가 `XSetInputFocus`로 준 포커스를 알아채지 못합니다(LWJGL 2의 `Display.isActive()`가 계속 false). 그래서 에이전트가 직접 `XGetInputFocus() == 게임 창`으로 판단합니다(렌더 스레드 전용 연결). GLFW는 원래대로 `GLFW_FOCUSED`.
+- **창 번호:** SDL3는 창 속성 `SDL.window.x11.window`, LWJGL 2는 `LinuxDisplay.getWindow()`.
+- **LWJGL 2에는 LWJGL 3의 JNI가 없어서** X11 호출을 JNA(마인크래프트 1.8+에 포함)로 합니다. `X11Lifeboat`의 네이티브 층이 둘 중 있는 쪽을 씁니다.
+- **창이 사라지면 화면 내보내기 건너뛰기:** `SDL_GL_SwapWindow`는 true를 돌려주며 건너뛰고, LWJGL 2는 `Display.update` 전체를 건너뜁니다(`isCloseRequested`는 그대로 동작). LWJGL 2의 `Display`는 Java 5 바이트코드라 분기 지점에 스택 맵 프레임을 넣지 않습니다(넣으면 ASM이 거부).
+- **26.x는 에셋 객체가 없으면 시작하자마자 죽습니다**(타이틀 파노라마). `McFetch`가 소리(.ogg)를 뺀 에셋 객체를 받도록 바꿨습니다.
+- 26.3과 1.12.2는 월드 없이 타이틀 화면에서 시험했습니다(WSL 재시작으로 `/tmp`의 시험 월드가 사라짐). 창을 구했으니 저장 경로는 타지 않았습니다. 1.21.1의 "저장하고 종료"는 앞의 월드 안 시험에서 확인했습니다.
+- Windows 회귀: 1.12.2(McFetch), 1.21.1, 26.3(run-vanilla) 모두 패치·구명보트·포커스 정상. 26.3은 한 번 리소스 로딩 중 0xC0000005로 죽었고, 다시 3번은 모두 정상이었습니다(원래 있던 26.3 간헐 시작 크래시로 봅니다).
+
 ### 아직 안 한 것
-- IntelliJ 플러그인의 Linux 구현(`Win32` 대신 X11 백엔드), 실제 Linux 데스크톱(GNOME/KDE, Wayland 세션의 XWayland) 확인
-- SDL3(26.x)와 LWJGL 2(1.12.2 이하) 게임의 X11 임베드
+- 실제 Linux 데스크톱(GNOME/KDE, Wayland 세션의 XWayland)과 GPU 드라이버에서 확인
+- GLFW에서만 창 구조가 지는 이유
