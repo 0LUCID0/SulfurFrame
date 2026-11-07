@@ -324,3 +324,6 @@ Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client +
   처음 만든 파일은 "Unknown data version: 0"으로 열리지 않았습니다. `Data.version`은 레벨 포맷 번호(Anvil 19133)이고 게임 버전 묶음은 대문자 `Version`이어서였습니다(바이트코드에서 확인).
 
 검증: 1.21.1(lucid 사본)에서 만든 테스트 월드로 quickPlay → 평지·크리에이티브·낮으로 입장, 모드 데이터 팩 자동 로드("Found new data pack lcd, loading it automatically"). 에이전트의 `world=`/`cmd=save-all flush`/`done=` → 월드 이름 "SF Flat", "ran /save-all flush", 완료 표시.
+- **영구 월드와 임시 월드:** **Test world**는 남는 테스트 월드, **Temp world**는 버리는 테스트 월드입니다(`TempWorlds.java`). 임시 월드는 이름이 `[Temp] Test`로 시작하고, 목록(`~/.sulfurframe/temp-worlds.txt`)에 적혀 다음 때 지워집니다: 게임이 끝날 때, 그리고 IDE가 먼저 꺼졌던 경우 다음 플러그인 시작 때.
+  안전장치: 게임이 잡고 있는 월드(`session.lock` 잠김)는 건너뛰고, 이름에 `[Temp] ` 표식이 없으면 목록에 있어도 지우지 않습니다. 재시작으로 같은 임시 월드에 다시 들어갈 때는 이전 게임의 종료 정리가 그 월드를 지우지 않도록 잠시 핀을 겁니다.
+  검증(임시 홈): 임시 월드 삭제, 핀 걸린 임시 월드 유지, 목록에 잘못 들어간 진짜 월드 `Real` 유지(목록에서만 빠짐).

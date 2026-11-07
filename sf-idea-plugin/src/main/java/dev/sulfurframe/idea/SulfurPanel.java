@@ -71,7 +71,12 @@ final class SulfurPanel extends JPanel {
         buttons.add(restart);
         buttons.add(button("Snapshot", this::snapshotAsync));
         buttons.add(button("Restore…", this::restoreAsync));
-        buttons.add(button("Test world", this::testWorldAsync));
+        var tw = button("Test world", () -> testWorldAsync(false));
+        tw.setToolTipText("A kept test world (superflat, creative, cheats)");
+        buttons.add(tw);
+        var tmp = button("Temp world", () -> testWorldAsync(true));
+        tmp.setToolTipText("A throwaway test world: deleted automatically once the game exits");
+        buttons.add(tmp);
         swapOnSave.setToolTipText("Compile and reload changed classes into the running game whenever a source file is saved");
         buttons.add(swapOnSave);
         shareWorlds.setToolTipText("Worlds, options and resource packs shared by all projects of the same Minecraft version ("
@@ -85,6 +90,7 @@ final class SulfurPanel extends JPanel {
         add(embedder.component(), BorderLayout.CENTER);
         add(new JScrollPane(log), BorderLayout.SOUTH);
         scan();
+        Thread.ofPlatform().daemon().name("sf-temp-sweep").start(() -> TempWorlds.sweep(this::log));   // left over from a previous IDE session
     }
 
     private JButton button(String text, Runnable r) {
@@ -142,7 +148,7 @@ final class SulfurPanel extends JPanel {
             catch (Exception e) { log("shared instance not set up: " + e); }
         }
         launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> { embedder.attach(pid); hotswapper.snapshot(t); }),
-                () -> { if (share) SharedInstance.collect(run, mc); });
+                () -> { if (share) SharedInstance.collect(run, mc); TempWorlds.sweep(this::log); });
     }
 
     /** One game folder per Minecraft version for all projects (worlds, options, resource packs). */
@@ -205,6 +211,7 @@ final class SulfurPanel extends JPanel {
             }
             if (whileDown != null) whileDown.accept(world);
             if (worldOverride != null) world = worldOverride;
+            TempWorlds.pin(world);   // coming back into it: the old game's exit sweep must not take it
             var args = !world.isEmpty() && quickPlay(t.profile().minecraftVersion()) ? List.of("--quickPlaySingleplayer", world) : List.<String>of();
             lastRestartWorld = world;
             SwingUtilities.invokeLater(() -> launch(t, args));
@@ -296,21 +303,23 @@ final class SulfurPanel extends JPanel {
     /** Name of the last test world created (self-test). */
     volatile String lastTestWorld;
 
-    void testWorldAsync() { Thread.ofPlatform().daemon().name("sf-testworld").start(this::testWorld); }
+    void testWorldAsync(boolean temporary) { Thread.ofPlatform().daemon().name("sf-testworld").start(() -> testWorld(temporary)); }
 
     /** Write a superflat creative test world and go into it (restarting the game if one runs). Blocking. */
-    void testWorld() {
+    void testWorld(boolean temporary) {
         var t = selectedTarget();
         String mc = t.profile().minecraftVersion();
         if (!TestWorld.supported(mc)) { log("test world: needs Minecraft 1.20.5 or newer (this is " + mc + ")"); return; }
         try {
             Path saves = SharedInstance.runDir(t).resolve("saves");
             Files.createDirectories(saves);
-            String name = "SulfurFrame Test";
-            for (int i = 2; Files.exists(saves.resolve(name)); i++) name = "SulfurFrame Test " + i;
-            TestWorld.create(saves, name, mc);
+            String base = temporary ? TempWorlds.PREFIX + "Test" : "SulfurFrame Test", name = base;
+            for (int i = 2; Files.exists(saves.resolve(name)); i++) name = base + " " + i;
+            Path dir = TestWorld.create(saves, name, mc);
+            if (temporary) TempWorlds.register(dir);
             lastTestWorld = name;
-            log("test world '" + name + "' created (superflat, creative, cheats, no day/weather cycle)");
+            log((temporary ? "temporary " : "") + "test world '" + name + "' created (superflat, creative, cheats, no day/weather cycle"
+                    + (temporary ? "; deleted when the game exits" : "") + ")");
             if (embedder.attached()) restart(name, null);
             else { final String n = name; SwingUtilities.invokeLater(() -> launch(t, List.of("--quickPlaySingleplayer", n))); }
         } catch (Exception e) {
