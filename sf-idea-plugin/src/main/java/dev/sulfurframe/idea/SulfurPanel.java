@@ -25,6 +25,7 @@ final class SulfurPanel extends JPanel {
     private final JComboBox<Workspace.Target> targets = new JComboBox<>();
     private final JTextArea log = new JTextArea(5, 40);
     String logText() { return log.getText(); }
+    void setSwapOnSave(boolean on) { swapOnSave.setSelected(on); }
     private final Path projectDir;
     private final Supplier<String> savedTarget;
     private final Consumer<String> saveTarget;

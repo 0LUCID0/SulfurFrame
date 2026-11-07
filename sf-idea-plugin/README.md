@@ -229,6 +229,23 @@ PASS resource change -> client reload               (언어 파일 -> "Reloading
 ```
 데이터 리로드는 월드를 연 게임에 직접 attach해서 확인했습니다("resources: /reload on the integrated server", 서버 스레드 "Loaded 1295 recipes").
 
+### 어노테이션 프로세서와 Kotlin
+- **어노테이션 프로세서:** Gradle에서 compileJava의 프로세서 경로(`annotationProcessorPath`)와 생성 소스 폴더를 받아, 빠른 컴파일에서도 돌립니다. Lombok처럼 그게 없으면 컴파일이 안 되는 프로젝트도 됩니다.
+  Mixin의 프로세서(refmap 생성기, `fabric-mixin-compile-extensions`, `sponge-mixin`)와 그 `-A` 옵션은 뺍니다. 개발 환경에는 필요 없고, 일부 파일만 컴파일하면 refmap을 그 파일들 것만으로 덮어쓰기 때문입니다.
+  프로세서용 클래스 로더는 소스셋마다 하나 만들어 계속 쓰고, 프로세서 객체만 매번 새로 만들어 넘깁니다(`task.setProcessors`). javac가 컴파일마다 jar를 다시 읽으면 Lombok 하나로 1.5초가 걸렸는데, 이렇게 하면 0.15~0.33초입니다.
+- **Kotlin:** 예전에는 `.kt`가 바뀌면 Gradle로 컴파일했습니다(10초 이상). 이제 Gradle에서 그 프로젝트가 실제로 쓰는 Kotlin 컴파일러(`kotlinCompilerClasspath`: `kotlin-compiler-embeddable` 등)와 Kotlin 소스·출력 폴더, 클래스패스, `jvmTarget`, 모듈 이름을 받아, `K2JVMCompiler`를 IDE 안의 별도 클래스 로더에서 돌립니다(한 번 로드해 계속 씀, 미리 데우기 포함).
+  바뀐 파일은 임시 폴더로 컴파일한 뒤 `.class`만 Kotlin 출력 폴더로 옮깁니다. 일부 파일만 컴파일하면 `META-INF/*.kotlin_module`이 그 파일들 것만으로 덮어써지기 때문입니다.
+  Kotlin을 먼저 컴파일하고 Java를 그다음에 컴파일하며, Java 컴파일 클래스패스에 Kotlin 출력을 넣습니다(Gradle의 compileClasspath에는 없음).
+  **IDE 안에서는 Kotlin 컴파일러가 실패**해서(컴파일러가 품고 있는 IntelliJ 코어가 IDE 환경을 집어 드는 것으로 보임, IDE 밖에서는 정상) 계속 떠 있는 별도 프로세스(`KotlinServer`, IDE의 JBR로 실행)로 돌립니다. 요청은 표준 입력으로 한 줄씩 보내고, 컴파일러는 그 프로세스에 로드된 채 데워져 있습니다. IntelliJ의 플러그인 클래스 로더는 jar 위치를 알려 주지 않아서, 서버 클래스 파일은 임시 폴더에 풀어 씁니다.
+  결과: 미리 데우기 10~12초(백그라운드), 그 뒤 Kotlin 파일 교체 한 번 약 1.8~2.5초(Kotlin과 Java를 함께 컴파일한 경우 포함). Gradle로는 30초 이상 걸렸습니다.
+- **고친 버그:** Gradle이 `build/resources`에 쓴 `fabric.mod.json` 같은 빌드 출력도 "저장"으로 받아 재시작을 권하고 있었습니다. `build/`, `.gradle/`, `run/`, `out/` 아래 변경은 이제 무시합니다.
+
+검증(테스트 사본에 Lombok 1.18.38과 Kotlin 2.2.21을 추가, Lombok getter를 쓰는 `SfLombokProbe`, Kotlin `object SfKotlinProbe`):
+```
+PASS hotswap with an annotation processor (Lombok)        [javac in the IDE]
+PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (게임 로그 "[SF-KOTLIN] k2")
+```
+
 ### 빠른 재시작 (핫스왑이 못 하는 변경)
 새 블록·아이템 등록, 모드 메타데이터, 액세스 와이드너, 빌드 변경처럼 게임이 시작할 때만 읽는 것은 실행 중에 바꿀 수 없습니다. 그래서 **Restart** 버튼이 그 부분을 맡습니다.
 1. 에이전트에게 열린 월드의 폴더 이름을 묻고(Mojang `storageSource.getLevelId()` / Yarn `session.getDirectoryName()`, 서버 필드에서 찾음), 정상 종료를 요청합니다. 게임이 월드를 저장하고 꺼질 때까지 기다립니다(90초가 넘으면 강제 종료).

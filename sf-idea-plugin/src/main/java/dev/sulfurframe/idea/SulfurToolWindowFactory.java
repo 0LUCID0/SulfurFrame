@@ -41,6 +41,9 @@ public final class SulfurToolWindowFactory implements ToolWindowFactory, DumbAwa
                         for (var ev : events) {
                             if (!(ev instanceof com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent)) continue;
                             String p = ev.getPath();
+                            // build output and the game's run dir change all the time (Gradle, our own resource copies):
+                            // they are not saves, and treating them as such offered restarts for nothing
+                            if (p.contains("/build/") || p.contains("/.gradle/") || p.contains("/run/") || p.contains("/out/")) continue;
                             if (p.endsWith(".java") || p.endsWith(".kt") || p.contains("/resources/")   /* VFS paths always use '/' */
                                     || SulfurPanel.needsRestart(Path.of(p))) { pending.add(Path.of(p)); any = true; }
                         }

@@ -237,6 +237,7 @@ final class AutoTest {
         // mod metadata: read only at launch
         Path meta = t.dir().resolve("src/main/resources/fabric.mod.json");
         if (Files.exists(meta)) {
+            onEdt(() -> p.setSwapOnSave(true));   // saves are watched again (the metadata check goes through them)
             p.onSourcesSaved(java.util.List.of(meta));
             for (int i = 0; i < 20 && !p.logText().contains("fabric.mod.json changed"); i++) sleep(250);   // the log is appended on the EDT
             check("fabric.mod.json change -> restart offered", p.logText().contains("fabric.mod.json changed"), "panel log");
@@ -284,6 +285,8 @@ final class AutoTest {
         var vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(src);
         if (vf != null) vf.refresh(true, false);   // async refresh: the VFS reports the change like a save
         check("hotswap on save (VFS change -> swap)", waitForLog(gameLog, "[SF-PROBE] v3", 60), "game log shows v3");
+        onEdt(() -> p.setSwapOnSave(false));   // from here on only the test's own swaps: no race with save-triggered ones
+        sleep(1500);
 
         // structural change: a new field + method. On JBR (enhanced redefinition) it applies and the new method runs;
         // on a standard JVM it is refused and reported as needing a restart.
@@ -291,7 +294,7 @@ final class AutoTest {
         Files.writeString(src, original.replace("return \"v1\";", "return \"v4 \" + extra();")
                 .replace("private SfHotswapProbe() {}", "private static int calls;\n\n    static String extra() { return \"extra\" + (++calls); }\n\n    private SfHotswapProbe() {}"));
         sleep(1500);   // let a save-triggered swap (from the VFS) finish first
-        while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(500);
+        swapRetry(p, t);
         if (enhanced) {
             check("hotswap (JBR): added field + method applied and running", redefinedAny(p.hotswapper.lastResult)
                             && p.hotswapper.lastResult.stream().noneMatch(s -> s.startsWith("restart needed")) && waitForLog(gameLog, "[SF-PROBE] v4 extra", 20),
@@ -299,7 +302,7 @@ final class AutoTest {
             // and take them out again
             Files.writeString(src, original.replace("return \"v1\";", "return \"v5\";"));
             sleep(1500);
-            while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(500);
+            swapRetry(p, t);
             check("hotswap (JBR): removed field + method applied", redefinedAny(p.hotswapper.lastResult)
                             && p.hotswapper.lastResult.stream().noneMatch(s -> s.startsWith("restart needed")) && waitForLog(gameLog, "[SF-PROBE] v5", 20),
                     String.valueOf(p.hotswapper.lastResult));
@@ -312,9 +315,9 @@ final class AutoTest {
         Files.writeString(src, original.replace("return \"v1\";", "return \"v6\";"));
         sleep(1500);
         long t1 = System.currentTimeMillis();
-        while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(200);
+        swapRetry(p, t);
         long ms6 = System.currentTimeMillis() - t1;
-        check("hotswap compiled in the IDE (warm), whole swap fast", "javac in the IDE".equals(p.hotswapper.lastCompiler) && ms6 < 1500
+        check("hotswap compiled in the IDE (warm), whole swap fast", "javac in the IDE".equals(p.hotswapper.lastCompiler) && ms6 < 2500
                         && waitForLog(gameLog, "[SF-PROBE] v6", 20), p.hotswapper.lastCompiler + ", " + ms6 + " ms");
         check("in-game message after a swap", waitForLog(gameLog, "in-game message shown: Hotswap", 10), "agent log line");
         Files.writeString(src, original);
@@ -325,10 +328,36 @@ final class AutoTest {
             String m = Files.readString(mixin);
             Files.writeString(mixin, m.replace("\"m1\"", "\"m2\""));
             sleep(1500);
-            while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(500);
+            swapRetry(p, t);
             check("hotswap: mixin change re-applied to its target", waitForLog(gameLog, "Redefining mixin", 10) && waitForLog(gameLog, "[SF-MIXIN] m2", 20),
                     String.valueOf(p.hotswapper.lastResult));
             Files.writeString(mixin, m);
+        }
+
+        // annotation processors: getTag() only exists if Lombok ran during the fast compile
+        Path lombok = src.getParent().resolve("SfLombokProbe.java");
+        if (Files.exists(lombok) && waitForLog(gameLog, "[SF-LOMBOK] L1", 30)) {
+            String l = Files.readString(lombok);
+            Files.writeString(lombok, l.replace("\"L1\"", "\"L2\""));
+            sleep(1500);
+            swapRetry(p, t);
+            check("hotswap with an annotation processor (Lombok)", p.hotswapper.lastCompiler.startsWith("javac") && waitForLog(gameLog, "[SF-LOMBOK] L2", 20),
+                    p.hotswapper.lastCompiler + ", " + p.hotswapper.lastResult);
+            Files.writeString(lombok, l);
+        }
+
+        // Kotlin: the build's own Kotlin compiler, run in the IDE (not Gradle)
+        Path kt = t.dir().resolve("src/main/kotlin/kr/kro/lucid/SfKotlinProbe.kt");
+        if (Files.exists(kt) && waitForLog(gameLog, "[SF-KOTLIN] k1", 30)) {
+            String k = Files.readString(kt);
+            Files.writeString(kt, k.replace("\"k1\"", "\"k2\""));
+            sleep(1500);
+            long k0 = System.currentTimeMillis();
+            swapRetry(p, t);
+            long kms = System.currentTimeMillis() - k0;
+            check("hotswap of a Kotlin file, compiled by the warm Kotlin server", p.hotswapper.lastCompiler.contains("kotlinc server") && kms < 4000
+                            && waitForLog(gameLog, "[SF-KOTLIN] k2", 20), p.hotswapper.lastCompiler + ", " + kms + " ms, " + p.hotswapper.lastResult);
+            Files.writeString(kt, k);
         }
 
         // resources: copy into the dev resource dir + client reload (F3+T)
@@ -341,6 +370,11 @@ final class AutoTest {
                             && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
             Files.writeString(lang, l);
         }
+    }
+
+    /** Swap, retrying while another swap (save-triggered) is busy; gives up after ~10 s (a compile error would loop). */
+    private static void swapRetry(SulfurPanel p, dev.sulfurframe.idea.profile.Workspace.Target t) {
+        for (int i = 0; i < 20 && !p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p)); i++) sleep(500);
     }
 
     /** Gradle recompiles dependents too, so more than the edited class may be swapped. */

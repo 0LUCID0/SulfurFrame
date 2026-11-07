@@ -24,9 +24,18 @@ final class FastCompile {
 
     /** "javac in the IDE" or "javac process": how the last compile ran. */
     volatile String lastMode = "";
+    /** How the current compile ran, step by step (Kotlin and Java may both run in one swap). */
+    private final Set<String> modes = Collections.synchronizedSet(new LinkedHashSet<>());
+
+    /** Kotlin compile of a source set (KGP): sources, output, class path, jvmTarget, module name, the compiler's jars. */
+    record Kotlin(List<Path> srcDirs, Path out, List<Path> classpath, String jvmTarget, String module, List<Path> compiler) { }
 
     record SourceSet(String name, List<Path> srcDirs, Path out, List<Path> classpath, String release, String encoding,
-                     Path javac, List<String> args, List<Path> resSrcDirs, Path resOut) { }
+                     Path javac, List<String> args, List<Path> resSrcDirs, Path resOut, List<Path> processors, Path generated, Kotlin kotlin) {
+        /** Annotation processors to run: all of the build's except Mixin's (refmap writer: not needed in dev, and a
+         *  partial compile would overwrite the refmap with only the changed mixins). */
+        List<Path> activeProcessors() { return processors.stream().filter(p -> !p.getFileName().toString().toLowerCase().contains("mixin")).toList(); }
+    }
 
     private final Consumer<String> log;
     private final Path cacheDir;
@@ -38,7 +47,7 @@ final class FastCompile {
     private static String key(Workspace.Target t) { return t.buildRoot().toAbsolutePath().normalize() + "|" + t.projectPath(); }
 
     private Path cacheFile(Workspace.Target t) {
-        return cacheDir.resolve("classpath2-" + Integer.toHexString(key(t).hashCode()) + ".txt");
+        return cacheDir.resolve("classpath4-" + Integer.toHexString(key(t).hashCode()) + ".txt");
     }
 
     /** The cached source sets, or null if there is no cache or a build file is newer than it. */
@@ -101,40 +110,58 @@ final class FastCompile {
      * {@code compiled} receives how many files were compiled.
      */
     Result compile(Workspace.Target t, long since, int[] compiled) throws IOException, InterruptedException {
+        modes.clear();
         var sets = sourceSets(t);
         if (sets == null) return Result.UNAVAILABLE;
-        if (hasChangedKotlin(t, since)) return Result.UNAVAILABLE;
         int total = 0;
+        // Kotlin first: Java sources may use what changed in Kotlin
+        for (SourceSet s : sets) {
+            if (s.name().equals("test") || s.name().endsWith("Test")) continue;
+            var kfiles = changedKotlin(s, since);
+            if (kfiles.isEmpty()) continue;
+            Boolean ok = s.kotlin() == null ? null : kotlinc(s, sets, kfiles);
+            if (ok == null) return Result.UNAVAILABLE;   // no Kotlin compiler from the build: let Gradle do it
+            if (!ok) return Result.FAILED;
+            total += kfiles.size();
+        }
+        if (total == 0 && hasChangedKotlin(t, since)) return Result.UNAVAILABLE;   // .kt outside any known source set
         for (SourceSet s : sets) {
             if (s.name().equals("test") || s.name().endsWith("Test")) continue;   // not on the game's class path
             var files = changedSources(s, since);
             if (files.isEmpty()) continue;
             Boolean ok = inProcess(s, sets, files);   // null: no compiler in this runtime
-            lastMode = "javac in the IDE";
+            modes.add("javac in the IDE");
             if (ok == null) {
                 if (s.javac() == null || !Files.isExecutable(s.javac())) return Result.UNAVAILABLE;
                 ok = javac(s, sets, files);
-                lastMode = "javac process";
+                modes.remove("javac in the IDE"); modes.add("javac process");
             }
             if (!ok) return Result.FAILED;
             total += files.size();
         }
         compiled[0] = total;
+        lastMode = String.join(" + ", modes);
         return Result.OK;
     }
 
     private boolean javac(SourceSet s, List<SourceSet> all, List<Path> files) throws IOException, InterruptedException {
         var cp = new LinkedHashSet<Path>();
-        for (SourceSet o : all) cp.add(o.out());   // the other sets' classes (client sees main, etc.)
+        for (SourceSet o : all) { cp.add(o.out()); if (o.kotlin() != null) cp.add(o.kotlin().out()); }   // other sets, and Kotlin output (Java may use it)
         cp.addAll(s.classpath());
         var a = new ArrayList<String>();
         a.add("-d"); a.add(q(s.out()));
         a.add("-cp"); a.add(q(String.join(java.io.File.pathSeparator, cp.stream().map(Path::toString).toList())));
         a.add("-sourcepath"); a.add("\"\"");
-        a.add("-implicit:none"); a.add("-proc:none"); a.add("-nowarn"); a.add("-g");
+        a.add("-implicit:none"); a.add("-nowarn"); a.add("-g");
+        var procs = s.activeProcessors();
+        if (procs.isEmpty()) a.add("-proc:none");
+        else {
+            a.add("-processorpath"); a.add(q(String.join(java.io.File.pathSeparator, procs.stream().map(Path::toString).toList())));
+            if (s.generated() != null) { Files.createDirectories(s.generated()); a.add("-s"); a.add(q(s.generated())); }
+        }
         a.add("-encoding"); a.add(s.encoding().isEmpty() ? "UTF-8" : s.encoding());
         if (!s.release().isEmpty()) { a.add("--release"); a.add(s.release()); }
-        for (String x : s.args()) if (!x.startsWith("-A") && !x.startsWith("-Xplugin")) a.add(q(x));
+        for (String x : s.args()) if (keepArg(x, !procs.isEmpty())) a.add(q(x));
         for (Path f : files) a.add(q(f));
         Path argfile = Files.createTempFile(cacheDir, "javac-", ".args");
         try {
@@ -164,13 +191,17 @@ final class FastCompile {
         if (jc == null) return null;
         var fm = fileManager(jc, s, all);
         var diags = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
-        var opts = new ArrayList<>(List.of("-implicit:none", "-proc:none", "-nowarn", "-g",
+        var opts = new ArrayList<>(List.of("-implicit:none", "-nowarn", "-g",
                 "-encoding", s.encoding().isEmpty() ? "UTF-8" : s.encoding()));
+        boolean processing = !s.activeProcessors().isEmpty();
+        if (!processing) opts.add("-proc:none");
         if (!s.release().isEmpty()) { opts.add("--release"); opts.add(s.release()); }
-        for (String x : s.args()) if (!x.startsWith("-A") && !x.startsWith("-Xplugin") && !x.startsWith("-processor")) opts.add(x);
+        for (String x : s.args()) if (keepArg(x, processing)) opts.add(x);
         boolean ok;
         synchronized (fm) {
-            ok = jc.getTask(null, fm, diags, opts, null, fm.getJavaFileObjectsFromPaths(files)).call();
+            var task = jc.getTask(null, fm, diags, opts, null, fm.getJavaFileObjectsFromPaths(files));
+            if (processing) task.setProcessors(processors(s));   // from a kept loader: jars are not re-read every swap
+            ok = task.call();
         }
         if (!ok) {
             log.accept("hotswap: compile failed");
@@ -178,6 +209,151 @@ final class FastCompile {
                     .forEach(d -> log.accept("  " + (d.getSource() == null ? "" : Path.of(d.getSource().toUri()).getFileName() + ":" + d.getLineNumber() + ": ") + d.getMessage(null)));
         }
         return ok;
+    }
+
+    // ------------------------------------------------------------------ Kotlin (the build's own compiler, in the IDE)
+
+    static List<Path> changedKotlin(SourceSet s, long since) throws IOException {
+        var out = new ArrayList<Path>();
+        if (s.kotlin() == null) return out;
+        for (Path d : s.kotlin().srcDirs()) {
+            if (!Files.isDirectory(d)) continue;
+            try (Stream<Path> w = Files.walk(d)) {
+                for (Path f : w.filter(p -> p.toString().endsWith(".kt")).toList())
+                    if (Files.getLastModifiedTime(f).toMillis() > since) out.add(f);
+            }
+        }
+        return out;
+    }
+
+    /** One warm Kotlin compile server per compiler class path (see {@link KotlinServer}). */
+    private final Map<String, Process> kotlinServers = new HashMap<>();
+
+    /**
+     * Compile with the build's own Kotlin compiler (kotlinCompilerClasspath: the exact version the project uses), in a
+     * compile server process started once and kept warm. Changed files go to a scratch dir and only their .class files
+     * are copied into the Kotlin output: a partial compile would otherwise rewrite META-INF/*.kotlin_module with only
+     * those files. Returns null when the build gave no compiler.
+     */
+    private Boolean kotlinc(SourceSet s, List<SourceSet> all, List<Path> files) throws IOException {
+        var k = s.kotlin();
+        var jars = k.compiler().stream().filter(Files::exists).toList();
+        if (jars.isEmpty()) return null;
+        modes.add("kotlinc server");
+        var cp = new LinkedHashSet<Path>();
+        for (SourceSet o : all) { cp.add(o.out()); if (o.kotlin() != null) cp.add(o.kotlin().out()); }
+        cp.addAll(k.classpath());
+        cp.removeIf(p -> !Files.exists(p));
+        Path scratch = Files.createTempDirectory(cacheDir, "kotlinc-");
+        try {
+            var args = new ArrayList<String>();
+            for (Path f : files) args.add(f.toString());
+            args.addAll(List.of("-d", scratch.toString(), "-classpath", String.join(java.io.File.pathSeparator, cp.stream().map(Path::toString).toList()),
+                    "-no-stdlib", "-no-reflect", "-nowarn", "-module-name", k.module().isEmpty() ? "main" : k.module()));
+            if (!k.jvmTarget().isEmpty()) { args.add("-jvm-target"); args.add(k.jvmTarget()); }
+            var messages = new ArrayList<String>();
+            String code;
+            synchronized (kotlinServers) {
+                Process server = kotlinServer(jars);
+                if (server == null) return null;
+                var w = new java.io.OutputStreamWriter(server.getOutputStream(), StandardCharsets.UTF_8);
+                w.write(String.join("\t", args) + "\n");
+                w.flush();
+                code = readUntilExit(server, messages);
+                if (code == null) { kotlinServers.remove(jars.toString()); server.destroy(); log.accept("Kotlin compile server died"); return false; }
+            }
+            if (!code.equals("OK")) {
+                log.accept("hotswap: Kotlin compile failed (" + code + ")");
+                messages.stream().filter(l -> l.startsWith("e:") || l.contains("error")).limit(8).forEach(l -> log.accept("  " + l.strip()));
+                return false;
+            }
+            try (Stream<Path> w = Files.walk(scratch)) {
+                for (Path c : w.filter(p -> p.toString().endsWith(".class")).toList()) {
+                    Path to = k.out().resolve(scratch.relativize(c).toString());
+                    Files.createDirectories(to.getParent());
+                    Files.copy(c, to, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+            return true;
+        } finally {
+            try (Stream<Path> w = Files.walk(scratch)) { w.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete()); }
+        }
+    }
+
+    /** The running server for these compiler jars, started on first use (java of the IDE's runtime). */
+    private Process kotlinServer(List<Path> jars) throws IOException {
+        String key = jars.toString();
+        Process p = kotlinServers.get(key);
+        if (p != null && p.isAlive()) return p;
+        // IntelliJ's plugin class loader gives no code source location: put the server class into a folder of its own
+        Path self = cacheDir.resolve("kserver");
+        Path cls = self.resolve("dev/sulfurframe/idea/KotlinServer.class");
+        try (var in = KotlinServer.class.getResourceAsStream("KotlinServer.class")) {
+            if (in == null) { log.accept("Kotlin compile server: class not found in the plugin"); return null; }
+            Files.createDirectories(cls.getParent());
+            Files.write(cls, in.readAllBytes());
+        }
+        var cp = new ArrayList<String>();
+        cp.add(self.toString());
+        for (Path j : jars) cp.add(j.toString());
+        Path javaExe = Path.of(System.getProperty("java.home"), "bin", System.getProperty("os.name", "").startsWith("Windows") ? "java.exe" : "java");
+        p = new ProcessBuilder(javaExe.toString(), "-Xmx1g", "-Dfile.encoding=UTF-8", "-cp", String.join(java.io.File.pathSeparator, cp), KotlinServer.class.getName())
+                .redirectErrorStream(true).start();
+        var ready = new ArrayList<String>();
+        var r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8));
+        kotlinReaders.put(p, r);
+        for (String line; (line = r.readLine()) != null; ) {
+            if (line.equals("SF-READY")) { kotlinServers.put(key, p); return p; }
+            ready.add(line);
+        }
+        log.accept("Kotlin compile server did not start: " + String.join(" | ", ready));
+        return null;
+    }
+
+    private final Map<Process, java.io.BufferedReader> kotlinReaders = new HashMap<>();
+
+    /** Collect the compiler's messages up to "SF-EXIT <code>"; null if the server went away. */
+    private String readUntilExit(Process p, List<String> messages) throws IOException {
+        var r = kotlinReaders.get(p);
+        for (String line; (line = r.readLine()) != null; ) {
+            if (line.startsWith("SF-EXIT ")) return line.substring("SF-EXIT ".length()).strip();
+            messages.add(line);
+        }
+        return null;
+    }
+
+    private final Map<String, ClassLoader> processorLoaders = new HashMap<>();
+
+    /**
+     * Fresh processor instances (javac initializes them per compilation) from one class loader per source set, kept
+     * between swaps: loading Lombok & co. again for every compile cost over a second.
+     */
+    private synchronized List<javax.annotation.processing.Processor> processors(SourceSet s) throws IOException {
+        var procs = s.activeProcessors().stream().filter(Files::exists).toList();
+        String key = s.name() + procs;
+        var loader = processorLoaders.get(key);
+        if (loader == null) {
+            var urls = new ArrayList<java.net.URL>();
+            for (Path p : procs) urls.add(p.toUri().toURL());
+            loader = new java.net.URLClassLoader(urls.toArray(new java.net.URL[0]), javax.tools.ToolProvider.class.getClassLoader());
+            processorLoaders.put(key, loader);
+        }
+        var out = new ArrayList<javax.annotation.processing.Processor>();
+        for (var p : java.util.ServiceLoader.load(javax.annotation.processing.Processor.class, loader)) out.add(p);
+        return out;
+    }
+
+    /**
+     * Compiler arguments of the build worth passing on. -A options only when processors run, and never Mixin's
+     * (refmap/mapping file options for the processor we leave out); plugin and processor-selection flags never.
+     */
+    static boolean keepArg(String x, boolean processing) {
+        if (x.startsWith("-Xplugin") || x.startsWith("-processor")) return false;
+        if (x.startsWith("-A")) {
+            String k = x.toLowerCase();
+            return processing && !(k.contains("refmap") || k.contains("mapfile") || k.contains("obfuscationenv") || k.contains("mixin") || k.equals("-aquiet=true"));
+        }
+        return true;
     }
 
     private static volatile javax.tools.JavaCompiler compiler;
@@ -207,11 +383,19 @@ final class FastCompile {
         managers.keySet().removeIf(k -> k.name().equals(s.name()));   // a re-read class path replaces the old set
         fm = jc.getStandardFileManager(null, null, StandardCharsets.UTF_8);
         var cp = new LinkedHashSet<Path>();
-        for (SourceSet o : all) cp.add(o.out());
+        for (SourceSet o : all) { cp.add(o.out()); if (o.kotlin() != null) cp.add(o.kotlin().out()); }
         cp.addAll(s.classpath());
         cp.removeIf(p -> !Files.exists(p));
         fm.setLocationFromPaths(javax.tools.StandardLocation.CLASS_PATH, cp);
         fm.setLocationFromPaths(javax.tools.StandardLocation.SOURCE_PATH, List.of());
+        var procs = s.activeProcessors().stream().filter(Files::exists).toList();
+        if (!procs.isEmpty()) {   // the build's annotation processors (Lombok, AutoService...), in their own loader
+            fm.setLocationFromPaths(javax.tools.StandardLocation.ANNOTATION_PROCESSOR_PATH, procs);
+            if (s.generated() != null) {
+                Files.createDirectories(s.generated());
+                fm.setLocationFromPaths(javax.tools.StandardLocation.SOURCE_OUTPUT, List.of(s.generated()));
+            }
+        }
         Files.createDirectories(s.out());
         fm.setLocationFromPaths(javax.tools.StandardLocation.CLASS_OUTPUT, List.of(s.out()));
         managers.put(s, fm);
@@ -242,6 +426,13 @@ final class FastCompile {
                     try (var w = Files.walk(scratch)) { w.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete()); }
                 }
                 log.accept("javac warmed up in " + (System.currentTimeMillis() - t0) + " ms");
+                for (SourceSet s : sets) {   // and Kotlin's compiler, if the build has Kotlin sources
+                    if (s.kotlin() == null || s.name().equals("test") || s.name().endsWith("Test")) continue;
+                    var kfiles = changedKotlin(s, 0);
+                    if (kfiles.isEmpty()) continue;
+                    long k0 = System.currentTimeMillis();
+                    if (Boolean.TRUE.equals(kotlinc(s, sets, kfiles.subList(0, 1)))) log.accept("kotlinc warmed up in " + (System.currentTimeMillis() - k0) + " ms");
+                }
             } catch (Exception e) { log.accept("javac warm-up skipped: " + e); }
         });
     }
@@ -287,8 +478,10 @@ final class FastCompile {
     static List<SourceSet> parse(List<String> lines) {
         var sets = new ArrayList<SourceSet>();
         String name = null, release = "", enc = "";
-        Path out = null, javac = null, javaHome = null, resOut = null;
-        List<Path> src = new ArrayList<>(), cp = new ArrayList<>(), resSrc = new ArrayList<>();
+        Path out = null, javac = null, javaHome = null, resOut = null, gen = null, kout = null;
+        String kjvm = "", kmod = "";
+        List<Path> ksrc = new ArrayList<>(), kcp = new ArrayList<>(), kc = new ArrayList<>();
+        List<Path> src = new ArrayList<>(), cp = new ArrayList<>(), resSrc = new ArrayList<>(), ap = new ArrayList<>();
         List<String> args = new ArrayList<>();
         for (String line : lines) {
             int tab = line.indexOf('\t');
@@ -297,11 +490,20 @@ final class FastCompile {
             switch (k) {
                 case "javahome" -> javaHome = Path.of(v);
                 case "set" -> {
-                    if (name != null && out != null) sets.add(new SourceSet(name, src, out, cp, release, enc, javac(javac, javaHome), args, resSrc, resOut));
-                    name = v; release = ""; enc = ""; out = null; javac = null; resOut = null;
-                    src = new ArrayList<>(); cp = new ArrayList<>(); args = new ArrayList<>(); resSrc = new ArrayList<>();
+                    if (name != null && out != null) sets.add(new SourceSet(name, src, out, cp, release, enc, javac(javac, javaHome), args, resSrc, resOut, ap, gen, kout == null ? null : new Kotlin(ksrc, kout, kcp, kjvm, kmod, kc)));
+                    name = v; release = ""; enc = ""; out = null; javac = null; resOut = null; gen = null; kout = null; kjvm = ""; kmod = "";
+                    ksrc = new ArrayList<>(); kcp = new ArrayList<>(); kc = new ArrayList<>();
+                    src = new ArrayList<>(); cp = new ArrayList<>(); args = new ArrayList<>(); resSrc = new ArrayList<>(); ap = new ArrayList<>();
                 }
                 case "ressrc" -> resSrc.add(Path.of(v));
+                case "ap" -> ap.add(Path.of(v));
+                case "ksrc" -> ksrc.add(Path.of(v));
+                case "kout" -> kout = Path.of(v);
+                case "kcp" -> kcp.add(Path.of(v));
+                case "kjvm" -> kjvm = v;
+                case "kmod" -> kmod = v;
+                case "kc" -> kc.add(Path.of(v));
+                case "gensrc" -> gen = Path.of(v);
                 case "resout" -> resOut = Path.of(v);
                 case "src" -> src.add(Path.of(v));
                 case "out" -> out = Path.of(v);
@@ -313,7 +515,7 @@ final class FastCompile {
                 default -> { }
             }
         }
-        if (name != null && out != null) sets.add(new SourceSet(name, src, out, cp, release, enc, javac(javac, javaHome), args, resSrc, resOut));
+        if (name != null && out != null) sets.add(new SourceSet(name, src, out, cp, release, enc, javac(javac, javaHome), args, resSrc, resOut, ap, gen, kout == null ? null : new Kotlin(ksrc, kout, kcp, kjvm, kmod, kc)));
         return sets;
     }
 
@@ -342,6 +544,24 @@ final class FastCompile {
                             lines << "out\\t" + out.absolutePath
                             ss.resources.srcDirs.each { lines << "ressrc\\t" + it.absolutePath }
                             if (ss.output.resourcesDir != null) lines << "resout\\t" + ss.output.resourcesDir.absolutePath
+                            try { (jc.options.annotationProcessorPath?.files ?: []).each { lines << "ap\\t" + it.absolutePath } } catch (Throwable ignored) { }
+                            try {
+                                def g = jc.options.generatedSourceOutputDirectory.orNull
+                                if (g != null) lines << "gensrc\\t" + g.asFile.absolutePath
+                            } catch (Throwable ignored) { }
+                            try {   // Kotlin (KGP): compileKotlin / compileClientKotlin ...
+                                def kt = p.tasks.findByName(ss.getCompileTaskName('kotlin'))
+                                def kdirs = ss.extensions.findByName('kotlin')
+                                if (kt != null && kdirs != null) {
+                                    kdirs.srcDirs.each { lines << "ksrc\\t" + it.absolutePath }
+                                    lines << "kout\\t" + kt.destinationDirectory.get().asFile.absolutePath
+                                    kt.libraries.files.each { lines << "kcp\\t" + it.absolutePath }
+                                    try { lines << "kjvm\\t" + kt.compilerOptions.jvmTarget.get().target } catch (Throwable ignored) { }
+                                    try { lines << "kmod\\t" + (kt.compilerOptions.moduleName.orNull ?: p.name) } catch (Throwable ignored) { lines << "kmod\\t" + p.name }
+                                    def kc = p.configurations.findByName('kotlinCompilerClasspath')
+                                    if (kc != null) kc.files.each { lines << "kc\\t" + it.absolutePath }
+                                }
+                            } catch (Throwable ignored) { }
                             ss.compileClasspath.files.each { lines << "cp\\t" + it.absolutePath }
                             def rel = null
                             try { rel = jc.options.release.orNull } catch (Throwable ignored) { }
