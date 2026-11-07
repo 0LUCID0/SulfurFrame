@@ -2,6 +2,7 @@ package dev.sulfurframe.idea;
 
 import dev.sulfurframe.idea.embed.GameEmbedder;
 import dev.sulfurframe.idea.profile.ProjectProfile;
+import dev.sulfurframe.idea.profile.Workspace;
 
 import javax.swing.*;
 import java.awt.*;
@@ -10,25 +11,37 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
-/** Tool window content: detected project profile, controls, the embedded game, a short log. */
+/**
+ * Tool window content: which client to run (every runnable target found in the opened folder), controls, the
+ * embedded game, a short log.
+ */
 final class SulfurPanel extends JPanel {
     final GameEmbedder embedder;
     private final GameLauncher launcher;
-    private final JLabel profileLabel = new JLabel();
+    private final JComboBox<Workspace.Target> targets = new JComboBox<>();
     private final JTextArea log = new JTextArea(5, 40);
     private final Path projectDir;
+    private final Supplier<String> savedTarget;
+    private final Consumer<String> saveTarget;
+    /** Profile of the selected target (null if none). */
     ProjectProfile profile;
 
-    SulfurPanel(Path projectDir) {
+    SulfurPanel(Path projectDir, Supplier<String> savedTarget, Consumer<String> saveTarget) {
         super(new BorderLayout());
         this.projectDir = projectDir;
+        this.savedTarget = savedTarget;
+        this.saveTarget = saveTarget;
         embedder = new GameEmbedder(this::log);
         launcher = new GameLauncher(this::log);
         embedder.setAgentJar(extractAgent());
 
         log.setEditable(false);
         log.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+        targets.addActionListener(e -> onTargetSelected());
         var buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
         buttons.add(button("Run client", this::runClient));
         buttons.add(button("Attach PID…", () -> {
@@ -36,14 +49,14 @@ final class SulfurPanel extends JPanel {
             if (s != null && !s.isBlank()) embedder.attach(Long.parseLong(s.trim()));
         }));
         buttons.add(button("Detach", embedder::detach));
-        buttons.add(button("Re-detect", this::detect));
+        buttons.add(button("Rescan", this::scan));
         var north = new JPanel(new BorderLayout());
-        north.add(profileLabel, BorderLayout.NORTH);
+        north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);
         add(north, BorderLayout.NORTH);
         add(embedder.component(), BorderLayout.CENTER);
         add(new JScrollPane(log), BorderLayout.SOUTH);
-        detect();
+        scan();
     }
 
     private JButton button(String text, Runnable r) {
@@ -52,20 +65,41 @@ final class SulfurPanel extends JPanel {
         return b;
     }
 
-    void detect() {
+    /** Find every runnable client in the opened folder (single project, container of builds, multi-project, Stonecutter). */
+    void scan() {
+        List<Workspace.Target> found;
         try {
-            profile = projectDir == null ? null : ProjectProfile.detect(projectDir);
+            found = projectDir == null ? List.of() : Workspace.scan(projectDir);
         } catch (Exception e) {
-            profile = null;
-            log("profile detection failed: " + e);
+            found = List.of();
+            log("scan failed: " + e);
         }
-        profileLabel.setText(profile == null ? " No project" : " " + profile + (profile.isComplete() ? "" : "  (incomplete: see log)"));
-        if (profile != null) profile.evidence().forEach(e -> log("  " + e));
+        targets.removeAllItems();
+        found.forEach(targets::addItem);
+        log(found.isEmpty() ? "no Minecraft mod project found in " + projectDir
+                : found.size() + " runnable client" + (found.size() == 1 ? "" : "s") + " found");
+        String want = savedTarget.get();
+        for (int i = 0; i < targets.getItemCount(); i++)
+            if (key(targets.getItemAt(i)).equals(want)) { targets.setSelectedIndex(i); break; }
+        onTargetSelected();
     }
 
+    private void onTargetSelected() {
+        var t = (Workspace.Target) targets.getSelectedItem();
+        profile = t == null ? null : t.profile();
+        if (t == null) return;
+        saveTarget.accept(key(t));
+        log("selected " + t.where() + ": " + t.profile());
+        t.profile().evidence().forEach(e -> log("  " + e));
+    }
+
+    private static String key(Workspace.Target t) { return t.buildRoot() + "|" + t.projectPath(); }
+
     void runClient() {
-        if (profile == null || !profile.isComplete()) { log("cannot tell which Minecraft this project uses"); return; }
-        launcher.runClient(profile, (pid, hwnd) -> SwingUtilities.invokeLater(() -> embedder.attach(pid)));
+        var t = (Workspace.Target) targets.getSelectedItem();
+        if (t == null || !t.profile().isComplete()) { log("pick a client to run (none detected)"); return; }
+        if (!t.hasWrapper()) log("note: " + t.where() + " has no Gradle wrapper of its own; using the nearest parent's");
+        launcher.runClient(t, (pid, hwnd) -> SwingUtilities.invokeLater(() -> embedder.attach(pid)));
     }
 
     void log(String s) {
@@ -93,4 +127,9 @@ final class SulfurPanel extends JPanel {
             return null;
         }
     }
+
+    /** For the self-test. */
+    int targetCount() { return targets.getItemCount(); }
+    void selectTarget(int i) { targets.setSelectedIndex(i); }
+    Workspace.Target targetAt(int i) { return targets.getItemAt(i); }
 }

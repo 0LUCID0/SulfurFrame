@@ -14,7 +14,8 @@ public final class SulfurToolWindowFactory implements ToolWindowFactory, DumbAwa
     @Override
     public void createToolWindowContent(Project project, ToolWindow toolWindow) {
         Path dir = project.getBasePath() == null ? null : Path.of(project.getBasePath());
-        var panel = new SulfurPanel(dir);
+        var props = com.intellij.ide.util.PropertiesComponent.getInstance(project);
+        var panel = new SulfurPanel(dir, () -> props.getValue("sulfurframe.target", ""), v -> props.setValue("sulfurframe.target", v));
         var content = ContentFactory.getInstance().createContent(panel, "", false);
         toolWindow.getContentManager().addContent(content);
         Disposer.register(toolWindow.getDisposable(), panel.embedder::dispose);

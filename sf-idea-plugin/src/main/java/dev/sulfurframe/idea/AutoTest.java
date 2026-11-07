@@ -85,6 +85,16 @@ final class AutoTest {
     private static void runClientFlow(SulfurPanel p, ToolWindow tw) {
         onEdt(tw::show);
         sleep(3000);
+        // every runnable client found in the opened folder; -Dsulfurframe.autotest.target=<where> picks one
+        for (int i = 0; i < p.targetCount(); i++) lines.add("target " + i + ": " + p.targetAt(i).label() + "  [" + p.targetAt(i).runTask() + "]");
+        String want = System.getProperty("sulfurframe.autotest.target");
+        if (want != null) {
+            int idx = -1;
+            for (int i = 0; i < p.targetCount(); i++) if (p.targetAt(i).where().equals(want)) idx = i;
+            check("target '" + want + "' found", idx >= 0, p.targetCount() + " targets");
+            final int sel = idx;
+            if (sel >= 0) onEdt(() -> p.selectTarget(sel));
+        }
         check("profile detected", p.profile != null && p.profile.isComplete(), String.valueOf(p.profile));
         long t0 = System.currentTimeMillis();
         onEdt(p::runClient);

@@ -1,6 +1,7 @@
 package dev.sulfurframe.idea;
 
 import dev.sulfurframe.idea.profile.ProjectProfile;
+import dev.sulfurframe.idea.profile.Workspace;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -20,15 +21,16 @@ final class GameLauncher {
 
     GameLauncher(Consumer<String> log) { this.log = log; }
 
-    void runClient(ProjectProfile profile, BiConsumer<Long, Long> onWindow) {
-        Path dir = profile.dir();
+    void runClient(Workspace.Target target, BiConsumer<Long, Long> onWindow) {
+        ProjectProfile profile = target.profile();
+        Path dir = target.buildRoot();
         Path wrapper = findWrapper(dir);
         if (wrapper == null) { log.accept("no gradlew.bat in " + dir + " or its parents"); return; }
         Set<Long> before = new HashSet<>(dev.sulfurframe.idea.embed.Win32Access.gameWindows());
         try {
-            var pb = new ProcessBuilder(wrapper.toString(), "runClient", "--console=plain").directory(dir.toFile()).redirectErrorStream(true);
+            var pb = new ProcessBuilder(wrapper.toString(), target.runTask(), "--console=plain").directory(dir.toFile()).redirectErrorStream(true);
             gradle = pb.start();
-            log.accept("started " + wrapper + " runClient for " + profile);
+            log.accept("started " + wrapper + " " + target.runTask() + " for " + profile);
             Thread.ofPlatform().daemon().name("sf-gradle-out").start(() -> pump(gradle));
         } catch (IOException e) {
             log.accept("could not start Gradle: " + e);
@@ -57,7 +59,7 @@ final class GameLauncher {
                 if (line.startsWith("* What went wrong")) { why = true; continue; }
                 if (line.startsWith("* Try")) why = false;
                 if (why && !line.isBlank()) log.accept("[gradle] " + line.strip());
-                else if (line.startsWith("> Task :runClient") || line.contains("BUILD") || line.contains("error:"))
+                else if (line.matches("> Task \\S*:?runClient.*") || line.contains("BUILD") || line.contains("error:"))
                     log.accept("[gradle] " + line);
             }
         } catch (IOException ignored) { }

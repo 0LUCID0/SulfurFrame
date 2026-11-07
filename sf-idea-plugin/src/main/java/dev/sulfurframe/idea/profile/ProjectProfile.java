@@ -34,13 +34,31 @@ public record ProjectProfile(Path dir, String minecraftVersion, Loader loader, S
 
     // ------------------------------------------------------------------ detection
 
-    public static ProjectProfile detect(Path dir) throws IOException {
-        var ev = new ArrayList<String>();
-        var props = gradleProperties(dir, ev);
-        String scripts = readScripts(dir);
-        var toml = versionCatalog(dir);
+    public static ProjectProfile detect(Path dir) throws IOException { return detect(dir, dir, null); }
 
-        Loader loader = loaderFromPlugins(scripts, ev);
+    public static ProjectProfile detect(Path dir, Path scriptsDir) throws IOException { return detect(dir, scriptsDir, null); }
+
+    /**
+     * @param dir        the (sub)project directory: its gradle.properties chain is used
+     * @param scriptsDir where its build script lives (differs for Stonecutter, whose version projects share the
+     *                   root build script)
+     * @param buildRoot  root of the Gradle build this project belongs to, or null to stop at the first settings file.
+     *                   A subproject may carry a stray settings.gradle of its own and still read the root's properties.
+     */
+    public static ProjectProfile detect(Path dir, Path scriptsDir, Path buildRoot) throws IOException {
+        var ev = new ArrayList<String>();
+        var props = gradleProperties(dir, buildRoot);
+        String scripts = readScripts(scriptsDir);
+        if (!scriptsDir.equals(dir)) scripts += readScripts(dir);
+        // "${property("deps.fabric_loader")}" (Stonecutter style) -> "${deps.fabric_loader}", resolvable below
+        scripts = scripts.replaceAll("\\$\\{\\s*(?:project\\.|rootProject\\.)?(?:property|findProperty)\\s*\\(\\s*[\"']([\\w.\\-]+)[\"']\\s*\\)\\s*(?:\\.toString\\(\\))?\\s*\\}", "\\${$1}");
+        var toml = versionCatalog(dir);
+        scriptVariables(scripts, props);   // val mcVersion = rootProject.property("mc_1_21_1_version") -> "$mcVersion" resolves
+
+        // the loader must come from the build script itself (a directory name like mod-forge-1_21_1 is only a
+        // version hint: scaffolded stubs carry such names without any loader plugin)
+        Loader loader = architecturyPlatform(scripts, ev);
+        if (loader == null) loader = loaderFromPlugins(scripts, ev);
 
         String mc = first(ev, "minecraft version",
                 kv(props, "gradle.properties", "minecraft_version", "mc_version", "minecraftVersion", "minecraft.version"),
@@ -77,8 +95,63 @@ public record ProjectProfile(Path dir, String minecraftVersion, Loader loader, S
             mc = mcFromNeoForge(lv);
             if (mc != null) ev.add("minecraft version " + mc + " derived from NeoForge " + lv);
         }
+        if (mc == null && loader != Loader.UNKNOWN) {
+            mc = mcFromDirName(dir);
+            if (mc != null) ev.add("minecraft version " + mc + " from directory name " + dir.getFileName());
+        }
         if (loader == Loader.UNKNOWN && mc != null && scripts.isEmpty()) loader = Loader.VANILLA;
         return new ProjectProfile(dir, mc, loader, lv, javaFor(mc), List.copyOf(ev));
+    }
+
+    /**
+     * Architectury subprojects get Loom from the root build ({@code subprojects { apply plugin: ... }}) and say which
+     * platform they are in their own {@code architectury { fabric() / neoForge() / forge() / common(...) }} block.
+     * Returns null when there is no such block; UNKNOWN for {@code common} (shared code, not runnable).
+     */
+    static Loader architecturyPlatform(String s, List<String> ev) {
+        Matcher m = Pattern.compile("architectury\\s*\\{([^}]*)\\}", Pattern.DOTALL).matcher(s);
+        while (m.find()) {
+            String body = m.group(1);
+            Loader l = body.matches("(?s).*\\bneoForge\\s*\\(.*") ? Loader.NEOFORGE
+                    : body.matches("(?s).*\\bforge\\s*\\(.*") ? Loader.FORGE
+                    : body.matches("(?s).*\\bfabric\\s*\\(.*") ? Loader.FABRIC
+                    : body.matches("(?s).*\\bquilt\\s*\\(.*") ? Loader.QUILT
+                    : body.matches("(?s).*\\bcommon\\s*\\(.*") ? Loader.UNKNOWN : null;
+            if (l != null) { ev.add("loader " + l + " from architectury { } block" + (l == Loader.UNKNOWN ? " (common: shared code)" : "")); return l; }
+        }
+        return null;
+    }
+
+    static final Pattern DIR_HINT = Pattern.compile("(?i)(neoforge|forge|fabric|quilt)[-_]?(\\d+[._]\\d+(?:[._]\\d+)?)");
+
+    /** e.g. mod-fabric-1_21_1, forge-1.20.1: last resort when the build script gives nothing. */
+    static Loader loaderFromDirName(Path dir, List<String> ev) {
+        Matcher m = DIR_HINT.matcher(String.valueOf(dir.getFileName()));
+        if (!m.find()) return Loader.UNKNOWN;
+        Loader l = Loader.valueOf(m.group(1).toUpperCase(Locale.ROOT));
+        ev.add("loader " + l + " from directory name " + dir.getFileName());
+        return l;
+    }
+
+    static String mcFromDirName(Path dir) {
+        Matcher m = DIR_HINT.matcher(String.valueOf(dir.getFileName()));
+        if (m.find()) return m.group(2).replace('_', '.');
+        Matcher v = Pattern.compile("^(1\\.\\d+(?:\\.\\d+)?|\\d{2}\\.\\d+(?:\\.\\d+)?)$").matcher(String.valueOf(dir.getFileName()));
+        return v.find() ? v.group(1) : null;
+    }
+
+    /**
+     * Script-local variables that point at Gradle properties, added to {@code props} under the variable name:
+     * kts  {@code val x = rootProject.property("k")}, {@code project.findProperty("k")}, {@code providers.gradleProperty("k")},
+     *      {@code rootProject.extra["k"]}, {@code property("k")}
+     * groovy {@code def x = rootProject.k}, {@code def x = project.property('k')}
+     */
+    static void scriptVariables(String s, Map<String, String> props) {
+        Matcher kts = Pattern.compile("(?:val|var|def)\\s+(\\w+)\\s*(?::\\s*\\w+\\s*)?=\\s*(?:rootProject\\.|project\\.|providers\\.)?"
+                + "(?:property|findProperty|gradleProperty|extra|properties)\\s*[(\\[]\\s*[\"']([\\w.\\-]+)[\"']").matcher(s);
+        while (kts.find()) if (props.containsKey(kts.group(2))) props.putIfAbsent(kts.group(1), props.get(kts.group(2)));
+        Matcher groovy = Pattern.compile("def\\s+(\\w+)\\s*=\\s*(?:rootProject|project)\\.([\\w]+)\\b(?!\\s*\\()").matcher(s);
+        while (groovy.find()) if (props.containsKey(groovy.group(2))) props.putIfAbsent(groovy.group(1), props.get(groovy.group(2)));
     }
 
     static Loader loaderFromPlugins(String s, List<String> ev) {
@@ -89,6 +162,10 @@ public record ProjectProfile(Path dir, String minecraftVersion, Loader loader, S
                 {"net.minecraftforge.gradle", Loader.FORGE},
                 {"fabric-loom", Loader.FABRIC}, {"net.fabricmc.fabric-loom", Loader.FABRIC}, {"dev.architectury.loom", Loader.FABRIC},
         };
+        // plugins applied inside subprojects { } belong to the children, not to this project
+        s = withoutBlocks(s, "subprojects");
+        // plugins declared with "apply false" (Architectury roots, convention roots) are not applied to this project
+        s = s.replaceAll("id\\s*\\(?\\s*[\"'][^\"']+[\"']\\s*\\)?(\\s*version\\s*\\(?\\s*[\"'][^\"']*[\"']\\s*\\)?)?\\s*apply\\s*\\(?\\s*false\\s*\\)?", "");
         for (Object[] row : table) {
             if (s.contains("'" + row[0] + "'") || s.contains("\"" + row[0] + "\"") || s.contains("id(" + row[0])) {
                 Loader l = (Loader) row[1];
@@ -104,15 +181,37 @@ public record ProjectProfile(Path dir, String minecraftVersion, Loader loader, S
         return Loader.UNKNOWN;
     }
 
+    /** Remove every {@code name { ... }} block, honouring nested braces. */
+    static String withoutBlocks(String s, String name) {
+        var out = new StringBuilder();
+        Matcher m = Pattern.compile("\\b" + name + "\\s*\\{").matcher(s);
+        int from = 0;
+        while (m.find(from)) {
+            out.append(s, from, m.start());
+            int depth = 0, i = m.end() - 1;
+            for (; i < s.length(); i++) {
+                if (s.charAt(i) == '{') depth++;
+                else if (s.charAt(i) == '}' && --depth == 0) break;
+            }
+            from = Math.min(i + 1, s.length());
+        }
+        return out.append(s.substring(from)).toString();
+    }
+
     // ------------------------------------------------------------------ sources
 
-    /** gradle.properties of the project and of every parent up to (and including) the directory with settings.gradle. */
-    static Map<String, String> gradleProperties(Path dir, List<String> ev) throws IOException {
+    /**
+     * gradle.properties of the project and of every parent up to {@code buildRoot} (or, if null, up to the first
+     * directory with a settings file).
+     */
+    static Map<String, String> gradleProperties(Path dir, Path buildRoot) throws IOException {
         var chain = new ArrayList<Path>();
-        for (Path d = dir.toAbsolutePath(); d != null; d = d.getParent()) {
+        Path stop = buildRoot == null ? null : buildRoot.toAbsolutePath().normalize();
+        for (Path d = dir.toAbsolutePath().normalize(); d != null; d = d.getParent()) {
             chain.add(d);
-            if (Files.exists(d.resolve("settings.gradle")) || Files.exists(d.resolve("settings.gradle.kts"))) break;
-            if (chain.size() > 4) break;
+            if (stop != null ? d.equals(stop)
+                    : Files.exists(d.resolve("settings.gradle")) || Files.exists(d.resolve("settings.gradle.kts"))) break;
+            if (chain.size() > 6) break;
         }
         var props = new LinkedHashMap<String, String>();
         for (int i = chain.size() - 1; i >= 0; i--) {     // root first, project last (project wins)
