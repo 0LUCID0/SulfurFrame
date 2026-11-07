@@ -29,6 +29,9 @@ final class SulfurPanel extends JPanel {
     private final Consumer<String> saveTarget;
     /** Profile of the selected target (null if none). */
     ProjectProfile profile;
+    final Hotswapper hotswapper;
+    private final Path agentJar;
+    private final JCheckBox swapOnSave = new JCheckBox("Hotswap on save", true);
 
     SulfurPanel(Path projectDir, Supplier<String> savedTarget, Consumer<String> saveTarget, Runnable openAsTab) {
         super(new BorderLayout());
@@ -37,7 +40,9 @@ final class SulfurPanel extends JPanel {
         this.saveTarget = saveTarget;
         embedder = new GameEmbedder(this::log);
         launcher = new GameLauncher(this::log);
-        embedder.setAgentJar(extractAgent());
+        hotswapper = new Hotswapper(this::log);
+        agentJar = extractAgent();
+        embedder.setAgentJar(agentJar);
 
         log.setEditable(false);
         log.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
@@ -55,6 +60,9 @@ final class SulfurPanel extends JPanel {
         keepRatio.setToolTipText("Keep the game at 16:9 (black bars) instead of stretching it to the panel");
         keepRatio.addActionListener(e -> embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0));
         buttons.add(keepRatio);
+        buttons.add(button("Hotswap", this::hotswapAsync));
+        swapOnSave.setToolTipText("Compile and reload changed classes into the running game whenever a source file is saved");
+        buttons.add(swapOnSave);
         var north = new JPanel(new BorderLayout());
         north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);
@@ -104,7 +112,24 @@ final class SulfurPanel extends JPanel {
         var t = (Workspace.Target) targets.getSelectedItem();
         if (t == null || !t.profile().isComplete()) { log("pick a client to run (none detected)"); return; }
         if (!t.hasWrapper()) log("note: " + t.where() + " has no Gradle wrapper of its own; using the nearest parent's");
-        launcher.runClient(t, (pid, hwnd) -> SwingUtilities.invokeLater(() -> embedder.attach(pid)));
+        launcher.runClient(t, (pid, hwnd) -> SwingUtilities.invokeLater(() -> { embedder.attach(pid); hotswapper.snapshot(t); }));
+    }
+
+    Workspace.Target selectedTarget() { return (Workspace.Target) targets.getSelectedItem(); }
+
+    /** Compile the selected target and reload what changed into the running game (background thread). */
+    void hotswapAsync() {
+        var t = selectedTarget();
+        long pid = embedder.gamePid();
+        Thread.ofPlatform().daemon().name("sf-hotswap").start(() -> hotswapper.swap(t, pid, agentJar));
+    }
+
+    /** Source files were saved: hotswap if they belong to the selected target and a game is attached. */
+    void onSourcesSaved(java.util.List<Path> files) {
+        var t = selectedTarget();
+        if (!swapOnSave.isSelected() || t == null || !embedder.attached()) return;
+        Path dir = t.dir().toAbsolutePath().normalize();
+        if (files.stream().anyMatch(f -> f.toAbsolutePath().normalize().startsWith(dir))) hotswapAsync();
     }
 
     void log(String s) {

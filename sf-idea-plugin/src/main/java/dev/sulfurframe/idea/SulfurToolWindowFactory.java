@@ -21,6 +21,30 @@ public final class SulfurToolWindowFactory implements ToolWindowFactory, DumbAwa
         var content = ContentFactory.getInstance().createContent(host.toolHolder, "", false);
         toolWindow.getContentManager().addContent(content);
         Disposer.register(toolWindow.getDisposable(), panel.embedder::dispose);
+        listenForSaves(project, toolWindow, panel);
         AutoTest.maybeRun(panel, toolWindow, project);
+    }
+
+    /** Saved .java/.kt files -> hotswap (debounced, so "Save All" of many files makes one swap). */
+    private static void listenForSaves(Project project, ToolWindow toolWindow, SulfurPanel panel) {
+        var pending = new java.util.LinkedHashSet<Path>();
+        var timer = new javax.swing.Timer(500, e -> {
+            var files = new java.util.ArrayList<>(pending);
+            pending.clear();
+            panel.onSourcesSaved(files);
+        });
+        timer.setRepeats(false);
+        project.getMessageBus().connect(toolWindow.getDisposable()).subscribe(com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES,
+                new com.intellij.openapi.vfs.newvfs.BulkFileListener() {
+                    @Override public void after(java.util.List<? extends com.intellij.openapi.vfs.newvfs.events.VFileEvent> events) {
+                        boolean any = false;
+                        for (var ev : events) {
+                            if (!(ev instanceof com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent)) continue;
+                            String p = ev.getPath();
+                            if (p.endsWith(".java") || p.endsWith(".kt")) { pending.add(Path.of(p)); any = true; }
+                        }
+                        if (any) javax.swing.SwingUtilities.invokeLater(timer::restart);
+                    }
+                });
     }
 }

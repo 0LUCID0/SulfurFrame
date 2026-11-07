@@ -55,6 +55,14 @@ public final class SfAgent {
     }
 
     private static synchronized void install(String args, Instrumentation inst, boolean attached) {
+        // "redefine=<list file>": hotswap request from the IDE (each request is a fresh attach)
+        String redefine = null;
+        if (args != null) for (String kv : args.split(",")) if (kv.startsWith("redefine=")) redefine = kv.substring("redefine=".length());
+        if (redefine != null) {
+            if (!installed) install(args.replace("redefine=" + redefine, "").replaceAll(",+$", ""), inst, attached);
+            Hotswap.redefine(inst, redefine);
+            return;
+        }
         SfHooks.configure(args);
         if (installed) { SfHooks.log("already installed; settings updated (coding fps cap " + SfHooks.codingFps + ")"); return; }
         installed = true;

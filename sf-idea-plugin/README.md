@@ -166,3 +166,34 @@ F11 검사는 실제 키를 보냅니다. 그래서 키보드 포커스가 게�
 - **실제 플러그인 흐름**: 샌드박스 IDE가 붙인 에이전트로 1.21.1 임베드 → IDE `/F` 강제 종료 → 2초 후 저장하고 종료
 
 한계: 1.7.10은 LWJGL 3 JNI도 JNA도 없어서 구명보트를 쓸 수 없습니다(로그에 "unavailable"로 남김).
+
+## 핫스왑 (디버거 없이)
+
+**흐름:** 저장하거나 "Hotswap" 버튼을 누르면 다음 순서로 진행됩니다.
+1. 고른 대상의 wrapper로 `<경로>:classes`를 실행합니다. Loom에 `src/client`가 있으면 `clientClasses`도 함께 실행합니다.
+2. `build/classes` 아래에서 수정 시각이 바뀐 `.class` 파일을 찾습니다.
+3. 목록 파일을 ASCII 경로에 쓰고, Attach API로 에이전트에 `redefine=<목록>`을 보냅니다.
+4. 에이전트(`poc/agent/.../Hotswap.java`)가 이미 로드된 클래스를 `Instrumentation.redefineClasses`로 교체하고 결과 파일을 씁니다.
+
+- **디버거를 쓰지 않는 이유:** IntelliJ의 HotSwap(JDWP)은 게임을 디버거로 띄워야 하는데, `runClient`에 디버그 포트를 끼우면 Gradle 데몬과 충돌하기 쉽습니다. 이미 붙어 있는 에이전트를 쓰면 이 문제가 없습니다.
+- **반영되는 범위:** 일반 JVM이라 **메서드 본문 변경**만 반영됩니다. 메서드나 필드를 추가·삭제하면 해당 클래스만 "restart needed"로 알려 주고, 나머지 클래스는 그대로 반영합니다(한 번에 실패하면 클래스별로 다시 시도).
+- **아직 로드되지 않은 클래스:** 할 일이 없습니다. 나중에 로드될 때 새 파일을 읽습니다.
+- **저장 감지:** `VFS_CHANGES`의 `.java`/`.kt` 내용 변경을 0.5초 디바운스해서 받습니다. "Save All"로 파일 여러 개를 저장해도 한 번만 실행됩니다.
+  고른 대상 폴더 안의 파일일 때만 동작하고, 툴윈도우의 "Hotswap on save" 체크로 켜고 끕니다.
+
+검증: 샌드박스 IDE에서 lucid-study-mod 사본에 관찰용 클래스(5초마다 `[SF-PROBE] <message()>` 로그)를 넣고 진행했습니다.
+```
+PASS probe running (v1 in game log)
+PASS hotswap: method body change applied   [redefined 2 (고친 클래스 + 그걸 참조해서 다시 컴파일된 클래스), 에이전트 44 ms, 전체 14.8 s]
+PASS hotswap on save (VFS change -> swap)  [game log shows v3]
+PASS hotswap: added method -> restart needed  [restart needed: kr.kro.lucid.SfHotswapProbe (methods or fields added/removed)]
+```
+게임 로그는 `v1 ×5 → v2 → v3`로 바뀌었고, **게임은 재시작하지 않았습니다.**
+
+### 한계와 다음 과제
+- **느린 컴파일:** 매번 약 15초 걸리고, 에이전트 교체는 50ms 이하입니다. Gradle(Loom)이 매번 설정을 다시 평가하기 때문입니다.
+  Gradle이 쓰는 컴파일 클래스패스를 한 번 받아 두고 javac를 직접 돌리거나 IntelliJ 빌드를 쓰면 1초 안쪽으로 줄일 수 있을 것으로 봅니다.
+- **구조 변경:** 메서드나 필드 추가처럼 구조가 바뀌면 재시작해야 합니다. 게임을 JBR로 실행하고 `-XX:+AllowEnhancedClassRedefinition`을 쓰면 풀 수 있습니다.
+- **Mixin 클래스:** 교체돼도 이미 적용된 Mixin은 다시 적용되지 않습니다.
+- **Fabric 환경 어노테이션:** 바뀐 바이트에는 Knot의 `@Environment` 정리가 적용되지 않습니다. 클라이언트 개발 환경에서는 대개 문제가 없습니다.
+- **게임 안 토스트 알림:** 아직 없습니다. 결과는 툴윈도우 로그에만 나옵니다.

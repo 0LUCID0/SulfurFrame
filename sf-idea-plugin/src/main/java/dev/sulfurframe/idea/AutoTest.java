@@ -182,7 +182,62 @@ final class AutoTest {
         check("game sized to the canvas (16:9 fit)", game != 0 && fits(game, canvas),
                 "game " + Win32Access.clientSize(game) + ", canvas " + Win32Access.clientSize(canvas));
         snapshot(p, "sulfurframe-autotest-runclient");
+        String probe = System.getProperty("sulfurframe.autotest.hotswap");
+        if (probe != null) {
+            try { hotswapFlow(p, Path.of(probe)); } catch (Exception ex) { check("hotswap flow", false, ex.toString()); }
+        }
         lines.add("game pid " + e.gamePid() + " left running for inspection");
+    }
+
+    /**
+     * -Dsulfurframe.autotest.hotswap=<source file>: a class whose message() returns "v1" and is logged every 100 client
+     * ticks as "[SF-PROBE] v1". Changes it to v2 (Hotswap button path), v3 (save path: file change seen by the VFS),
+     * then adds a method (must be reported as needing a restart).
+     */
+    private static void hotswapFlow(SulfurPanel p, Path src) throws Exception {
+        var t = p.selectedTarget();
+        Path gameLog = t.dir().resolve("run/logs/latest.log");
+        check("probe running (v1 in game log)", waitForLog(gameLog, "[SF-PROBE] v1", 120), String.valueOf(gameLog));
+
+        String original = Files.readString(src);
+        Files.writeString(src, original.replace("return \"v1\";", "return \"v2\";"));
+        long t0 = System.currentTimeMillis();
+        boolean ran = p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p));
+        long ms = System.currentTimeMillis() - t0;
+        check("hotswap: method body change applied", ran && redefinedAny(p.hotswapper.lastResult) && waitForLog(gameLog, "[SF-PROBE] v2", 15),
+                "result " + p.hotswapper.lastResult + ", " + ms + " ms incl. Gradle compile");
+
+        // save path: change on disk -> VFS refresh -> BulkFileListener -> debounce -> hotswap
+        Files.writeString(src, original.replace("return \"v1\";", "return \"v3\";"));
+        var vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(src);
+        if (vf != null) vf.refresh(true, false);   // async refresh: the VFS reports the change like a save
+        check("hotswap on save (VFS change -> swap)", waitForLog(gameLog, "[SF-PROBE] v3", 60), "game log shows v3");
+
+        // structural change: a new method cannot be redefined on a standard JVM
+        Files.writeString(src, original.replace("return \"v1\";", "return \"v3\";")
+                .replace("private SfHotswapProbe() {}", "static String extra() { return \"x\"; }\n\n    private SfHotswapProbe() {}"));
+        sleep(1500);   // let a save-triggered swap (from the VFS) finish first
+        while (!p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p))) sleep(500);
+        check("hotswap: added method -> restart needed", p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed")),
+                String.valueOf(p.hotswapper.lastResult));
+        Files.writeString(src, original);
+    }
+
+    /** Gradle recompiles dependents too, so more than the edited class may be swapped. */
+    private static boolean redefinedAny(java.util.List<String> result) {
+        return result.stream().anyMatch(s -> s.matches("redefined [1-9][0-9]*"));
+    }
+
+    private static Path agentJarOf(SulfurPanel p) {
+        return Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "sf-agent.jar");
+    }
+
+    private static boolean waitForLog(Path log, String text, int seconds) {
+        for (int i = 0; i < seconds * 2; i++) {
+            try { if (Files.exists(log) && Files.readString(log).contains(text)) return true; } catch (Exception ignored) { }
+            sleep(500);
+        }
+        return false;
     }
 
     private static void snapshot(SulfurPanel p, String name) {
