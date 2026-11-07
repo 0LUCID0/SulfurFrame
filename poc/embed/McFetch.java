@@ -19,6 +19,9 @@ import java.util.zip.*;
 public class McFetch {
     static final Path TMP = Path.of(System.getenv().getOrDefault("TEMP", System.getProperty("java.io.tmpdir")));
     static final Path DL = TMP.resolve("sf-mc-dl");
+    /** Launcher OS name for library/argument rules: windows, linux or osx. */
+    static final String OS = System.getProperty("os.name").startsWith("Windows") ? "windows"
+            : System.getProperty("os.name").startsWith("Mac") ? "osx" : "linux";
     static final HttpClient HTTP = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
 
     public static void main(String[] a) throws Exception {
@@ -34,6 +37,12 @@ public class McFetch {
     @SuppressWarnings("unchecked")
     static Map<String, Object> fetch(String version) throws Exception {
         Path manifest = Path.of(System.getProperty("user.home"), ".gradle", "caches", "fabric-loom", "versions_manifest.json");
+        if (!Files.exists(manifest)) {   // no Loom cache (e.g. a fresh Linux box): Mojang's own manifest
+            manifest = DL.resolve("version_manifest_v2.json");
+            Files.createDirectories(DL);
+            HTTP.send(HttpRequest.newBuilder(URI.create("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")).build(),
+                    HttpResponse.BodyHandlers.ofFile(manifest));
+        }
         var versions = (List<Object>) ((Map<String, Object>) Json.parse(Files.readString(manifest))).get("versions");
         Map<String, Object> entry = null;
         for (Object o : versions) if (version.equals(((Map<String, Object>) o).get("id"))) entry = (Map<String, Object>) o;
@@ -69,8 +78,8 @@ public class McFetch {
     @SuppressWarnings("unchecked")
     static String nativeClassifier(Map<String, Object> lib) {
         var natives = (Map<String, Object>) lib.get("natives");
-        if (natives == null || natives.get("windows") == null) return null;
-        return ((String) natives.get("windows")).replace("${arch}", "64");
+        if (natives == null || natives.get(OS) == null) return null;
+        return ((String) natives.get(OS)).replace("${arch}", "64");
     }
 
     @SuppressWarnings("unchecked")
@@ -81,7 +90,7 @@ public class McFetch {
             var r = (Map<String, Object>) o;
             var os = (Map<String, Object>) r.get("os");
             if (r.get("features") != null) continue;
-            if (os == null || "windows".equals(os.get("name"))) ok = "allow".equals(r.get("action"));
+            if (os == null || (OS.equals(os.get("name")) && os.get("arch") == null)) ok = "allow".equals(r.get("action"));
         }
         return ok;
     }
@@ -131,7 +140,7 @@ public class McFetch {
 
         var jv = (Map<String, Object>) v.get("javaVersion");
         int major = jv == null ? 8 : ((Number) jv.get("majorVersion")).intValue();
-        String java = switch (major) {
+        String java = !OS.equals("windows") ? unixJava(major) : switch (major) {
             case 8 -> "C:/Program Files/Eclipse Adoptium/jdk-8.0.492.9-hotspot/bin/java.exe";
             case 16, 17 -> "C:/Program Files/Eclipse Adoptium/jdk-17.0.16.8-hotspot/bin/java.exe";
             case 21 -> "C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot/bin/java.exe";
@@ -322,10 +331,21 @@ public class McFetch {
             var r = (Map<String, Object>) o;
             if (r.get("features") != null) return false;
             var os = (Map<String, Object>) r.get("os");
-            boolean match = os == null || (("windows".equals(os.get("name")) || os.get("name") == null) && !"x86".equals(os.get("arch")));
+            boolean match = os == null || ((OS.equals(os.get("name")) || os.get("name") == null) && !"x86".equals(os.get("arch")));
             if (match) ok = "allow".equals(r.get("action"));
         }
         return ok;
+    }
+
+    /** Debian/Ubuntu layout (/usr/lib/jvm/java-N-openjdk-amd64), else SF_JAVA, else java on the PATH. */
+    static String unixJava(int major) {
+        if (System.getenv("SF_JAVA") != null) return System.getenv("SF_JAVA");
+        for (int m : new int[]{major, major == 16 ? 17 : major, 21, 25}) {
+            if (m < major) continue;
+            Path j = Path.of("/usr/lib/jvm/java-" + m + "-openjdk-amd64/bin/java");
+            if (Files.exists(j)) return j.toString();
+        }
+        return "java";
     }
 
     static String subst(String s, Map<String, String> vars) {

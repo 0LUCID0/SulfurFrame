@@ -335,4 +335,39 @@ CPU는 1코어 기준입니다. 모든 버전에서 클릭(Back to Game)과 키�
 | GLFW, LWJGL 3.1~3.3 | 1.13~1.21.x | ✅ | FPS 제한 (`glfwSwapBuffers`), Win32 포커스 |
 | SDL3, LWJGL 3.4 | 26.x | ❌ | windowID 0 보정, 포커스 이벤트 합성, FPS 제한 |
 
-남은 것: 1.8~1.11, 1.14~1.15, 1.17~1.20(바닐라), Quilt, 실제 IntelliJ 플러그인 환경, Linux와 macOS.
+남은 것: 1.8~1.11, 1.14~1.15, 1.17~1.20(바닐라), Quilt, macOS. (IntelliJ 플러그인 환경은 `sf-idea-plugin`에서 검증, Linux X11은 아래 PoC)
+
+## Linux / X11 PoC (2026-11-07, WSL2 Ubuntu 24.04 + WSLg, 바닐라 1.21.1)
+
+`X11Host.java`는 `EmbedHost`의 REPARENT 모드를 X11로 옮긴 것입니다. Swing 창(XToolkit)의 Canvas X 창 아래로 게임 창을 `XReparentWindow`로 옮기고, libX11은 FFM으로 부릅니다.
+`McFetch`는 OS를 구분하게 고쳤습니다(라이브러리·인자 규칙, `natives-linux`, Loom 캐시가 없으면 Mojang manifest, `/usr/lib/jvm/java-N-openjdk-amd64`).
+
+```bash
+./run-x11-poc.sh 1.21.1 --hold 30          # 게임 실행(없으면) → 임베드 → 30초 뒤 분리
+./run-x11-poc.sh 1.21.1 --hold 30 --halt   # 30초 뒤 호스트가 Runtime.halt로 "크래시"
+```
+WSLg에서는 `WAYLAND_DISPLAY`를 지워야 GLFW 3.4가 X11(XWayland)을 씁니다. 렌더러는 llvmpipe(GL 4.5)였습니다.
+
+```
+RESULT PASS game window found
+RESULT PASS canvas X window                       (XToolkit 피어의 getWindow)
+RESULT PASS reparented under the canvas (and stays)
+RESULT PASS game sized to the canvas
+RESULT PASS game follows a host resize
+RESULT PASS detached back to the root             (분리 후 창 관리자 프레임이 다시 붙은 일반 창, IsViewable)
+```
+- **마우스:** 임베드 상태에서 클릭이 게임에 그대로 갑니다(온보딩 Continue → 타이틀, Options 열기). 포인터 아래 가장 깊은 X 창이 게임 창이라 Windows 같은 포커스 처리가 필요 없습니다.
+- **키보드:** `XSetInputFocus(game)` 후 ESC로 Options가 닫혔습니다.
+- 스크린샷: `snapshot-x11.png` (파노라마가 분홍·검정인 것은 PoC가 에셋 객체를 받지 않아서입니다)
+
+### 알아낸 것
+- **창 관리자에게서 창 빼앗기:** 매핑된 최상위 창은 창 관리자가 프레임에 넣어 관리합니다. 그냥 `XReparentWindow`하면 WSLg의 Weston WM이 바로 되가져가서, 자기 숨김 창 "Weston WM" 아래에 붙잡아 둡니다.
+  순서: `XWithdrawWindow` → `override_redirect` 켜기(창 관리자가 손대지 않는 창이 됨) → 창 관리자가 프레임에서 뺄 때까지 대기 → Canvas 아래로 옮기고 매핑. 그래도 되가져가면 다시 시도합니다(보통 1~2번).
+  분리할 때는 반대로 `override_redirect`를 끄고 루트에 매핑하면, 창 관리자가 다시 프레임을 씌웁니다.
+- **크래시 때는 X11도 게임 창을 지킬 수 없음:** `XAddToSaveSet`은 Canvas를 만든 연결(AWT의 XToolkit 연결)에 등록해야 합니다. 그런데 그렇게 해도 서버가 게임 창을 옮겨 주는 곳은 "죽은 클라이언트가 만들지 않은 가장 가까운 조상"인 **창 관리자의 프레임**이고, 창 관리자는 호스트 창이 사라지면 그 프레임을 지웁니다. 게임 창도 함께 지워지고, GLFW가 지워진 창에 `XGetGeometry`를 보내 `BadDrawable`이 나면 Xlib 기본 오류 처리기가 게임 프로세스를 끝냅니다(월드 저장 없음).
+  프레임을 씌우는 창 관리자(Weston, Mutter, KWin 등)에서는 호스트 쪽 처리만으로 막을 수 없습니다. Windows처럼 게임 안 에이전트의 구명보트가 필요합니다(X 오류 처리기를 바꾸고, 창이 사라지면 `glfwSetWindowShouldClose`로 저장하고 종료).
+
+### 아직 안 한 것
+- 에이전트의 Linux 부분: X11 포커스 판단(FPS 제한), 구명보트
+- IntelliJ 플러그인의 Linux 구현(`Win32` 대신 X11 백엔드), 실제 Linux 데스크톱(GNOME/KDE, Wayland 세션의 XWayland) 확인
+- SDL3(26.x)와 LWJGL 2(1.12.2 이하) 게임의 X11 임베드
