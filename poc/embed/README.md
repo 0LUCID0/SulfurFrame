@@ -302,8 +302,37 @@ CPU는 1코어 기준입니다. 모든 버전에서 클릭(Back to Game)과 키�
   같은 이유로 막히지 않을 것으로 예상합니다(미검증).
   - 주의: 시스템 프로퍼티에 문자열이 아닌 값이 하나 들어갑니다. 모든 값을 String으로 캐스팅하는 코드가 있으면 문제가 될 수 있습니다.
 
-### Forge / NeoForge: 보류
-NeoForge 21.1.265 인스톨러는 공식 Maven에서 받아 SHA-1까지 확인했습니다. 하지만 **인스톨러 실행(외부 코드 실행)이 자동 모드에서
-거부되어** 설치하지 못했습니다. Forge와 NeoForge는 인스톨러가 클라이언트를 바이너리 패치해야 실행할 수 있습니다.
-- 테스트 예정: NeoForge 1.21.1 (21.1.265), Forge 1.20.1 (47.4.28), Forge 1.12.2 (14.23.5.2860, LaunchWrapper)
-- 설치 명령(예): `java -jar neoforge-21.1.265-installer.jar --install-client <폴더>`. 폴더에는 `launcher_profiles.json`이 있어야 합니다.
+### Forge / NeoForge: → 아래 "모드 로더 결과"에서 검증 완료
+
+## 모드 로더 결과 (같은 `sf-agent.jar`, 시작 시 `-javaagent`)
+
+공식 Maven에서 받은 인스톨러(SHA-1 확인)를 헤드리스로 설치하고(`--install-client` / `--installClient`),
+`java McFetch.java launch-installed <설치 폴더> <버전 id> --agent <jar>=codingFps=15`로 실행했습니다.
+
+| 로더 | 실행 구조 | PLAYING | CODING | HIDDEN | 회수 후 워킹셋 | 입력 |
+|---|---|---|---|---|---|---|
+| Fabric 0.16.10 (1.21.1) | Knot | 107% | **13%** | **12%** | 530 MB | E 인벤토리 |
+| NeoForge 21.1.265 (1.21.1) | BootstrapLauncher + 모듈 레이어 | 127% | **31%** | **25%** | 591 MB | E 인벤토리 |
+| Forge 47.4.28 (1.20.1) | BootstrapLauncher + 모듈 레이어 | 89% | **16%** | **14%** | 624 MB | E 인벤토리 |
+| Forge 14.23.5.2860 (1.12.2) | LaunchWrapper, Java 8 | 83% | **14%** | **15%** | 75 MB | E 인벤토리 |
+
+- **모듈 레이어(NeoForge/Forge 1.17+)에서도 그대로 동작합니다.** 훅을 JDK 인터페이스로 넘기는 방식 덕분입니다.
+- NeoForge가 바닐라보다 높게 나오는 건 FPS를 제한해도 로더 쪽 백그라운드 작업이 남기 때문으로 보입니다. 원인은 따로 조사하지 않았습니다.
+- `launch-installed`는 공식 런처가 하는 일을 대신합니다.
+  - `inheritsFrom` 병합, 인자 규칙(Windows x64, feature 제외), `${...}` 치환
+  - 인스톨러가 받지 않는 바닐라 라이브러리, LWJGL 2 네이티브, 부모 json을 Mojang에서 받아 채움
+  - 최신 Forge·NeoForge는 버전 jar를 클래스패스에 넣지 않고, LaunchWrapper만 넣음
+
+## 전체 커버리지 요약
+
+같은 jar 하나로 아래 전부에서 **임베드 상태로 플레이할 수 있고**, 코딩 중이나 숨김 상태에서는 FPS를 제한합니다.
+- 바닐라: 1.7.10, 1.12.2, 1.13.2, 1.16.5, 1.21.1, 26.3
+- 로더: Fabric, NeoForge, Forge(모던·레거시)
+
+| 창 / LWJGL | 버전 | 에이전트 없이 입력 | 에이전트의 역할 |
+|---|---|---|---|
+| LWJGL 2 `Display` | 1.7.10~1.12.2 | ✅ | FPS 제한 (`Display.update`) |
+| GLFW, LWJGL 3.1~3.3 | 1.13~1.21.x | ✅ | FPS 제한 (`glfwSwapBuffers`), Win32 포커스 |
+| SDL3, LWJGL 3.4 | 26.x | ❌ | windowID 0 보정, 포커스 이벤트 합성, FPS 제한 |
+
+남은 것: 1.8~1.11, 1.14~1.15, 1.17~1.20(바닐라), Quilt, 실제 IntelliJ 플러그인 환경, Linux와 macOS.

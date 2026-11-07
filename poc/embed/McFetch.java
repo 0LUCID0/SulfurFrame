@@ -22,7 +22,8 @@ public class McFetch {
     static final HttpClient HTTP = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
 
     public static void main(String[] a) throws Exception {
-        if (a.length < 2) { System.err.println("usage: fetch|launch <version> ..."); System.exit(2); }
+        if (a.length < 2) { System.err.println("usage: fetch|launch <version> ... | launch-installed <dir> <versionId> ..."); System.exit(2); }
+        if (a[0].equals("launch-installed")) { launchInstalled(Path.of(a[1]), a[2], Arrays.copyOfRange(a, 3, a.length)); return; }
         String version = a[1];
         Map<String, Object> v = fetch(version);
         if (a[0].equals("launch")) launch(version, v, Arrays.copyOfRange(a, 2, a.length));
@@ -165,6 +166,188 @@ public class McFetch {
         Path log = TMP.resolve("sf-mc-" + version + ".log");
         var p = new ProcessBuilder(cmd).directory(TMP.toFile()).redirectErrorStream(true).redirectOutput(log.toFile()).start();
         System.out.println("[launch] " + version + " pid=" + p.pid() + " java " + major + " log=" + log);
+    }
+
+    // ------------------------------------------------------------------ launch an installed profile (Forge/NeoForge)
+
+    /**
+     * Launch a version installed by a mod loader installer into {@code dir} (launcher layout: versions/, libraries/).
+     * Follows inheritsFrom, merges libraries and arguments, applies Windows rules, substitutes ${...} like the official
+     * launcher. The version jar is left off the class path: modern Forge/NeoForge load the patched client from a
+     * library and list ${version_name}.jar in their ignore list.
+     */
+    @SuppressWarnings("unchecked")
+    static void launchInstalled(Path dir, String id, String[] opts) throws Exception {
+        var child = (Map<String, Object>) Json.parse(Files.readString(dir.resolve("versions/" + id + "/" + id + ".json")));
+        var chain = new ArrayList<Map<String, Object>>();
+        chain.add(child);
+        for (var cur = child; cur.get("inheritsFrom") != null; ) {
+            String p = (String) cur.get("inheritsFrom");
+            Path pj = dir.resolve("versions/" + p + "/" + p + ".json");
+            if (!Files.exists(pj)) {   // Forge's installer leaves only the vanilla jar, not its json
+                var versions = (List<Object>) ((Map<String, Object>) Json.parse(Files.readString(Path.of(System.getProperty("user.home"),
+                        ".gradle", "caches", "fabric-loom", "versions_manifest.json")))).get("versions");
+                for (Object o : versions) {
+                    var e = (Map<String, Object>) o;
+                    if (p.equals(e.get("id"))) download((String) e.get("url"), (String) e.get("sha1"), pj);
+                }
+            }
+            cur = (Map<String, Object>) Json.parse(Files.readString(pj));
+            chain.add(cur);
+        }
+        Path libDir = dir.resolve("libraries"), natives = dir.resolve("natives"), gameDir = TMP.resolve("sf-mc-game-" + id);
+        Files.createDirectories(natives);
+        Files.createDirectories(gameDir);
+
+        // libraries: child first, then parents; skip duplicates (same group:artifact:classifier) and foreign natives
+        var seen = new HashSet<String>();
+        var cp = new ArrayList<String>();
+        boolean legacyJar = false;
+        for (var v : chain) for (Object o : (List<Object>) v.getOrDefault("libraries", List.of())) {
+            var lib = (Map<String, Object>) o;
+            if (!allowed((List<Object>) lib.get("rules"))) continue;
+            String name = (String) lib.get("name");
+            String[] g = name.split(":");
+            String key = g[0] + ":" + g[1] + (g.length > 3 ? ":" + g[3] : "");
+            if (g.length > 3 && (g[3].contains("arm64") || g[3].contains("x86") || g[3].contains("linux") || g[3].contains("macos"))) continue;
+            if (!seen.add(key)) continue;
+            String nc = nativeClassifier(lib);
+            var dls = (Map<String, Object>) lib.get("downloads");
+            if (nc != null && dls != null && dls.get("classifiers") != null) {   // LWJGL 2 style natives
+                var cls = (Map<String, Object>) ((Map<String, Object>) dls.get("classifiers")).get(nc);
+                if (cls != null) {
+                    Path nj = libDir.resolve((String) cls.get("path"));
+                    if (!Files.exists(nj)) download((String) cls.get("url"), (String) cls.get("sha1"), nj);
+                    extract(nj, natives);
+                }
+            }
+            var art = dls == null ? null : (Map<String, Object>) dls.get("artifact");
+            Path jar = art != null ? libDir.resolve((String) art.get("path")) : libDir.resolve(mavenPath(name));
+            // installers fetch only their own libraries; the vanilla ones are the launcher's job, so fetch them here
+            if (!Files.exists(jar) && art != null && art.get("url") != null && !((String) art.get("url")).isEmpty())
+                download((String) art.get("url"), (String) art.get("sha1"), jar);
+            if (Files.exists(jar)) cp.add(jar.toString());
+            else if (dls == null || art != null) System.err.println("[launch] missing " + jar);
+        }
+        // old (LaunchWrapper) Forge needs the vanilla jar on the class path; modern ones must not have it
+        String mainClass = (String) child.get("mainClass");
+        if (mainClass.contains("launchwrapper")) {
+            String base = (String) chain.get(chain.size() - 1).get("id");
+            cp.add(dir.resolve("versions/" + base + "/" + base + ".jar").toString());
+            legacyJar = true;
+        }
+
+        var root = chain.get(chain.size() - 1);
+        var jvRoot = (Map<String, Object>) root.get("javaVersion");
+        int major = jvRoot == null ? 8 : ((Number) jvRoot.get("majorVersion")).intValue();
+        String java = javaFor(major);
+        var assetIndex = (Map<String, Object>) root.get("assetIndex");
+        var vars = new HashMap<String, String>();
+        vars.put("natives_directory", natives.toString());
+        vars.put("launcher_name", "sulfurframe");
+        vars.put("launcher_version", "1");
+        vars.put("classpath", String.join(File.pathSeparator, cp));
+        vars.put("classpath_separator", File.pathSeparator);
+        vars.put("library_directory", libDir.toString());
+        vars.put("version_name", id);
+        vars.put("game_directory", gameDir.toString());
+        Path loomAssets = Path.of(System.getProperty("user.home"), ".gradle", "caches", "fabric-loom", "assets");
+        vars.put("assets_root", (Files.isDirectory(loomAssets) ? loomAssets : DL.resolve("assets")).toString());
+        vars.put("game_assets", vars.get("assets_root"));
+        vars.put("assets_index_name", assetIndex == null ? "legacy" : (String) assetIndex.get("id"));
+        vars.put("auth_player_name", "SFDev");
+        vars.put("auth_uuid", "00000000000000000000000000000000");
+        vars.put("auth_access_token", "0");
+        vars.put("auth_session", "0");
+        vars.put("user_type", "legacy");
+        vars.put("user_properties", "{}");
+        vars.put("version_type", "release");
+
+        var jvm = new ArrayList<String>(List.of("-Xmx2G"));
+        var game = new ArrayList<String>();
+        boolean hasCp = false;
+        for (int i = chain.size() - 1; i >= 0; i--) {   // parent args first, like the launcher
+            var v = chain.get(i);
+            var args = (Map<String, Object>) v.get("arguments");
+            if (args != null) {
+                for (String s : ruledArgs((List<Object>) args.getOrDefault("jvm", List.of()))) jvm.add(s);
+                for (String s : ruledArgs((List<Object>) args.getOrDefault("game", List.of()))) game.add(s);
+            } else if (v.get("minecraftArguments") != null && i == 0) {
+                game.addAll(Arrays.asList(((String) v.get("minecraftArguments")).split(" ")));
+            }
+        }
+        if (child.get("arguments") == null && child.get("minecraftArguments") == null && root.get("minecraftArguments") != null)
+            game.addAll(Arrays.asList(((String) root.get("minecraftArguments")).split(" ")));
+        for (String s : jvm) if (s.equals("-cp") || s.equals("${classpath}")) hasCp = true;
+        if (!hasCp) { jvm.add("-Djava.library.path=${natives_directory}"); jvm.add("-cp"); jvm.add("${classpath}"); }
+
+        var cmd = new ArrayList<String>(List.of(java));
+        var extra = new ArrayList<String>();
+        for (int i = 0; i < opts.length; i++) {
+            if (opts[i].equals("--agent")) cmd.add("-javaagent:" + opts[++i]);
+            else if (opts[i].equals("--")) { extra.addAll(Arrays.asList(opts).subList(i + 1, opts.length)); break; }
+        }
+        if (major >= 22) cmd.add("--enable-native-access=ALL-UNNAMED");
+        for (String s : jvm) cmd.add(subst(s, vars));
+        cmd.add(mainClass);
+        for (String s : game) { String r = subst(s, vars); if (!r.contains("${")) cmd.add(r); }
+        cmd.add("--width"); cmd.add("854"); cmd.add("--height"); cmd.add("480");
+        cmd.addAll(extra);
+
+        Path log = TMP.resolve("sf-mc-" + id + ".log");
+        var p = new ProcessBuilder(cmd).directory(TMP.toFile()).redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        System.out.println("[launch] " + id + " pid=" + p.pid() + " java " + major + (legacyJar ? " (LaunchWrapper)" : "") + " log=" + log);
+    }
+
+    @SuppressWarnings("unchecked")
+    static List<String> ruledArgs(List<Object> list) {
+        var out = new ArrayList<String>();
+        for (Object o : list) {
+            if (o instanceof String s) { out.add(s); continue; }
+            var m = (Map<String, Object>) o;
+            if (!allowedArg((List<Object>) m.get("rules"))) continue;
+            Object val = m.get("value");
+            if (val instanceof String s) out.add(s);
+            else for (Object x : (List<Object>) val) out.add((String) x);
+        }
+        return out;
+    }
+
+    /** Argument rules: no feature flags (demo, custom resolution, quick play ...), Windows x64 only. */
+    @SuppressWarnings("unchecked")
+    static boolean allowedArg(List<Object> rules) {
+        if (rules == null) return true;
+        boolean ok = false;
+        for (Object o : rules) {
+            var r = (Map<String, Object>) o;
+            if (r.get("features") != null) return false;
+            var os = (Map<String, Object>) r.get("os");
+            boolean match = os == null || (("windows".equals(os.get("name")) || os.get("name") == null) && !"x86".equals(os.get("arch")));
+            if (match) ok = "allow".equals(r.get("action"));
+        }
+        return ok;
+    }
+
+    static String subst(String s, Map<String, String> vars) {
+        for (var e : vars.entrySet()) s = s.replace("${" + e.getKey() + "}", e.getValue());
+        return s;
+    }
+
+    static String mavenPath(String name) {
+        String[] g = name.split(":");
+        String ext = "jar", ver = g[2];
+        if (ver.contains("@")) { ext = ver.substring(ver.indexOf('@') + 1); ver = ver.substring(0, ver.indexOf('@')); }
+        String cls = g.length > 3 ? "-" + g[3] : "";
+        return g[0].replace('.', '/') + "/" + g[1] + "/" + ver + "/" + g[1] + "-" + ver + cls + "." + ext;
+    }
+
+    static String javaFor(int major) {
+        return switch (major) {
+            case 8 -> "C:/Program Files/Eclipse Adoptium/jdk-8.0.492.9-hotspot/bin/java.exe";
+            case 16, 17 -> "C:/Program Files/Eclipse Adoptium/jdk-17.0.16.8-hotspot/bin/java.exe";
+            case 21 -> "C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot/bin/java.exe";
+            default -> Path.of(System.getProperty("user.home"), ".jdks", "temurin-25.0.4.1", "bin", "java.exe").toString();
+        };
     }
 
     @SuppressWarnings("unchecked")
