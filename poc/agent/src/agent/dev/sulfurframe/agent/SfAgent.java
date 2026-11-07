@@ -94,13 +94,26 @@ public final class SfAgent {
 
     /** Extract the nested sf-impl.jar and load it with the bootstrap loader as parent. */
     private static ClassLoader implLoader() throws Exception {
-        File tmp = File.createTempFile("sf-impl-", ".jar");
-        tmp.deleteOnExit();
+        // One file per agent build, reused: a temp file per start (deleteOnExit) piled up in %TEMP% because a game
+        // that is killed never runs its exit hooks.
+        byte[] bytes;
         try (InputStream in = SfAgent.class.getResourceAsStream("/sf-impl.jar")) {
             if (in == null) throw new IllegalStateException("sf-impl.jar missing from the agent jar");
-            Files.copy(in, tmp.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[1 << 16];
+            for (int n; (n = in.read(b)) > 0; ) buf.write(b, 0, n);
+            bytes = buf.toByteArray();
         }
-        return new URLClassLoader(new URL[]{tmp.toURI().toURL()}, null);
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(bytes);
+        File jar = new File(System.getProperty("java.io.tmpdir"), "sf-impl-" + Long.toHexString(crc.getValue()) + ".jar");
+        if (!jar.isFile() || jar.length() != bytes.length) {
+            File tmp = File.createTempFile("sf-impl-", ".part", jar.getParentFile());
+            Files.write(tmp.toPath(), bytes);
+            try { Files.move(tmp.toPath(), jar.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE); }
+            catch (Exception e) { if (!jar.isFile()) throw e; tmp.delete(); }   // another game won the race: use theirs
+        }
+        return new URLClassLoader(new URL[]{jar.toURI().toURL()}, null);
     }
 
     private SfAgent() {}
