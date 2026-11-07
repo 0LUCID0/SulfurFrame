@@ -67,6 +67,24 @@ public final class GameEmbedder {
         });
         Toolkit.getDefaultToolkit().addAWTEventListener(reclaim, AWTEvent.MOUSE_EVENT_MASK);
         startWatchdog();
+        // The IDE going away takes a child window with it. Orderly exits (IDE close/restart, taskkill without /F,
+        // log-off) run JVM shutdown hooks: hand the game back as a normal window first. Crashes and forced kills do
+        // not; for those the agent's lifeboat makes the game save its world and quit.
+        Runtime.getRuntime().addShutdownHook(new Thread(this::releaseForShutdown, "sulfurframe-release"));
+    }
+
+    /** Shutdown hook: plain Win32 only (no Swing, no logging through the IDE). */
+    private void releaseForShutdown() {
+        long h = game != 0 ? game : fullscreen ? 0 : parked;   // fullscreen windows are top-level already
+        if (h == 0 || !Win32.isWindow(h)) return;
+        try {
+            unsubclass();
+            Win32.setParent(h, 0);
+            Win32.setLongPtr(h, Win32.GWL_STYLE, savedStyle | Win32.WS_VISIBLE);
+            Win32.setLongPtr(h, Win32.GWL_EXSTYLE, savedExStyle);
+            Win32.setWindowPos(h, 0, 100, 100, 854, 480, Win32.SWP_NOZORDER | Win32.SWP_FRAMECHANGED | Win32.SWP_SHOWWINDOW | Win32.SWP_ASYNCWINDOWPOS);
+            Win32.showWindow(h, Win32.SW_RESTORE);
+        } catch (Throwable ignored) { }
     }
 
     public Component component() { return canvas; }

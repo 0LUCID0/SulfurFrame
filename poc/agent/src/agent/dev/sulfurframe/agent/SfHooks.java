@@ -57,7 +57,7 @@ public final class SfHooks {
 
     /** SDLEvents.SDL_GetWindowFromEvent: windowID 0 (no SDL keyboard focus) -> the game window. */
     public static long sdlWindowFromEvent(long original) {
-        if (original != 0) { sdlWindow = original; return original; }
+        if (original != 0) { sdlWindow = original; Lifeboat.sdl(original); return original; }
         return sdlWindow;
     }
 
@@ -80,14 +80,14 @@ public final class SfHooks {
         }
     }
 
-    public static void beforeGlfwSwap(long window) { glfwWindow = window; pace(); }
+    public static void beforeGlfwSwap(long window) { glfwWindow = window; Lifeboat.glfw(window); pace(); }
 
-    public static void beforeSdlSwap(long window) { if (window != 0) sdlWindow = window; pace(); }
+    public static void beforeSdlSwap(long window) { if (window != 0) { sdlWindow = window; Lifeboat.sdl(window); } pace(); }
 
     public static void beforeVkPresent() { pace(); }
 
     /** Display.update(boolean): LWJGL 2 presents the frame here. */
-    public static void beforeLwjgl2Update() { lwjgl2 = true; pace(); }
+    public static void beforeLwjgl2Update() { lwjgl2 = true; Lifeboat.lwjgl2(); pace(); }
 
     // =================================================================== focus
 
@@ -168,7 +168,9 @@ public final class SfHooks {
         }
     }
 
-    private static Method jniMethod(Class<?> jni, String sig, Class<?>... params) throws NoSuchMethodException {
+    static ClassLoader lwjglClassLoader() { return loader(); }
+
+    static Method jniMethod(Class<?> jni, String sig, Class<?>... params) throws NoSuchMethodException {
         try { return jni.getMethod("invoke" + sig, params); }
         catch (NoSuchMethodException e) { return jni.getMethod("call" + sig, params); }
     }
