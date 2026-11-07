@@ -72,7 +72,7 @@ java -cp out dev.sulfurframe.idea.profile.ProfileSelfTest sf-idea-plugin/src/tes
 fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접 선언, 버전 카탈로그)와 로컬 실제 프로젝트 4개를 정확히 감지했습니다.
 
 ## 아직 안 된 것
-- Linux: F11 전체화면, 실제 Linux 데스크톱(GNOME/KDE)과 GPU 드라이버 확인, 26.x(SDL3)와 1.12.2 이하(LWJGL 2). 아래 "Linux (X11)" 참고.
+- Linux: F11 전체화면, 실제 Linux 데스크톱(GNOME/KDE)과 GPU 드라이버 확인. 26.x(SDL3)와 1.12.2(LWJGL 2)는 PoC에서 확인(`poc/embed/README.md`), 플러그인으로는 1.21.1만 시험. 아래 "Linux (X11)" 참고.
 - 모드마다 빌드와 월드가 따로인 불편(공유 인스턴스/월드), Gradle 플러그인 기반 정식 빌드, 마켓플레이스 배포 형태는 아직입니다.
 
 ## 컨테이너 폴더와 멀티 버전 프로젝트 (`profile/Workspace.java`)

@@ -90,12 +90,25 @@ public final class SfHooks {
         return false;
     }
 
-    public static void beforeSdlSwap(long window) { if (window != 0) { sdlWindow = window; Lifeboat.sdl(window); } pace(); }
+    /** SDL_GL_SwapWindow entry; true = skip (the X11 window is gone). */
+    public static boolean beforeSdlSwap(long window) {
+        if (window != 0) { sdlWindow = window; Lifeboat.sdl(window); }
+        if (X11Lifeboat.windowGone) return true;
+        pace();
+        return false;
+    }
 
     public static void beforeVkPresent() { pace(); }
 
     /** Display.update(boolean): LWJGL 2 presents the frame here. */
-    public static void beforeLwjgl2Update() { lwjgl2 = true; Lifeboat.lwjgl2(); pace(); }
+    /** Display.update(boolean) entry; true = skip the whole update (the X11 window is gone; Display.isCloseRequested still works). */
+    public static boolean beforeLwjgl2Update() {
+        lwjgl2 = true;
+        Lifeboat.lwjgl2();
+        if (X11Lifeboat.windowGone) return true;
+        pace();
+        return false;
+    }
 
     // =================================================================== focus
 
@@ -111,7 +124,9 @@ public final class SfHooks {
             // On X11, GLFW_FOCUSED is XGetInputFocus() == the game's own X window: right for an embedded child too
             // (the host gives it focus with XSetInputFocus). Render thread = GLFW's thread, so the call is safe.
             if (glfwWindow != 0 && LINUX) f = glfwFocused();
+            else if (sdlWindow != 0 && LINUX) f = X11Lifeboat.hasFocus();
             else if (glfwWindow != 0 || sdlWindow != 0) f = win32ThreadHasFocus();
+            else if (lwjgl2 && LINUX) f = X11Lifeboat.hasFocus();   // LWJGL 2 misses a focus given by XSetInputFocus
             else if (lwjgl2) f = lwjgl2Active();
         } catch (Throwable ignored) {
         }

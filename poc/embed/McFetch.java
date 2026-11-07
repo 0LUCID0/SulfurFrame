@@ -70,9 +70,35 @@ public class McFetch {
             }
         }
         var ai = (Map<String, Object>) v.get("assetIndex");
-        download((String) ai.get("url"), (String) ai.get("sha1"), DL.resolve("assets/indexes/" + ai.get("id") + ".json"));
-        System.out.println("[fetch] " + version + ": client + " + n + " library files + asset index (sounds/lang not fetched)");
+        Path index = download((String) ai.get("url"), (String) ai.get("sha1"), DL.resolve("assets/indexes/" + ai.get("id") + ".json"));
+        int objects = fetchAssetObjects(index);
+        System.out.println("[fetch] " + version + ": client + " + n + " library files + " + objects + " asset objects (sounds not fetched)");
         return v;
+    }
+
+    /**
+     * Asset objects except sounds (.ogg, the bulk of the size): textures, lang, panorama... 1.21 only warns when they
+     * are missing, 26.x crashes on the missing title panorama.
+     */
+    @SuppressWarnings("unchecked")
+    static int fetchAssetObjects(Path index) throws Exception {
+        var objs = (Map<String, Object>) ((Map<String, Object>) Json.parse(Files.readString(index))).get("objects");
+        if (objs == null) return 0;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(16);
+        var tasks = new ArrayList<java.util.concurrent.Future<?>>();
+        for (var e : objs.entrySet()) {
+            if (e.getKey().endsWith(".ogg")) continue;
+            String hash = (String) ((Map<String, Object>) e.getValue()).get("hash");
+            Path to = DL.resolve("assets/objects/" + hash.substring(0, 2) + "/" + hash);
+            if (Files.exists(to)) continue;
+            tasks.add(pool.submit(() -> {
+                download("https://resources.download.minecraft.net/" + hash.substring(0, 2) + "/" + hash, hash, to);
+                return null;
+            }));
+        }
+        for (var t : tasks) t.get();
+        pool.shutdown();
+        return tasks.size();
     }
 
     @SuppressWarnings("unchecked")

@@ -49,9 +49,9 @@ public final class SfAgent {
         hooks[0] = (LongUnaryOperator) SfHooks::sdlWindowFromEvent;
         hooks[1] = (BiFunction<Object, Object, Object>) (got, event) -> SfHooks.sdlPollEvent((Boolean) got, event);
         hooks[2] = (LongPredicate) SfHooks::beforeGlfwSwap;
-        hooks[3] = (LongConsumer) SfHooks::beforeSdlSwap;
+        hooks[3] = (LongPredicate) SfHooks::beforeSdlSwap;
         hooks[4] = (Runnable) SfHooks::beforeVkPresent;
-        hooks[5] = (Runnable) SfHooks::beforeLwjgl2Update;
+        hooks[5] = (java.util.function.BooleanSupplier) SfHooks::beforeLwjgl2Update;
         System.getProperties().put(REGISTRY_KEY, hooks);
     }
 

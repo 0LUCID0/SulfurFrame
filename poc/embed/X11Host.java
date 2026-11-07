@@ -44,6 +44,9 @@ public class X11Host {
     static final MethodHandle XSetInputFocus = fn("XSetInputFocus", JAVA_INT, ADDRESS, JAVA_LONG, JAVA_INT, JAVA_LONG);
     static final MethodHandle XGetGeometry = fn("XGetGeometry", JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
     static final MethodHandle XSync = fn("XSync", JAVA_INT, ADDRESS, JAVA_INT);
+    static final MethodHandle XGetWindowProperty = fn("XGetWindowProperty", JAVA_INT, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG,
+            ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
+    static final MethodHandle XGetWindowAttributes = fn("XGetWindowAttributes", JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS);
     static final MethodHandle XWithdrawWindow = fn("XWithdrawWindow", JAVA_INT, ADDRESS, JAVA_LONG, JAVA_INT);
     static final MethodHandle XDefaultScreen = fn("XDefaultScreen", JAVA_INT, ADDRESS);
     static final MethodHandle XChangeWindowAttributes = fn("XChangeWindowAttributes", JAVA_INT, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS);
@@ -88,6 +91,9 @@ public class X11Host {
             if (a[i].equals("--halt")) halt = true;
             if (a[i].equals("--focus-test")) gamePid = Long.parseLong(a[++i]);
         }
+        // AWT first: XToolkit installs a process-wide X error handler that logs instead of exiting (Xlib's default),
+        // and walking the tree races windows that disappear (BadWindow would otherwise kill the host)
+        java.awt.Toolkit.getDefaultToolkit();
         int unused = (int) XInitThreads.invokeExact();
         dpy = (MemorySegment) XOpenDisplay.invokeExact(MemorySegment.NULL);
         if (dpy.address() == 0) { System.out.println("RESULT FAIL open display (DISPLAY=" + System.getenv("DISPLAY") + ")"); System.exit(1); }
@@ -253,18 +259,35 @@ public class X11Host {
         }
     }
 
+    /**
+     * WM_NAME as raw bytes in UTF-8, whatever its type: XFetchName only returns STRING-typed names, and SDL3 stores
+     * UTF8_STRING.
+     */
+    static String wmName(long w) throws Throwable {
+        try (var ar = Arena.ofConfined()) {
+            var type = ar.allocate(JAVA_LONG); var format = ar.allocate(JAVA_INT); var n = ar.allocate(JAVA_LONG);
+            var after = ar.allocate(JAVA_LONG); var data = ar.allocate(ADDRESS);
+            int r = (int) XGetWindowProperty.invokeExact(dpy, w, 39L /* XA_WM_NAME */, 0L, 256L, 0, 0L /* AnyPropertyType */, type, format, n, after, data);
+            var p = data.get(ADDRESS, 0);
+            String s = "";
+            if (r == 0 && p.address() != 0) s = new String(p.reinterpret(n.get(JAVA_LONG, 0)).toArray(JAVA_BYTE), java.nio.charset.StandardCharsets.UTF_8);
+            if (p.address() != 0) { int f = (int) XFree.invokeExact(p); }
+            return s;
+        }
+    }
+
+    /** map_state == IsViewable (XWindowAttributes on LP64: map_state at 92). */
+    static boolean viewable(long w) throws Throwable {
+        try (var ar = Arena.ofConfined()) {
+            var attrs = ar.allocate(136, 8);
+            return (int) XGetWindowAttributes.invokeExact(dpy, w, attrs) != 0 && attrs.get(JAVA_INT, 92) == 2;
+        }
+    }
+
     /** Depth-first search for a window whose WM_NAME starts with prefix (WSLg's window manager frames toplevels). */
     static long find(long w, String prefix) throws Throwable {
         try (var ar = Arena.ofConfined()) {
-            var name = ar.allocate(ADDRESS);
-            if ((int) XFetchName.invokeExact(dpy, w, name) != 0) {
-                var p = name.get(ADDRESS, 0);
-                if (p.address() != 0) {
-                    String s = p.reinterpret(4096).getString(0);
-                    int f = (int) XFree.invokeExact(p);
-                    if (s.startsWith(prefix)) return w;
-                }
-            }
+            if (wmName(w).startsWith(prefix) && viewable(w)) return w;   // SDL3 also has a hidden "Minecraft - ..." helper window
             var rootOut = ar.allocate(JAVA_LONG); var parent = ar.allocate(JAVA_LONG);
             var kids = ar.allocate(ADDRESS); var n = ar.allocate(JAVA_INT);
             if ((int) XQueryTree.invokeExact(dpy, w, rootOut, parent, kids, n) == 0) return 0;

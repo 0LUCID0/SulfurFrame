@@ -32,8 +32,10 @@ public final class LwjglTransformer implements ClassFileTransformer {
         LONG_ARG0_AT_ENTRY,
         /** at entry: Runnable.run() */
         RUN_AT_ENTRY,
-        /** at entry of a void method, arg0 a long: if LongPredicate.test(arg0) return at once (skip the native call) */
-        LONG_SKIP_IF_AT_ENTRY
+        /** at entry, arg0 a long: if LongPredicate.test(arg0) return at once (void, or true for a boolean method) */
+        LONG_SKIP_IF_AT_ENTRY,
+        /** at entry of a void method: if BooleanSupplier.getAsBoolean() return at once */
+        SKIP_IF_AT_ENTRY
     }
 
     static final class Patch {
@@ -56,13 +58,13 @@ public final class LwjglTransformer implements ClassFileTransformer {
                     Kind.BOOL_FILTER_WITH_ARG0_BEFORE_IRETURN, SLOT_SDL_POLL_EVENT),
             // frame presentation, every backend: cap the frame rate while the editor has focus
             new Patch("org/lwjgl/glfw/GLFW", "glfwSwapBuffers", "(J)V", Kind.LONG_SKIP_IF_AT_ENTRY, SLOT_GLFW_SWAP),
-            new Patch("org/lwjgl/sdl/SDLVideo", "SDL_GL_SwapWindow", "(J)Z", Kind.LONG_ARG0_AT_ENTRY, SLOT_SDL_SWAP),
+            new Patch("org/lwjgl/sdl/SDLVideo", "SDL_GL_SwapWindow", "(J)Z", Kind.LONG_SKIP_IF_AT_ENTRY, SLOT_SDL_SWAP),
             new Patch("org/lwjgl/vulkan/KHRSwapchain", "vkQueuePresentKHR",
                     "(Lorg/lwjgl/vulkan/VkQueue;Lorg/lwjgl/vulkan/VkPresentInfoKHR;)I", Kind.RUN_AT_ENTRY, SLOT_VK_PRESENT),
             // LWJGL 2 (Minecraft 1.12.2 and older): frame presentation. Focus needs no patch there: LWJGL 2 tracks
             // WM_SETFOCUS/WM_KILLFOCUS itself, so Display.isActive() is right for a child window (verified on 1.12.2).
             // Display.update() delegates to update(true).
-            new Patch("org/lwjgl/opengl/Display", "update", "(Z)V", Kind.RUN_AT_ENTRY, SLOT_LWJGL2_UPDATE));
+            new Patch("org/lwjgl/opengl/Display", "update", "(Z)V", Kind.SKIP_IF_AT_ENTRY, SLOT_LWJGL2_UPDATE));
 
     static final Set<String> OWNERS = new HashSet<>();
     static { for (Patch p : PATCHES) OWNERS.add(p.owner); }
@@ -91,7 +93,10 @@ public final class LwjglTransformer implements ClassFileTransformer {
             // COMPUTE_MAXS only: the inserted code is straight-line, so existing stack map frames stay valid
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_MAXS);
             final int[] hits = {0};
+            final int[] version = {0};
             cr.accept(new ClassVisitor(Opcodes.ASM9, cw) {
+                @Override
+                public void visit(int v, int access, String n, String sig, String sup, String[] ifs) { version[0] = v & 0xFFFF; super.visit(v, access, n, sig, sup, ifs); }
                 @Override
                 public MethodVisitor visitMethod(int access, String mName, String mDesc, String sig, String[] ex) {
                     MethodVisitor mv = super.visitMethod(access, mName, mDesc, sig, ex);
@@ -108,6 +113,14 @@ public final class LwjglTransformer implements ClassFileTransformer {
                                     } else if (p.kind == Kind.RUN_AT_ENTRY) {
                                         fetchHook(this, p.slot, "java/lang/Runnable");
                                         visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/lang/Runnable", "run", "()V", true);
+                                    } else if (p.kind == Kind.SKIP_IF_AT_ENTRY) {
+                                        fetchHook(this, p.slot, "java/util/function/BooleanSupplier");
+                                        visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/BooleanSupplier", "getAsBoolean", "()Z", true);
+                                        Label go = new Label();
+                                        visitJumpInsn(Opcodes.IFEQ, go);
+                                        super.visitInsn(Opcodes.RETURN);
+                                        visitLabel(go);
+                                        if (version[0] >= Opcodes.V1_6) visitFrame(Opcodes.F_SAME, 0, null, 0, null);   // Java 5 classes (LWJGL 2): no stack maps
                                     } else if (p.kind == Kind.LONG_SKIP_IF_AT_ENTRY) {
                                         // if (hook.test(arg0)) return;   The frame at the join point is the method's
                                         // entry frame (nothing stored, empty stack): F_SAME, valid as the first frame.
@@ -116,9 +129,10 @@ public final class LwjglTransformer implements ClassFileTransformer {
                                         visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/LongPredicate", "test", "(J)Z", true);
                                         Label go = new Label();
                                         visitJumpInsn(Opcodes.IFEQ, go);
-                                        super.visitInsn(Opcodes.RETURN);
+                                        if (p.desc.endsWith(")Z")) { super.visitInsn(Opcodes.ICONST_1); super.visitInsn(Opcodes.IRETURN); }   // "swapped fine"
+                                        else super.visitInsn(Opcodes.RETURN);
                                         visitLabel(go);
-                                        visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                                        if (version[0] >= Opcodes.V1_6) visitFrame(Opcodes.F_SAME, 0, null, 0, null);   // Java 5 classes (LWJGL 2): no stack maps
                                     }
                                 }
                                 @Override public void visitInsn(int op) {

@@ -39,6 +39,7 @@ final class Lifeboat {
     static void sdl(long window) {
         if (started || window == 0) return;
         sdlWindow = window;
+        if (SfHooks.LINUX) { X11Lifeboat.sdl(window); started = true; return; }
         try {
             ClassLoader l = SfHooks.lwjglClassLoader();
             Class<?> video = Class.forName("org.lwjgl.sdl.SDLVideo", false, l), props = Class.forName("org.lwjgl.sdl.SDLProperties", false, l);
@@ -53,6 +54,7 @@ final class Lifeboat {
     static void lwjgl2() {
         if (started) return;
         lwjgl2 = true;
+        if (SfHooks.LINUX) { X11Lifeboat.lwjgl2(); started = true; return; }
         try {
             Class<?> display = Class.forName("org.lwjgl.opengl.Display", false, SfHooks.lwjglClassLoader());
             Method impl = display.getDeclaredMethod("getImplementation");

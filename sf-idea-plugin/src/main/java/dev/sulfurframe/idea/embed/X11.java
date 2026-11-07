@@ -125,14 +125,16 @@ final class X11 {
         return out;
     }
 
+    /** WM_NAME as UTF-8 bytes whatever its type (XFetchName only returns STRING; SDL3 stores UTF8_STRING). */
     static synchronized String name(long w) {
         try (var a = Arena.ofConfined()) {
-            var name = a.allocate(ADDRESS);
-            if ((int) XFetchName.invokeExact(dpy(), w, name) == 0) return "";
-            var p = name.get(ADDRESS, 0);
-            if (p.address() == 0) return "";
-            String s = p.reinterpret(4096).getString(0);
-            int f = (int) XFree.invokeExact(p);
+            var type = a.allocate(JAVA_LONG); var format = a.allocate(JAVA_INT); var n = a.allocate(JAVA_LONG);
+            var after = a.allocate(JAVA_LONG); var data = a.allocate(ADDRESS);
+            int r = (int) XGetWindowProperty.invokeExact(dpy(), w, 39L /* XA_WM_NAME */, 0L, 256L, 0, 0L, type, format, n, after, data);
+            var p = data.get(ADDRESS, 0);
+            String s = "";
+            if (r == 0 && p.address() != 0) s = new String(p.reinterpret(n.get(JAVA_LONG, 0)).toArray(JAVA_BYTE), java.nio.charset.StandardCharsets.UTF_8);
+            if (p.address() != 0) { int f = (int) XFree.invokeExact(p); }
             return s;
         } catch (Throwable t) { return ""; }
     }
