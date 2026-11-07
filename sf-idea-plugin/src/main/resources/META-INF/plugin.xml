@@ -14,5 +14,6 @@
         <toolWindow id="SulfurFrame" anchor="right" factoryClass="dev.sulfurframe.idea.SulfurToolWindowFactory"/>
         <postStartupActivity implementation="dev.sulfurframe.idea.AutoTestStartup"/>
         <fileEditorProvider implementation="dev.sulfurframe.idea.GameTab$Provider"/>
+        <notificationGroup id="SulfurFrame" displayType="BALLOON"/>
     </extensions>
 </idea-plugin>

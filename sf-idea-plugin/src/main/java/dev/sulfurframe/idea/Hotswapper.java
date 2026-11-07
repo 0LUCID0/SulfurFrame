@@ -33,6 +33,19 @@ final class Hotswapper {
     volatile String lastCompiler = "";
 
     /** Wait (up to {@code seconds}) until the fast path has its class path; false if it never got one. */
+    /** Attach the SulfurFrame agent with these arguments (each request is a fresh attach). */
+    static void loadAgent(long pid, Path agentJar, String args) throws Exception {
+        try {
+            var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(pid));
+            try { vm.loadAgent(agentJar.toString(), args); } finally { vm.detach(); }
+        } catch (com.sun.tools.attach.AgentLoadException e) {
+            if (!String.valueOf(e.getMessage()).endsWith(": 0")) throw e;   // Java 8 game: reply-format quirk
+        }
+    }
+
+    /** Startup-only code that changed in the last swap ("Class.method"), see {@link StartupCode}. */
+    volatile List<String> lastStartupChanges = List.of();
+
     /** What the last resource reload did (self-test). */
     volatile String lastResources = "";
 
@@ -102,9 +115,17 @@ final class Hotswapper {
 
     /** Remember the current class files (call when the game starts, so the first swap only sends what changed since). */
     void snapshot(Workspace.Target t) {
-        try { snapshot = scan(t); sourcesSince = System.currentTimeMillis(); } catch (IOException e) { snapshot = null; }
+        try {
+            snapshot = scan(t);
+            sourcesSince = System.currentTimeMillis();
+            classBytes.clear();
+            for (Path p : snapshot.keySet()) classBytes.put(p, Files.readAllBytes(p));   // a mod's classes: small
+        } catch (IOException e) { snapshot = null; }
         fast.prepareAsync(t);   // ask Gradle for the class path once, in the background
     }
+
+    /** Last swapped bytes of every class file, to see what a change touched (startup code). */
+    private final Map<Path, byte[]> classBytes = new HashMap<>();
 
     /** Compile, diff, redefine. Blocking; call off the EDT. Returns false if it could not run. */
     boolean swap(Workspace.Target t, long gamePid, Path agentJar) {
@@ -133,6 +154,13 @@ final class Hotswapper {
                 if (before == null || before < e.getValue()) changed.add(e.getKey());
             }
             snapshot = now;
+            var startup = new ArrayList<String>();
+            for (Path c : changed) {
+                byte[] after = Files.readAllBytes(c);
+                try { startup.addAll(StartupCode.changed(classBytes.get(c), after)); } catch (Throwable ignored) { }
+                classBytes.put(c, after);
+            }
+            lastStartupChanges = List.copyOf(startup);
             if (changed.isEmpty()) { log.accept("hotswap: no class changed"); lastResult = List.of("redefined 0"); return true; }
 
             Path dir = agentJar.getParent();

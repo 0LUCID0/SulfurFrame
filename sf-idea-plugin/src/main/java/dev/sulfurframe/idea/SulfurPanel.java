@@ -24,6 +24,7 @@ final class SulfurPanel extends JPanel {
     private final GameLauncher launcher;
     private final JComboBox<Workspace.Target> targets = new JComboBox<>();
     private final JTextArea log = new JTextArea(5, 40);
+    String logText() { return log.getText(); }
     private final Path projectDir;
     private final Supplier<String> savedTarget;
     private final Consumer<String> saveTarget;
@@ -43,6 +44,7 @@ final class SulfurPanel extends JPanel {
         hotswapper = new Hotswapper(this::log, Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe"));
         agentJar = extractAgent();
         embedder.setAgentJar(agentJar);
+        launcher.setAgentJar(agentJar);
 
         log.setEditable(false);
         log.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
@@ -61,6 +63,9 @@ final class SulfurPanel extends JPanel {
         keepRatio.addActionListener(e -> embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0));
         buttons.add(keepRatio);
         buttons.add(button("Hotswap", this::hotswapAsync));
+        var restart = button("Restart", this::restartAsync);
+        restart.setToolTipText("Save and quit the game, start it again and go straight back into the same world");
+        buttons.add(restart);
         swapOnSave.setToolTipText("Compile and reload changed classes into the running game whenever a source file is saved");
         buttons.add(swapOnSave);
         var north = new JPanel(new BorderLayout());
@@ -108,11 +113,13 @@ final class SulfurPanel extends JPanel {
 
     private static String key(Workspace.Target t) { return t.buildRoot() + "|" + t.projectPath(); }
 
-    void runClient() {
+    void runClient() { runClient(List.of()); }
+
+    void runClient(List<String> gameArgs) {
         var t = (Workspace.Target) targets.getSelectedItem();
         if (t == null || !t.profile().isComplete()) { log("pick a client to run (none detected)"); return; }
         if (!t.hasWrapper()) log("note: " + t.where() + " has no Gradle wrapper of its own; using the nearest parent's");
-        launcher.runClient(t, (pid, hwnd) -> SwingUtilities.invokeLater(() -> { embedder.attach(pid); hotswapper.snapshot(t); }));
+        launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> { embedder.attach(pid); hotswapper.snapshot(t); }));
     }
 
     Workspace.Target selectedTarget() { return (Workspace.Target) targets.getSelectedItem(); }
@@ -121,7 +128,89 @@ final class SulfurPanel extends JPanel {
     void hotswapAsync() {
         var t = selectedTarget();
         long pid = embedder.gamePid();
-        Thread.ofPlatform().daemon().name("sf-hotswap").start(() -> hotswapper.swap(t, pid, agentJar));
+        Thread.ofPlatform().daemon().name("sf-hotswap").start(() -> {
+            hotswapper.swap(t, pid, agentJar);
+            var restartNeeded = hotswapper.lastResult.stream().filter(s -> s.startsWith("restart needed")).toList();
+            if (!restartNeeded.isEmpty()) offerRestart(restartNeeded.size() + " class(es) changed in a way hotswap cannot apply");
+            else if (!hotswapper.lastStartupChanges.isEmpty())
+                offerRestart("startup code changed (runs only once, at launch): " + String.join(", ", hotswapper.lastStartupChanges));
+        });
+    }
+
+    // ------------------------------------------------------------------ quick restart
+
+    /** World the last restart went back into (self-test). */
+    volatile String lastRestartWorld;
+    private volatile boolean restarting;
+    private volatile long lastOffer;
+
+    void restartAsync() { Thread.ofPlatform().daemon().name("sf-restart").start(this::restart); }
+
+    /**
+     * Quick restart for what hotswap cannot do (new registrations, mod metadata, access wideners, build changes):
+     * ask the game which world is open and to quit (it saves), wait for it to exit, then Run client again with
+     * --quickPlaySingleplayer, so it lands back in the same world, embedded again. Blocking; call off the EDT.
+     */
+    void restart() {
+        var t = selectedTarget();
+        if (t == null || restarting) return;
+        restarting = true;
+        try {
+            long pid = embedder.gamePid();
+            String world = "";
+            var game = pid > 0 ? ProcessHandle.of(pid).orElse(null) : null;
+            if (game != null && game.isAlive()) {
+                Path wf = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "world-" + pid + ".txt");
+                Files.deleteIfExists(wf);
+                Hotswapper.loadAgent(pid, agentJar, "codingFps=15,world=" + wf + ",quit");
+                for (int i = 0; i < 50 && !Files.exists(wf); i++) Thread.sleep(100);
+                if (Files.exists(wf)) world = Files.readString(wf, StandardCharsets.UTF_8).strip();
+                log("restart: saving and quitting" + (world.isEmpty() ? "" : " (world '" + world + "')"));
+                try { game.onExit().get(90, java.util.concurrent.TimeUnit.SECONDS); }
+                catch (java.util.concurrent.TimeoutException e) { log("restart: the game did not exit in 90 s, stopping it"); game.destroyForcibly(); }
+            }
+            var args = !world.isEmpty() && quickPlay(t.profile().minecraftVersion()) ? List.of("--quickPlaySingleplayer", world) : List.<String>of();
+            lastRestartWorld = world;
+            SwingUtilities.invokeLater(() -> launcher.runClient(t, args,
+                    (p, h) -> SwingUtilities.invokeLater(() -> { embedder.attach(p); hotswapper.snapshot(t); })));
+        } catch (Exception e) {
+            log("restart failed: " + e);
+        } finally {
+            restarting = false;
+        }
+    }
+
+    /** --quickPlaySingleplayer exists since 1.20. */
+    static boolean quickPlay(String mc) {
+        if (mc == null) return false;
+        String[] v = mc.split("\\.");
+        try {
+            int a = Integer.parseInt(v[0]), b = v.length > 1 ? Integer.parseInt(v[1].replaceAll("\\D.*", "")) : 0;
+            return a > 1 || b >= 20;
+        } catch (NumberFormatException e) { return false; }
+    }
+
+    /** Something changed that needs a restart: say so, with a button that does it (at most every 10 s). */
+    void offerRestart(String why) {
+        log("restart needed: " + why);
+        if (System.currentTimeMillis() - lastOffer < 10_000) return;
+        lastOffer = System.currentTimeMillis();
+        SwingUtilities.invokeLater(() -> {
+            try {
+                var n = com.intellij.notification.NotificationGroupManager.getInstance().getNotificationGroup("SulfurFrame")
+                        .createNotification("Minecraft needs a restart", why, com.intellij.notification.NotificationType.INFORMATION);
+                n.addAction(com.intellij.notification.NotificationAction.createSimpleExpiring("Restart into the same world", this::restartAsync));
+                n.notify(null);
+            } catch (Throwable ignored) { }
+        });
+    }
+
+    /** Files that only take effect when the game starts. */
+    static boolean needsRestart(Path f) {
+        String n = f.getFileName().toString();
+        return n.equals("fabric.mod.json") || n.equals("quilt.mod.json") || n.endsWith("mods.toml") || n.endsWith(".accesswidener")
+                || n.equals("accesstransformer.cfg") || n.endsWith(".mixins.json") || n.equals("mixins.json")
+                || n.startsWith("build.gradle") || n.startsWith("settings.gradle") || n.equals("gradle.properties") || n.equals("libs.versions.toml");
     }
 
     /** Source files were saved: hotswap if they belong to the selected target and a game is attached. */
@@ -129,9 +218,13 @@ final class SulfurPanel extends JPanel {
         var t = selectedTarget();
         if (!swapOnSave.isSelected() || t == null || !embedder.attached()) return;
         Path dir = t.dir().toAbsolutePath().normalize();
-        var mine = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(dir)).toList();
+        var all = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(t.buildRoot().toAbsolutePath().normalize())).toList();
+        var startup = all.stream().filter(SulfurPanel::needsRestart).toList();
+        if (!startup.isEmpty())
+            offerRestart(String.join(", ", startup.stream().map(f -> f.getFileName().toString()).distinct().toList()) + " changed (read only when the game starts)");
+        var mine = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(dir) && !needsRestart(f)).toList();
         var code = mine.stream().filter(f -> f.toString().endsWith(".java") || f.toString().endsWith(".kt")).toList();
-        var res = mine.stream().filter(f -> !code.contains(f)).toList();
+        var res = mine.stream().filter(f -> !code.contains(f) && f.toString().replace('\\', '/').contains("/resources/")).toList();
         if (!code.isEmpty()) hotswapAsync();
         if (!res.isEmpty()) {
             long pid = embedder.gamePid();

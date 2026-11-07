@@ -175,7 +175,21 @@ final class AutoTest {
         }
         check("profile detected", p.profile != null && p.profile.isComplete(), String.valueOf(p.profile));
         long t0 = System.currentTimeMillis();
-        onEdt(p::runClient);
+        // -Dsulfurframe.autotest.world=<save folder>: start in that world (the restart test goes back into it)
+        String world = System.getProperty("sulfurframe.autotest.world");
+        if (world != null) onEdt(() -> p.runClient(java.util.List.of("--quickPlaySingleplayer", world)));
+        else onEdt(p::runClient);
+        // -Dsulfurframe.autotest.decoy=<.cmd printing "pid=N">: another Minecraft started meanwhile must not be embedded
+        long decoy = 0;
+        String decoyCmd = System.getProperty("sulfurframe.autotest.decoy");
+        if (decoyCmd != null) {
+            try {
+                var dp = new ProcessBuilder("cmd", "/c", decoyCmd).redirectErrorStream(true).start();
+                var m = java.util.regex.Pattern.compile("pid=(\\d+)").matcher(new String(dp.getInputStream().readAllBytes()));
+                if (m.find()) decoy = Long.parseLong(m.group(1));
+                lines.add("decoy Minecraft started, pid " + decoy);
+            } catch (Exception ex) { lines.add("decoy failed: " + ex); }
+        }
         var e = p.embedder;
         // attached() turns true just before SetParent: wait for the reparent itself, not only the flag
         while (!(e.attached() && NativeWindows.parentOf(e.gameHwnd()) == e.canvasNativeHwnd())
@@ -184,6 +198,11 @@ final class AutoTest {
         long game = e.gameHwnd(), canvas = e.canvasNativeHwnd();
         check("Run client -> game embedded", game != 0 && NativeWindows.parentOf(game) == canvas,
                 "after " + secs + " s, game pid " + e.gamePid() + ", parent " + hex(NativeWindows.parentOf(game)) + ", canvas " + hex(canvas));
+        if (decoy != 0) {
+            check("another Minecraft (decoy) not embedded", e.gamePid() != decoy && ProcessHandle.of(decoy).isPresent(),
+                    "embedded pid " + e.gamePid() + ", decoy pid " + decoy);
+            ProcessHandle.of(decoy).ifPresent(ProcessHandle::destroyForcibly);
+        }
         sleep(15000);   // let the dev client finish loading resources
         check("game sized to the canvas (16:9 fit)", game != 0 && fits(game, canvas),
                 "game " + NativeWindows.clientSize(game) + ", canvas " + NativeWindows.clientSize(canvas));
@@ -191,8 +210,51 @@ final class AutoTest {
         String probe = System.getProperty("sulfurframe.autotest.hotswap");
         if (probe != null) {
             try { hotswapFlow(p, Path.of(probe)); } catch (Exception ex) { check("hotswap flow", false, ex.toString()); }
+            try { restartFlow(p, Path.of(probe), world); } catch (Exception ex) { check("restart flow", false, ex.toString()); }
         }
         lines.add("game pid " + e.gamePid() + " left running for inspection");
+    }
+
+    /**
+     * Startup code (onInitialize) and mod metadata changes must offer a restart; the restart must save, quit, start again
+     * and land back in the same world, embedded.
+     */
+    private static void restartFlow(SulfurPanel p, Path probe, String world) throws Exception {
+        var t = p.selectedTarget();
+        // onInitialize: hotswap applies it, but it already ran; a restart must be offered
+        Path main = probe.getParent().resolve("LucidsCustomPack.java");
+        if (Files.exists(main)) {
+            String src = Files.readString(main);
+            Files.writeString(main, src.replaceFirst("public void onInitialize\\(\\) \\{", "public void onInitialize() {\n\t\tLOGGER.info(\"[SF] startup code edited\");"));
+            sleep(1500);
+            onEdt(p::hotswapAsync);
+            for (int i = 0; i < 40 && !p.logText().contains("startup code changed"); i++) sleep(250);
+            check("startup code change -> restart offered", p.hotswapper.lastStartupChanges.contains("LucidsCustomPack.onInitialize") && p.logText().contains("restart needed: startup code changed"),
+                    String.valueOf(p.hotswapper.lastStartupChanges));
+            Files.writeString(main, src);
+            sleep(1500);
+        }
+        // mod metadata: read only at launch
+        Path meta = t.dir().resolve("src/main/resources/fabric.mod.json");
+        if (Files.exists(meta)) {
+            p.onSourcesSaved(java.util.List.of(meta));
+            for (int i = 0; i < 20 && !p.logText().contains("fabric.mod.json changed"); i++) sleep(250);   // the log is appended on the EDT
+            check("fabric.mod.json change -> restart offered", p.logText().contains("fabric.mod.json changed"), "panel log");
+        }
+        // the restart itself
+        long before = p.embedder.gamePid();
+        Path gameLog = t.dir().resolve("run/logs/latest.log");
+        long t0 = System.currentTimeMillis();
+        p.restart();
+        var e = p.embedder;
+        while (!(e.attached() && e.gamePid() != before && NativeWindows.parentOf(e.gameHwnd()) == e.canvasNativeHwnd())
+                && System.currentTimeMillis() - t0 < 5 * 60_000) sleep(500);
+        check("restart -> new game embedded", e.attached() && e.gamePid() != before && !ProcessHandle.of(before).isPresent(),
+                "old pid " + before + " (gone " + !ProcessHandle.of(before).isPresent() + "), new pid " + e.gamePid() + ", " + (System.currentTimeMillis() - t0) / 1000 + " s");
+        if (world != null) {
+            check("restart -> back in the same world", world.equals(p.lastRestartWorld) && waitForLog(gameLog, "joined the game", 120),
+                    "world '" + p.lastRestartWorld + "'");
+        }
     }
 
     /**

@@ -58,19 +58,27 @@ public final class SfAgent {
     private static synchronized void install(String args, Instrumentation inst, boolean attached) {
         // "redefine=<list file>": hotswap request from the IDE (each request is a fresh attach)
         // "reload=assets+data": resources changed (the IDE copied them into the dev resource dir)
-        String redefine = null, reload = null;
+        // "world=<file>": write the open world's folder name; "quit": save and exit (IDE quick restart)
+        String redefine = null, reload = null, world = null;
+        boolean quit = false;
         StringBuilder rest = new StringBuilder();
         if (args != null) for (String kv : args.split(",")) {
             if (kv.startsWith("redefine=")) redefine = kv.substring("redefine=".length());
             else if (kv.startsWith("reload=")) reload = kv.substring("reload=".length());
+            else if (kv.startsWith("world=")) world = kv.substring("world=".length());
+            else if (kv.equals("quit")) quit = true;
             else if (!kv.isEmpty()) rest.append(rest.length() == 0 ? "" : ",").append(kv);
         }
-        if (redefine != null || reload != null) {
+        if (redefine != null || reload != null || world != null || quit) {
             if (!installed) install(rest.toString(), inst, attached);
             if (redefine != null) Hotswap.redefine(inst, redefine);
             if (reload != null) ResourceReload.reload(inst, reload.contains("assets"), reload.contains("data"));
+            if (world != null) GameSession.writeWorld(inst, world);
+            if (quit) GameSession.quit();
             return;
         }
+        // "launch=<file>": started by the IDE's Run client; tell it which process is ours (pid into the file)
+        if (args != null) for (String kv : args.split(",")) if (kv.startsWith("launch=")) markLaunch(kv.substring("launch=".length()));
         SfHooks.configure(args);
         if (installed) { SfHooks.log("already installed; settings updated (coding fps cap " + SfHooks.codingFps + ")"); return; }
         installed = true;
@@ -96,6 +104,18 @@ public final class SfAgent {
             SfHooks.log("retransformed " + loaded.size() + " loaded LWJGL classes " + loaded);
         } catch (Throwable e) {
             SfHooks.log("install failed: " + e);
+        }
+    }
+
+    private static void markLaunch(String file) {
+        try {
+            String name = java.lang.management.ManagementFactory.getRuntimeMXBean().getName();   // "pid@host" (Java 8)
+            String pid = name.substring(0, name.indexOf('@'));
+            File tmp = new File(file + ".part");
+            Files.write(tmp.toPath(), pid.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            Files.move(tmp.toPath(), new File(file).toPath(), StandardCopyOption.REPLACE_EXISTING);
+        } catch (Throwable t) {
+            SfHooks.log("could not mark the launch: " + t);
         }
     }
 

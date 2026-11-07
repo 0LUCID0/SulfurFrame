@@ -229,6 +229,29 @@ PASS resource change -> client reload               (언어 파일 -> "Reloading
 ```
 데이터 리로드는 월드를 연 게임에 직접 attach해서 확인했습니다("resources: /reload on the integrated server", 서버 스레드 "Loaded 1295 recipes").
 
+### 빠른 재시작 (핫스왑이 못 하는 변경)
+새 블록·아이템 등록, 모드 메타데이터, 액세스 와이드너, 빌드 변경처럼 게임이 시작할 때만 읽는 것은 실행 중에 바꿀 수 없습니다. 그래서 **Restart** 버튼이 그 부분을 맡습니다.
+1. 에이전트에게 열린 월드의 폴더 이름을 묻고(Mojang `storageSource.getLevelId()` / Yarn `session.getDirectoryName()`, 서버 필드에서 찾음), 정상 종료를 요청합니다. 게임이 월드를 저장하고 꺼질 때까지 기다립니다(90초가 넘으면 강제 종료).
+2. runClient를 `--quickPlaySingleplayer <월드>`(1.20+)로 다시 띄웁니다. 월드 이름에 공백이나 한글이 있어도 되게 init script가 Base64로 받아 인자에 붙입니다. 새 게임은 툴윈도우에 다시 붙고 같은 월드로 바로 들어갑니다.
+
+재시작이 필요한 변경을 감지하면 로그와 IDE 알림에 **"Restart into the same world"** 버튼을 띄웁니다.
+- 저장한 파일: `fabric.mod.json`, `quilt.mod.json`, `mods.toml`, `*.accesswidener`, `accesstransformer.cfg`, `*mixins.json`, `build.gradle*`, `settings.gradle*`, `gradle.properties`, `libs.versions.toml`
+- 핫스왑 결과의 "restart needed"(JBR이 없을 때의 구조 변경)
+- **시작할 때 한 번만 도는 코드가 바뀐 경우**(`StartupCode.java`): 교체 전후 클래스에서 `<clinit>`, `onInitialize*`, `register*`, `initialize*`의 명령어를 비교합니다(줄 번호 제외, IntelliJ 내장 ASM). 교체 자체는 성공하지만 이미 실행된 코드라 게임에 반영되지 않는 경우입니다(새 블록 등록 등).
+
+### 엉뚱한 게임을 붙이지 않기
+예전에는 Run client 뒤 새로 뜬 마인크래프트 창을 아무거나 붙였습니다. 그사이 런처로 다른 마인크래프트를 켜면 그게 붙을 수 있었습니다.
+이제 Run client가 init script로 게임 JVM에 에이전트를 시작 시점부터 붙이고(`-javaagent:...=launch=<실행마다 고유한 파일>`), 에이전트가 그 파일에 자기 PID를 씁니다. 플러그인은 **그 PID의 창만** 붙이고 다른 창은 무시합니다. Linux에서 PID를 모르는 창을 고르던 대체 경로도 없앴습니다. FPS 제한도 게임 시작부터 걸립니다.
+
+검증(Windows 샌드박스, 월드 `SFWorld`에서 시작, Run client 직후 미끼로 바닐라 1.12.2를 따로 띄움):
+```
+PASS Run client -> game embedded                [game pid 6864]
+PASS another Minecraft (decoy) not embedded     [decoy pid 40088 먼저 떴지만 무시]
+PASS startup code change -> restart offered     [LucidsCustomPack.onInitialize]
+PASS restart -> new game embedded               [38 s]
+PASS restart -> back in the same world          [world 'SFWorld']
+```
+
 ### 한계와 다음 과제
 - **구조 변경:** JBR이 있으면 됩니다(위). Java 8/17 게임용 JBR은 시험하지 않았습니다. Attach PID로 붙인 게임은 이미 떠 있는 JVM이라, 직접 JBR과 플래그로 띄운 경우에만 구조 변경이 됩니다.
 - **새로 추가한 정적 필드의 초기값, 생성자 변경:** 이미 만들어진 객체와 클래스 초기화에는 반영되지 않습니다.

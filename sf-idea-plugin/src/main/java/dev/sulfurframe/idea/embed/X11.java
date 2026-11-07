@@ -190,9 +190,8 @@ final class X11 {
 
     /** The game window of a process: _NET_WM_PID match among the Minecraft windows (any if the pid is not set). */
     static long findWindowOfProcess(long pid) {
-        long any = 0;
-        for (long w : findGameWindows()) { long p = pidOf(w); if (p == pid) return w; if (p == 0 && any == 0) any = w; }
-        return any;
+        for (long w : findGameWindows()) if (pidOf(w) == pid) return w;
+        return 0;   // never guess: another Minecraft may be running
     }
 
     // ------------------------------------------------------------------ AWT side
