@@ -59,7 +59,7 @@ public final class SfAgent {
         // "redefine=<list file>": hotswap request from the IDE (each request is a fresh attach)
         // "reload=assets+data": resources changed (the IDE copied them into the dev resource dir)
         // "world=<file>": write the open world's folder name; "quit": save and exit (IDE quick restart)
-        String redefine = null, reload = null, world = null;
+        String redefine = null, reload = null, world = null, command = null, done = null;
         boolean quit = false;
         StringBuilder rest = new StringBuilder();
         if (args != null) for (String kv : args.split(",")) {
@@ -67,13 +67,16 @@ public final class SfAgent {
             else if (kv.startsWith("reload=")) reload = kv.substring("reload=".length());
             else if (kv.startsWith("world=")) world = kv.substring("world=".length());
             else if (kv.equals("quit")) quit = true;
+            else if (kv.startsWith("cmd=")) command = new String(java.util.Base64.getDecoder().decode(kv.substring(4)), java.nio.charset.StandardCharsets.UTF_8);
+            else if (kv.startsWith("done=")) done = kv.substring(5);
             else if (!kv.isEmpty()) rest.append(rest.length() == 0 ? "" : ",").append(kv);
         }
-        if (redefine != null || reload != null || world != null || quit) {
+        if (redefine != null || reload != null || world != null || quit || command != null) {
             if (!installed) install(rest.toString(), inst, attached);
             if (redefine != null) Hotswap.redefine(inst, redefine);
             if (reload != null) ResourceReload.reload(inst, reload.contains("assets"), reload.contains("data"));
             if (world != null) GameSession.writeWorld(inst, world);
+            if (command != null) GameSession.serverCommand(inst, command, done);
             if (quit) GameSession.quit();
             return;
         }

@@ -60,6 +60,52 @@ final class GameSession {
         return "";
     }
 
+    /**
+     * Run a command on the integrated server (e.g. "save-all flush" before a world snapshot) and write "done" (or the
+     * error) to {@code doneFile} once it has run on the server thread.
+     */
+    static void serverCommand(Instrumentation inst, final String command, final String doneFile) {
+        try {
+            for (Class<?> c : inst.getAllLoadedClasses()) {
+                int which = -1;
+                for (int i = 0; i < CLIENTS.length; i++) if (c.getName().equals(CLIENTS[i])) which = i;
+                if (which < 0) continue;
+                Object mc = c.getMethod("getInstance").invoke(null);
+                final Object server = mc == null ? null : c.getMethod(SERVER_GETTERS[which]).invoke(mc);
+                if (server == null) { done(doneFile, "no world open"); return; }
+                final String commands = which == 0 ? "getCommands" : "getCommandManager";
+                final String source = which == 0 ? "createCommandSourceStack" : "getCommandSource";
+                final String run = which == 0 ? "performPrefixedCommand" : "executeWithPrefix";
+                server.getClass().getMethod("execute", Runnable.class).invoke(server, new Runnable() {
+                    public void run() {
+                        try {
+                            Object cm = server.getClass().getMethod(commands).invoke(server);
+                            Object src = server.getClass().getMethod(source).invoke(server);
+                            for (Method m : cm.getClass().getMethods()) {
+                                if (m.getName().equals(run) && m.getParameterTypes().length == 2 && m.getParameterTypes()[1] == String.class) {
+                                    m.invoke(cm, src, command);
+                                    SfHooks.log("session: ran /" + command);
+                                    done(doneFile, "done");
+                                    return;
+                                }
+                            }
+                            done(doneFile, "no command method");
+                        } catch (Throwable t) { done(doneFile, "failed: " + t); }
+                    }
+                });
+                return;
+            }
+            done(doneFile, "no named Minecraft client");
+        } catch (Throwable t) {
+            done(doneFile, "failed: " + t);
+        }
+    }
+
+    private static void done(String file, String text) {
+        if (file == null) return;
+        try { Files.write(Paths.get(file), Collections.singletonList(text), StandardCharsets.UTF_8); } catch (IOException ignored) { }
+    }
+
     /** Ask the game to quit normally (saves the world), through the window like the lifeboat does. */
     static void quit() {
         try {

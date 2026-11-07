@@ -6,11 +6,13 @@ import dev.sulfurframe.idea.profile.Workspace;
 
 import javax.swing.*;
 import java.awt.*;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -67,6 +69,9 @@ final class SulfurPanel extends JPanel {
         var restart = button("Restart", this::restartAsync);
         restart.setToolTipText("Save and quit the game, start it again and go straight back into the same world");
         buttons.add(restart);
+        buttons.add(button("Snapshot", this::snapshotAsync));
+        buttons.add(button("Restore…", this::restoreAsync));
+        buttons.add(button("Test world", this::testWorldAsync));
         swapOnSave.setToolTipText("Compile and reload changed classes into the running game whenever a source file is saved");
         buttons.add(swapOnSave);
         shareWorlds.setToolTipText("Worlds, options and resource packs shared by all projects of the same Minecraft version ("
@@ -173,7 +178,14 @@ final class SulfurPanel extends JPanel {
      * ask the game which world is open and to quit (it saves), wait for it to exit, then Run client again with
      * --quickPlaySingleplayer, so it lands back in the same world, embedded again. Blocking; call off the EDT.
      */
-    void restart() {
+    void restart() { restart(null, null); }
+
+    /**
+     * @param worldOverride world to come back into instead of the one that was open (test world), or null
+     * @param whileDown     runs after the game exited and before it starts again, with the world that was open
+     *                      (restore a snapshot), or null
+     */
+    void restart(String worldOverride, java.util.function.Consumer<String> whileDown) {
         var t = selectedTarget();
         if (t == null || restarting) return;
         restarting = true;
@@ -191,6 +203,8 @@ final class SulfurPanel extends JPanel {
                 try { game.onExit().get(90, java.util.concurrent.TimeUnit.SECONDS); }
                 catch (java.util.concurrent.TimeoutException e) { log("restart: the game did not exit in 90 s, stopping it"); game.destroyForcibly(); }
             }
+            if (whileDown != null) whileDown.accept(world);
+            if (worldOverride != null) world = worldOverride;
             var args = !world.isEmpty() && quickPlay(t.profile().minecraftVersion()) ? List.of("--quickPlaySingleplayer", world) : List.<String>of();
             lastRestartWorld = world;
             SwingUtilities.invokeLater(() -> launch(t, args));
@@ -198,6 +212,109 @@ final class SulfurPanel extends JPanel {
             log("restart failed: " + e);
         } finally {
             restarting = false;
+        }
+    }
+
+    // ------------------------------------------------------------------ worlds: snapshots, test world
+
+    /** Folder name of the world open in the running game ("" if none / no game). */
+    String openWorld() throws Exception {
+        long pid = embedder.gamePid();
+        if (pid <= 0 || ProcessHandle.of(pid).isEmpty()) return "";
+        Path wf = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "world-" + pid + "-q.txt");
+        Files.deleteIfExists(wf);
+        Hotswapper.loadAgent(pid, agentJar, "codingFps=15,world=" + wf);
+        for (int i = 0; i < 50 && !Files.exists(wf); i++) Thread.sleep(100);
+        return Files.exists(wf) ? Files.readString(wf, StandardCharsets.UTF_8).strip() : "";
+    }
+
+    /** Last snapshot taken (self-test). */
+    volatile Path lastSnapshot;
+
+    void snapshotAsync() { Thread.ofPlatform().daemon().name("sf-snapshot").start(this::snapshot); }
+
+    /** Flush the open world on the integrated server, then copy it to a snapshot. Blocking. */
+    void snapshot() {
+        var t = selectedTarget();
+        try {
+            String world = openWorld();
+            if (world.isEmpty()) { log("snapshot: open a world in the game first"); return; }
+            long pid = embedder.gamePid();
+            Path done = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "flush-" + pid + ".txt");
+            Files.deleteIfExists(done);
+            Hotswapper.loadAgent(pid, agentJar, "codingFps=15,cmd=" + WorldSnapshots.b64("save-all flush") + ",done=" + done);
+            for (int i = 0; i < 150 && !Files.exists(done); i++) Thread.sleep(100);
+            String flushed = Files.exists(done) ? Files.readString(done).strip() : "no answer";
+            if (!flushed.equals("done")) log("snapshot: save-all flush: " + flushed + " (copying anyway)");
+            lastSnapshot = WorldSnapshots.take(SharedInstance.runDir(t).resolve("saves"), world, t.profile().minecraftVersion(), null);
+            log("snapshot of '" + world + "': " + lastSnapshot);
+        } catch (Exception e) {
+            log("snapshot failed: " + e);
+        }
+    }
+
+    void restoreAsync() {
+        Thread.ofPlatform().daemon().name("sf-restore").start(() -> {
+            try {
+                var t = selectedTarget();
+                String world = openWorld();
+                Path saves = SharedInstance.runDir(t).resolve("saves");
+                if (world.isEmpty()) {   // no game: pick the world first
+                    String[] worlds;
+                    try (var s = Files.list(saves)) { worlds = s.filter(Files::isDirectory).map(p -> p.getFileName().toString()).sorted().toArray(String[]::new); }
+                    if (worlds.length == 0) { log("restore: no worlds in " + saves); return; }
+                    var pick = new String[1];
+                    SwingUtilities.invokeAndWait(() -> pick[0] = (String) JOptionPane.showInputDialog(this, "World:", "Restore a snapshot",
+                            JOptionPane.PLAIN_MESSAGE, null, worlds, worlds[0]));
+                    if (pick[0] == null) return;
+                    world = pick[0];
+                }
+                var snaps = WorldSnapshots.list(t.profile().minecraftVersion(), world);
+                if (snaps.isEmpty()) { log("restore: no snapshots of '" + world + "' yet"); return; }
+                var names = snaps.stream().map(WorldSnapshots::label).toArray(String[]::new);
+                var pick = new String[1];
+                final String w = world;
+                SwingUtilities.invokeAndWait(() -> pick[0] = (String) JOptionPane.showInputDialog(this, "Snapshot of '" + w + "':", "Restore a snapshot",
+                        JOptionPane.PLAIN_MESSAGE, null, names, names[0]));
+                if (pick[0] != null) restoreSnapshot(w, snaps.get(Arrays.asList(names).indexOf(pick[0])));
+            } catch (Exception e) { log("restore failed: " + e); }
+        });
+    }
+
+    /** Quit the game, put the snapshot in place of the world, start again in it. Blocking. */
+    void restoreSnapshot(String world, Path snapshot) {
+        var t = selectedTarget();
+        Path saves = SharedInstance.runDir(t).resolve("saves");
+        restart(world, open -> {
+            try {
+                WorldSnapshots.restore(saves, world, t.profile().minecraftVersion(), snapshot);
+                log("restored '" + world + "' from " + WorldSnapshots.label(snapshot) + " (the replaced world was kept as a snapshot)");
+            } catch (IOException e) { log("restore failed: " + e); }
+        });
+    }
+
+    /** Name of the last test world created (self-test). */
+    volatile String lastTestWorld;
+
+    void testWorldAsync() { Thread.ofPlatform().daemon().name("sf-testworld").start(this::testWorld); }
+
+    /** Write a superflat creative test world and go into it (restarting the game if one runs). Blocking. */
+    void testWorld() {
+        var t = selectedTarget();
+        String mc = t.profile().minecraftVersion();
+        if (!TestWorld.supported(mc)) { log("test world: needs Minecraft 1.20.5 or newer (this is " + mc + ")"); return; }
+        try {
+            Path saves = SharedInstance.runDir(t).resolve("saves");
+            Files.createDirectories(saves);
+            String name = "SulfurFrame Test";
+            for (int i = 2; Files.exists(saves.resolve(name)); i++) name = "SulfurFrame Test " + i;
+            TestWorld.create(saves, name, mc);
+            lastTestWorld = name;
+            log("test world '" + name + "' created (superflat, creative, cheats, no day/weather cycle)");
+            if (embedder.attached()) restart(name, null);
+            else { final String n = name; SwingUtilities.invokeLater(() -> launch(t, List.of("--quickPlaySingleplayer", n))); }
+        } catch (Exception e) {
+            log("test world failed: " + e);
         }
     }
 
