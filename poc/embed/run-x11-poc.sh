@@ -8,7 +8,7 @@ V="${1:-1.21.1}"; shift || true
 JAVA25="${JAVA25:-/usr/lib/jvm/java-25-openjdk-amd64/bin/java}"
 export DISPLAY="${DISPLAY:-:0}"
 unset WAYLAND_DISPLAY            # GLFW 3.4 would pick Wayland under WSLg; the PoC is about X11
-ulimit -c 0                      # a crashed JVM (crash tests!) would leave a multi-GB core: WSL copies it to %TEMP%wsl-crashes
+ulimit -c 0                      # a crashed JVM (crash tests!) would leave a multi-GB core: WSL copies it to %TEMP%/wsl-crashes
 if ! pgrep -f "client.main.Main" >/dev/null; then
   setsid nohup "$JAVA25" McFetch.java launch "$V" ${SF_AGENT:+--agent "$SF_AGENT"} ${SF_GAME_ARGS:+-- $SF_GAME_ARGS} >/tmp/sf-x11-launch.log 2>&1 < /dev/null &
   echo "[poc] launching Minecraft $V (log /tmp/sf-mc-$V.log)"
