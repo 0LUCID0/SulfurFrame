@@ -1,0 +1,9 @@
+buildscript {
+    dependencies { classpath 'net.minecraftforge.gradle:ForgeGradle:2.3-SNAPSHOT' }
+}
+apply plugin: 'net.minecraftforge.gradle.forge'
+minecraft {
+    version = "1.12.2-14.23.5.2860"
+    runDir = "run"
+    mappings = "stable_39"
+}

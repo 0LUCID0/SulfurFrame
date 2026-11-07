@@ -1,0 +1,1 @@
+plugins { id 'org.quiltmc.loom' version '1.+' }

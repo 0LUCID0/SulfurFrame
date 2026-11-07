@@ -1,0 +1,17 @@
+<idea-plugin>
+    <id>dev.sulfurframe</id>
+    <name>SulfurFrame</name>
+    <vendor>SulfurFrame</vendor>
+    <version>0.1.0</version>
+    <description><![CDATA[
+      Run your Minecraft mod's dev client inside the IDE: the game window is embedded in a tool window,
+      throttled while you edit code, and its memory is handed back while the tool window is hidden.
+      The Minecraft version and mod loader are read from the project's build files.
+    ]]></description>
+    <idea-version since-build="262"/>
+    <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="SulfurFrame" anchor="right" factoryClass="dev.sulfurframe.idea.SulfurToolWindowFactory"/>
+        <postStartupActivity implementation="dev.sulfurframe.idea.AutoTestStartup"/>
+    </extensions>
+</idea-plugin>
