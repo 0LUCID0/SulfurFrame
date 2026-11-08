@@ -16,6 +16,7 @@ public final class SulfurToolWindowFactory implements ToolWindowFactory, DumbAwa
         var props = com.intellij.ide.util.PropertiesComponent.getInstance(project);
         var panel = new SulfurPanel(dir, () -> props.getValue("sulfurframe.target", ""), v -> props.setValue("sulfurframe.target", v),
                 () -> GameTab.open(project));
+        panel.attachProject(project);
         var host = new PanelHost(panel);
         PanelHost.register(project, host);
         var content = ContentFactory.getInstance().createContent(host.toolHolder, "", false);

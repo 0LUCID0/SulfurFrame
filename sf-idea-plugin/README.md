@@ -327,3 +327,25 @@ Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client +
 - **영구 월드와 임시 월드:** **Test world**는 남는 테스트 월드, **Temp world**는 버리는 테스트 월드입니다(`TempWorlds.java`). 임시 월드는 이름이 `[Temp] Test`로 시작하고, 목록(`~/.sulfurframe/temp-worlds.txt`)에 적혀 다음 때 지워집니다: 게임이 끝날 때, 그리고 IDE가 먼저 꺼졌던 경우 다음 플러그인 시작 때.
   안전장치: 게임이 잡고 있는 월드(`session.lock` 잠김)는 건너뛰고, 이름에 `[Temp] ` 표식이 없으면 목록에 있어도 지우지 않습니다. 재시작으로 같은 임시 월드에 다시 들어갈 때는 이전 게임의 종료 정리가 그 월드를 지우지 않도록 잠시 핀을 겁니다.
   검증(임시 홈): 임시 월드 삭제, 핀 걸린 임시 월드 유지, 목록에 잘못 들어간 진짜 월드 `Real` 유지(목록에서만 빠짐).
+
+## 게임 로그, 크래시, 리소스 문제, 디버거, Inspect
+- **Game log 탭:** `run/logs/latest.log`를 따라가며 보여 줍니다(`GameLog.java`, `GameLogPanel.java`). 스택 트레이스의 프레임은 IDE의 Java 예외 필터로 소스 링크가 되고, "경고와 오류만" 필터가 있습니다.
+- **크래시:** Loom 개발 실행에서는 "Crash report saved to" 줄이 표준 출력에만 나가서, `run/crash-reports` 폴더를 지켜봅니다. 새 보고서가 생기면 원인(Description)과 첫 번째 내 코드 프레임(`knot/`, `app//` 접두어 제거)을 찾아 알림을 띄웁니다: 코드로 가기, 보고서 열기, 재시작.
+- **Problems 탭:** 게임이 로그에 남기는 빠진 모델/블록스테이트/텍스처를 목록으로 모읍니다(더블클릭으로 파일 열기). **Check translations**는 블록스테이트와 아이템 모델에 비해 `en_us.json`에 빠진 키를 찾고, **Add missing translations**는 이름을 사람이 읽게 바꿔(`ms_block` → "Ms Block") 넣습니다.
+- **Debug:** 켜 두면 Run client가 게임에 JDWP(빈 포트)를 붙여 띄우고, 창이 뜨면 IDE 디버거가 "SulfurFrame: Minecraft" 원격 실행 구성으로 자동 연결합니다(`DebugAttach.java`).
+- **Inspect:** 플레이어가 보고 있는 블록(위치, 상태, 블록/블록 엔티티 클래스, NBT)이나 엔티티(클래스, NBT)를 에이전트가 게임 스레드에서 읽어 보여 줍니다(`LookAt.java`). 클래스 이름을 누르면 소스로 갑니다.
+
+검증(1.21.1 lucid 사본, 샌드박스 IDE 자동 테스트): 빠진 모델 2건 보고, 빠진 번역 3개 찾고 3개 추가, 디버거 세션 연결, 일부러 던진 예외로 크래시 → 원인과 `kr.kro.lucid.SfHotswapProbe` 프레임 찾음.
+
+## 임베드된 게임의 마우스 시점 (GLFW, Windows)
+키보드는 되는데 마우스로 시점이 안 돌아가던 문제. GLFW는 `glfwSetInputMode(GLFW_CURSOR_DISABLED)`가 불릴 때 창이 "포커스"인지 `GetActiveWindow()`로 확인하는데, 자식 창은 절대 활성 창이 아닙니다. 그래서 클릭으로 포커스를 받은 뒤에 일어난 마우스 잡기(월드 입장, 메뉴 닫기)는 기록만 되고 적용되지 않아, GLFW가 모든 마우스 이동을 버립니다. GLFW는 `WM_SETFOCUS`를 받을 때는 잡기를 적용하므로, 에이전트가 커서 모드가 DISABLED로 바뀌고 게임이 임베드돼 있고 키보드 포커스를 가진 순간에 게임 창에 `WM_SETFOCUS`를 직접 보냅니다(`GlfwCursorFix.java`, 렌더 스레드 = GLFW 스레드에서 실행). 실제 IDE에서 사용자가 확인했습니다.
+
+## Gradle과 게임이 쓰는 Java
+- **Gradle 자체의 JDK:** IDE 환경의 `JAVA_HOME`이 게임에 필요한 Java보다 낮으면(26.x용 Loom은 Java 25 Gradle을 요구), 그 버전 이상인 JDK를 찾아 gradlew에 넘깁니다(`GradleJava.java`). 프로젝트가 `org.gradle.java.home`을 정해 두었으면 손대지 않습니다. 클래스패스 스캔과 핫스왑 컴파일도 같은 JDK라 데몬 하나를 같이 씁니다.
+- **게임의 JBR:** 실행 태스크의 `javaLauncher`를 툴체인으로 직접 정하는 빌드(예: `javaLauncher.set(javaToolchains.launcherFor { 21 })`)에서는 `executable`만 바꾸면 "Toolchain from `executable` property does not match…", 비우면 "Cannot query … javaLauncher … no value"로 실패합니다. 그래서 JBR이 완전한 JDK(javac 있음)이면 `org.gradle.java.installations.paths`로 알려 주고 `javaLauncher`를 "JetBrains <버전>" 툴체인으로 바꿉니다. init 스크립트는 `afterEvaluate`에서 등록해 빌드 스크립트의 설정보다 나중에 적용됩니다.
+- **실행 태스크:** 빌드 스크립트의 Loom 실행 설정(`runConfigs.create("allModsClient")`, `runs { x { client() } }`)을 읽어 클라이언트 설정마다 목록에 따로 띄웁니다(`[runAllModsClient]`). datagen/gametest 설정은 뺍니다. 모든 init 스크립트는 `-PsfRunTask`로 실행하는 그 태스크에만 붙습니다.
+
+검증: buildpali `runClient`/`runAllModsClient`의 launcher가 JBR 21로 잡히고 `runAllModsClient`로 게임이 실제로 뜸(JBR 21, `-XX:+AllowEnhancedClassRedefinition`). Maxwells_Chamber(26.3)는 Java 25 Gradle로 설정 통과, launcher JBR 25.
+
+## 긴 클라이언트 이름
+목록에서 넘치는 이름은 `…`로 자르지 않고 흘러갑니다(1.5초 멈춤 → 끝까지 → 멈춤 → 처음으로). 닫힌 목록의 선택 항목과 펼친 목록의 가리킨 줄만 움직이고, 넘칠 때만 다시 그립니다(`MarqueeRenderer.java`).

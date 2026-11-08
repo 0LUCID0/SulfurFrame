@@ -18,7 +18,7 @@ final class WorldSnapshots {
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     static Path root(String mc, String world) {
-        return Path.of(System.getProperty("user.home"), ".sulfurframe", "snapshots", mc == null ? "unknown" : mc, world);
+        return SharedInstance.home().resolve("snapshots").resolve(mc == null ? "unknown" : mc).resolve(world);
     }
 
     /** Copy saves/<world> into a new snapshot; returns its folder. */

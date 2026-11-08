@@ -19,6 +19,9 @@ final class GameLauncher {
     private final Consumer<String> log;
     private volatile Process gradle;
 
+    /** A Run client build (and so its game) is still going. */
+    boolean running() { Process g = gradle; return g != null && g.isAlive(); }
+
     GameLauncher(Consumer<String> log) { this.log = log; }
 
     void runClient(Workspace.Target target, BiConsumer<Long, Long> onWindow) { runClient(target, List.of(), onWindow); }
@@ -37,13 +40,22 @@ final class GameLauncher {
         if (wrapper == null) { log.accept("no gradlew.bat in " + dir + " or its parents"); return; }
         Set<Long> before = new HashSet<>(dev.sulfurframe.idea.embed.NativeWindows.gameWindows());
         try {
-            var cmd = new ArrayList<>(List.of(wrapper.toString(), target.runTask(), "--console=plain"));
+            // every init script below patches exactly this task (runClient, or a run config like runAllModsClient)
+            var cmd = new ArrayList<>(List.of(wrapper.toString(), target.runTask(), "--console=plain", "-PsfRunTask=" + target.task()));
             Path jbr = Jbr.find(profile.javaMajor());
             if (jbr != null) {   // DCEVM: hotswap may then add/remove methods and fields
                 Path init = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "sf-jbr.init.gradle");
                 Files.createDirectories(init.getParent());
                 Files.writeString(init, Jbr.INIT_SCRIPT, StandardCharsets.UTF_8);
                 cmd.addAll(List.of("--init-script", init.toString(), "-PsfJbr=" + jbr));
+                Path jbrHome = jbr.getParent().getParent();
+                if (Files.isRegularFile(jbrHome.resolve("bin").resolve(jbr.getFileName().toString().replace("java", "javac")))) {
+                    // a full JDK: usable as a Gradle toolchain, for builds that choose the game's Java by toolchain
+                    String paths = jbrHome.toString();
+                    String existing = GradleJava.property(dir, "org.gradle.java.installations.paths");
+                    if (existing != null && !existing.isBlank()) paths += "," + existing;   // -P replaces theirs: keep it
+                    cmd.addAll(List.of("-PsfJbrMajor=" + profile.javaMajor(), "-Porg.gradle.java.installations.paths=" + paths));
+                }
                 log.accept("game runs on JetBrains Runtime " + jbr.getParent().getParent().getFileName() + " (enhanced hotswap: methods and fields can change)");
             } else {
                 log.accept("no JetBrains Runtime " + profile.javaMajor() + " found (~/.jdks): hotswap limited to method bodies");
@@ -57,6 +69,11 @@ final class GameLauncher {
             }
             // Which game is ours: the agent rides along from the start and writes its PID into a file unique to this
             // launch. Only that process's window is embedded, never a Minecraft started meanwhile by something else.
+            if (!extraJvmArgs.isEmpty()) {   // e.g. the debugger's JDWP agent
+                Path init = tmp("sf-jvmargs.init.gradle");
+                Files.writeString(init, JVM_ARGS_SCRIPT, StandardCharsets.UTF_8);
+                cmd.addAll(List.of("--init-script", init.toString(), "-PsfJvmArgs=" + Base64.getEncoder().encodeToString(String.join("\n", extraJvmArgs).getBytes(StandardCharsets.UTF_8))));
+            }
             if (agentJar != null) {
                 marker = tmp("launch-" + UUID.randomUUID() + ".pid");
                 Path init = tmp("sf-agent.init.gradle");
@@ -68,6 +85,11 @@ final class GameLauncher {
                 marker = null;
             }
             var pb = new ProcessBuilder(cmd).directory(dir.toFile()).redirectErrorStream(true);
+            Path gradleJdk = GradleJava.pick(dir, profile.javaMajor(), jbr);
+            if (gradleJdk != null) {
+                pb.environment().put("JAVA_HOME", gradleJdk.toString());
+                log.accept("Gradle runs on " + gradleJdk + " (JAVA_HOME " + System.getenv("JAVA_HOME") + " is older than Java " + profile.javaMajor() + ")");
+            }
             gradle = pb.start();
             gradle.onExit().thenRun(onEnd);
             log.accept("started " + wrapper + " " + target.runTask() + " for " + profile);
@@ -105,6 +127,22 @@ final class GameLauncher {
     /** The SulfurFrame agent to start the game with (marks which process is ours). */
     void setAgentJar(Path jar) { agentJar = jar; }
 
+    private volatile List<String> extraJvmArgs = List.of();
+
+    /** More JVM arguments for the next launch (debugger). */
+    void setExtraJvmArgs(List<String> args) { extraJvmArgs = List.copyOf(args); }
+
+    static final String JVM_ARGS_SCRIPT = """
+            def sfJvm = gradle.startParameter.projectProperties['sfJvmArgs']
+            def sfRun = gradle.startParameter.projectProperties['sfRunTask']
+            if (sfJvm != null) allprojects {
+                def decoded = new String(java.util.Base64.decoder.decode(sfJvm), 'UTF-8').split('\\n') as List
+                tasks.withType(JavaExec).configureEach { t ->
+                    if ((sfRun ? t.name == sfRun : t.name ==~ /(?i).*runclient.*/)) t.jvmArgs(decoded)
+                }
+            }
+            """;
+
     private static Path tmp(String name) throws IOException {
         Path p = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", name);
         Files.createDirectories(p.getParent());
@@ -119,10 +157,11 @@ final class GameLauncher {
     /** Puts -javaagent:<decoded -PsfAgent> on runClient-like JavaExec tasks. */
     static final String AGENT_SCRIPT = """
             def sfAgent = gradle.startParameter.projectProperties['sfAgent']
+            def sfRun = gradle.startParameter.projectProperties['sfRunTask']
             if (sfAgent != null) allprojects {
                 def spec = new String(java.util.Base64.decoder.decode(sfAgent), 'UTF-8')
                 tasks.withType(JavaExec).configureEach { t ->
-                    if (t.name ==~ /(?i).*runclient.*/) t.jvmArgs('-javaagent:' + spec)
+                    if ((sfRun ? t.name == sfRun : t.name ==~ /(?i).*runclient.*/)) t.jvmArgs('-javaagent:' + spec)
                 }
             }
             """;
@@ -134,7 +173,7 @@ final class GameLauncher {
                 if (line.startsWith("* What went wrong")) { why = true; continue; }
                 if (line.startsWith("* Try")) why = false;
                 if (why && !line.isBlank()) log.accept("[gradle] " + line.strip());
-                else if (line.matches("> Task \\S*:?runClient.*") || line.contains("BUILD") || line.contains("error:"))
+                else if (line.matches("> Task \\S*:?run\\w*Client.*") || line.contains("BUILD") || line.contains("error:"))
                     log.accept("[gradle] " + line);
             }
         } catch (IOException ignored) { }
@@ -143,10 +182,11 @@ final class GameLauncher {
     /** Appends the decoded -PsfGameArgs (one argument per line) to runClient-like JavaExec tasks. */
     static final String ARGS_SCRIPT = """
             def sfArgs = gradle.startParameter.projectProperties['sfGameArgs']
+            def sfRun = gradle.startParameter.projectProperties['sfRunTask']
             if (sfArgs != null) allprojects {
                 def decoded = new String(java.util.Base64.decoder.decode(sfArgs), 'UTF-8').split('\\n') as List
                 tasks.withType(JavaExec).configureEach { t ->
-                    if (t.name ==~ /(?i).*runclient.*/) t.args(decoded)
+                    if ((sfRun ? t.name == sfRun : t.name ==~ /(?i).*runclient.*/)) t.args(decoded)
                 }
             }
             """;

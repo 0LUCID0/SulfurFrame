@@ -87,9 +87,9 @@ final class FastCompile {
             Path tmp = Path.of(cacheFile(t) + ".tmp");
             Files.deleteIfExists(tmp);
             String prefix = t.projectPath().equals(":") ? "" : t.projectPath() + ":";
-            var p = new ProcessBuilder(wrapper.toString(), "--init-script", init.toString(), prefix + "sfClasspath",
+            var p = GradleJava.apply(new ProcessBuilder(wrapper.toString(), "--init-script", init.toString(), prefix + "sfClasspath",
                     "-PsfOut=" + tmp, "--no-configuration-cache", "--console=plain", "-q")
-                    .directory(t.buildRoot().toFile()).redirectErrorStream(true).start();
+                    .directory(t.buildRoot().toFile()).redirectErrorStream(true), t).start();
             String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             if (p.waitFor() != 0 || !Files.exists(tmp)) {
                 log.accept("fast compile unavailable (Gradle could not list the class path); hotswap uses Gradle");

@@ -176,6 +176,8 @@ final class AutoTest {
         check("profile detected", p.profile != null && p.profile.isComplete(), String.valueOf(p.profile));
         long t0 = System.currentTimeMillis();
         // -Dsulfurframe.autotest.world=<save folder>: start in that world (the restart test goes back into it)
+        if (Boolean.getBoolean("sulfurframe.autotest.worlds")) onEdt(() -> p.shareWorlds.setSelected(true));   // shared instance from the first launch
+        if (Boolean.getBoolean("sulfurframe.autotest.debug")) onEdt(() -> p.debug.setSelected(true));
         String world = System.getProperty("sulfurframe.autotest.world");
         if (world != null) onEdt(() -> p.runClient(java.util.List.of("--quickPlaySingleplayer", world)));
         else onEdt(p::runClient);
@@ -211,6 +213,8 @@ final class AutoTest {
         if (probe != null) {
             try { hotswapFlow(p, Path.of(probe)); } catch (Exception ex) { check("hotswap flow", false, ex.toString()); }
             try { restartFlow(p, Path.of(probe), world); } catch (Exception ex) { check("restart flow", false, ex.toString()); }
+            if (Boolean.getBoolean("sulfurframe.autotest.worlds"))
+                try { worldsFlow(p, Path.of(probe)); } catch (Exception ex) { check("worlds flow", false, ex.toString()); }
         }
         lines.add("game pid " + e.gamePid() + " left running for inspection");
     }
@@ -370,6 +374,138 @@ final class AutoTest {
                             && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
             Files.writeString(lang, l);
         }
+    }
+
+    /** Wait until a game other than {@code before} is embedded and its log says it joined a world. */
+    private static boolean waitForNewGame(SulfurPanel p, long before, Path gameLog, int seconds) {
+        long t0 = System.currentTimeMillis();
+        var e = p.embedder;
+        while (System.currentTimeMillis() - t0 < seconds * 1000L) {
+            if (e.attached() && e.gamePid() != before && NativeWindows.parentOf(e.gameHwnd()) == e.canvasNativeHwnd()) break;
+            sleep(500);
+        }
+        if (!(e.attached() && e.gamePid() != before)) return false;
+        for (int i = 0; i < seconds * 2; i++) {   // the new game writes a fresh latest.log
+            try { if (Files.exists(gameLog) && Files.readString(gameLog).contains("joined the game")) return true; } catch (Exception ignored) { }
+            sleep(500);
+        }
+        return false;
+    }
+
+    /**
+     * Shared instance, problems/translations, snapshot + restore, temporary world, crash handling.
+     * Runs with -Dsulfurframe.autotest.worlds=true and -Dsulfurframe.home=<scratch dir> (keeps test worlds out of ~).
+     */
+    private static void worldsFlow(SulfurPanel p, Path probe) throws Exception {
+        var t = p.selectedTarget();
+        Path run = SharedInstance.runDir(t), gameLog = run.resolve("logs/latest.log");
+        String mc = t.profile().minecraftVersion();
+        // shared instance (enabled before Run client by runClientFlow)
+        Path shared = SharedInstance.forVersion(mc).resolve("saves");
+        check("shared instance: run/saves linked into " + SharedInstance.root(), SharedInstance.linksTo(run.resolve("saves"), shared)
+                && Files.isDirectory(shared.resolve("SFWorld")), shared.toString());
+
+        // problems the game reported (the lucid mod has a block without models) and translations
+        var g = p.gameLogPanel;
+        for (int i = 0; i < 20 && g.problemCount() == 0; i++) sleep(500);
+        check("problems: missing model reported by the game", g.problemList().stream().anyMatch(x -> x.kind().contains("model")), String.valueOf(g.problemList()));
+        int missing = g.missingTranslations().size();
+        int added = g.addMissingTranslations();
+        check("translations: missing en_us keys found and added", missing > 0 && added == missing && g.missingTranslations().isEmpty(),
+                missing + " missing, " + added + " added");
+
+        // snapshot, then restore it (quick restart in between)
+        p.snapshot();
+        Path snap = p.lastSnapshot;
+        check("snapshot of the open world (after save-all flush)", snap != null && Files.exists(snap.resolve("level.dat")), String.valueOf(snap));
+        long before = p.embedder.gamePid();
+        if (snap != null) {
+            p.restoreSnapshot("SFWorld", snap);
+            boolean back = waitForNewGame(p, before, gameLog, 300);
+            boolean kept = WorldSnapshots.list(mc, "SFWorld").stream().anyMatch(s -> s.getFileName().toString().endsWith("before-restore"));
+            check("restore: game restarted into the restored world, replaced world kept as a snapshot", back && kept, "back " + back + ", kept " + kept);
+        }
+
+        // temporary world: in, then out again; it must be gone afterwards
+        before = p.embedder.gamePid();
+        p.testWorld(true);
+        String temp = p.lastTestWorld;
+        boolean inTemp = temp != null && waitForNewGame(p, before, gameLog, 300);
+        check("temporary test world created and joined", inTemp, String.valueOf(temp));
+        before = p.embedder.gamePid();
+        p.restart("SFWorld", null);
+        boolean out = waitForNewGame(p, before, gameLog, 300);
+        Path tempDir = shared.resolve(String.valueOf(temp));
+        for (int i = 0; i < 20 && Files.exists(tempDir); i++) sleep(500);
+        check("temporary world removed after its game exited", out && !Files.exists(tempDir), tempDir + " exists " + Files.exists(tempDir));
+
+        // what the player looks at (block or entity, or nothing in reach)
+        boolean looked = p.inspect();
+        var look = p.lastLook;
+        check("inspect: the game says what the player looks at", looked && look.containsKey("kind") && !look.containsKey("error"), String.valueOf(look));
+
+        // mouse look while embedded: the grab made after the focusing click must reach GLFW (agent GlfwCursorFix)
+        mouseLookCheck(p, gameLog);
+
+        // debugger attached by Run client (-Dsulfurframe.autotest.debug=true turns the checkbox on before launching)
+        if (Boolean.getBoolean("sulfurframe.autotest.debug") && project != null) {
+            var sessions = com.intellij.xdebugger.XDebuggerManager.getInstance(project).getDebugSessions();
+            boolean attached = java.util.Arrays.stream(sessions).anyMatch(s -> s.getSessionName().equals(DebugAttach.NAME));
+            check("debugger attached to the game", attached, sessions.length + " debug session(s)");
+        }
+
+        // crash: a tick handler that throws -> notification with the cause and our own frame
+        String src = Files.readString(probe);
+        Files.writeString(probe, src.replace("return \"v1\";", "if (ticks > 0) throw new IllegalStateException(\"SulfurFrame crash test\");\n        return \"v1\";"));
+        sleep(1500);
+        swapRetry(p, t);
+        for (int i = 0; i < 60 && g.lastCrash == null; i++) sleep(500);
+        check("crash: report read, cause and own code frame found", g.lastCrash != null && p.logText().contains("game crashed:") && p.logText().contains("at kr.kro.lucid.SfHotswapProbe"),
+                String.valueOf(g.lastCrash));
+        Files.writeString(probe, src);
+        before = p.embedder.gamePid();
+        p.restart("SFWorld", null);
+        waitForNewGame(p, before, gameLog, 300);
+    }
+
+    /** Focus the game, move the real mouse over it, and see the player turn (yaw from the agent's look report). */
+    private static void mouseLookCheck(SulfurPanel p, Path gameLog) throws Exception {
+        var e = p.embedder;
+        long game = e.gameHwnd();
+        onEdt(() -> javax.swing.SwingUtilities.getWindowAncestor(p).toFront());
+        sleep(500);
+        e.focusGame();
+        sleep(1500);
+        int[] r = NativeWindows.screenRect(game);
+        var robot = new Robot();
+        // physical -> AWT coordinates (Robot uses the default transform of the main screen)
+        double s = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getDefaultTransform().getScaleX();
+        int cx = (int) ((r[0] + r[2] / 2) / s), cy = (int) ((r[1] + r[3] / 2) / s);
+        if (NativeWindows.keyboardFocus() != game) {
+            // Windows may refuse to bring the IDE forward on its own; a real click is what a user does anyway.
+            // Left edge, mid height: no button of the pause menu there (they are centered).
+            int px = (int) (r[0] + r[2] * 0.04), py = r[1] + r[3] / 2;
+            if (NativeWindows.windowAt(px, py) != game) { check("mouse look in the embedded game", false, "game not under the click point (covered?), no click sent"); return; }
+            robot.mouseMove((int) ((r[0] + r[2] * 0.04) / s), cy);
+            robot.mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK); robot.mouseRelease(java.awt.event.InputEvent.BUTTON1_DOWN_MASK);
+            sleep(1500);
+        }
+        if (NativeWindows.keyboardFocus() != game) { check("mouse look in the embedded game", false, "game does not have keyboard focus"); return; }
+        p.inspect();
+        if (!"none".equals(p.lastLook.getOrDefault("screen", "none"))) {   // pause menu (opened on focus loss): close it
+            robot.keyPress(java.awt.event.KeyEvent.VK_ESCAPE); robot.keyRelease(java.awt.event.KeyEvent.VK_ESCAPE);
+            sleep(1000);
+            p.inspect();
+        }
+        String yaw0 = p.lastLook.get("yaw");
+        robot.mouseMove(cx, cy);
+        // GLFW re-centers a grabbed cursor every frame, so each move to the right is a fresh delta
+        for (int i = 0; i < 20; i++) { robot.mouseMove(cx + 40, cy); sleep(60); }
+        sleep(500);
+        p.inspect();
+        String yaw1 = p.lastLook.get("yaw");
+        check("mouse look in the embedded game (player turns)", yaw0 != null && yaw1 != null && !yaw0.equals(yaw1),
+                "yaw " + yaw0 + " -> " + yaw1 + (waitForLog(gameLog, "mouse grabbed while embedded", 1) ? " (grab applied by the agent)" : ""));
     }
 
     /** Swap, retrying while another swap (save-triggered) is busy; gives up after ~10 s (a compile error would loop). */

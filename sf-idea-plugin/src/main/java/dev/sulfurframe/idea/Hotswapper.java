@@ -199,7 +199,7 @@ final class Hotswapper {
         var cmd = new ArrayList<>(List.of(wrapper.toString(), prefix + "classes"));
         if (Files.isDirectory(t.dir().resolve("src/client"))) cmd.add(prefix + "clientClasses");
         cmd.addAll(List.of("--console=plain", "-q"));
-        var p = new ProcessBuilder(cmd).directory(t.buildRoot().toFile()).redirectErrorStream(true).start();
+        var p = GradleJava.apply(new ProcessBuilder(cmd).directory(t.buildRoot().toFile()).redirectErrorStream(true), t).start();
         var out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         if (p.waitFor() != 0) {
             log.accept("hotswap: compile failed");

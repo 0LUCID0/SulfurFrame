@@ -16,11 +16,14 @@ import java.util.function.Consumer;
 final class TempWorlds {
     static final String PREFIX = "[Temp] ";
 
-    static Path listFile() { return Path.of(System.getProperty("user.home"), ".sulfurframe", "temp-worlds.txt"); }
+    static Path listFile() { return SharedInstance.home().resolve("temp-worlds.txt"); }
 
     private static final Set<String> pinned = Collections.synchronizedSet(new HashSet<>());
 
     /** A world about to be reopened (restart): skipped by sweeps until the new game has it. */
+    /** The new game has started: the old one's exit sweep is over, let sweeps see the world again. */
+    static void unpinAll() { pinned.clear(); }
+
     static void pin(String worldName) { if (worldName != null && !worldName.isEmpty()) { pinned.add(worldName); new Timer(true).schedule(new TimerTask() { public void run() { pinned.remove(worldName); } }, 180_000); } }
 
     static synchronized void register(Path worldDir) throws IOException {

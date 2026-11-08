@@ -24,6 +24,8 @@ public final class NativeWindows {
     public static boolean hasCaption(long w) { return !X && (Win32.getLongPtr(w, Win32.GWL_STYLE) & Win32.WS_CAPTION) == Win32.WS_CAPTION; }
     /** Window with keyboard focus (Windows: in the foreground input context), 0 if none. */
     public static long keyboardFocus() { return X ? X11.inputFocus() : Win32.foregroundFocus(); }
+    /** Window under a physical-pixel screen point (Windows; 0 on X11). */
+    public static long windowAt(int x, int y) { return X ? 0 : Win32.windowFromPoint(x, y); }
     public static boolean isChild(long w) { return X ? X11.parentOf(w) != X11.root() : (Win32.getLongPtr(w, Win32.GWL_STYLE) & Win32.WS_CHILD) != 0; }
     public static String clientSize(long w) {
         if (X) { int[] r = X11.screenRect(w); return r == null ? "?" : r[2] + "x" + r[3]; }

@@ -51,6 +51,7 @@ final class SulfurPanel extends JPanel {
 
         log.setEditable(false);
         log.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+        targets.setRenderer(new MarqueeRenderer<>(targets));   // long client names scroll instead of being cut
         targets.addActionListener(e -> onTargetSelected());
         var buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
         buttons.add(button("Run client", this::runClient));
@@ -77,18 +78,26 @@ final class SulfurPanel extends JPanel {
         var tmp = button("Temp world", () -> testWorldAsync(true));
         tmp.setToolTipText("A throwaway test world: deleted automatically once the game exits");
         buttons.add(tmp);
+        var look = button("Inspect", this::inspectAsync);
+        look.setToolTipText("What the player is looking at: block state, block entity / entity and its NBT, and its class");
+        buttons.add(look);
         swapOnSave.setToolTipText("Compile and reload changed classes into the running game whenever a source file is saved");
         buttons.add(swapOnSave);
         shareWorlds.setToolTipText("Worlds, options and resource packs shared by all projects of the same Minecraft version ("
                 + SharedInstance.root() + "). Existing worlds of a project move there when it is first launched; nothing is deleted.");
         shareWorlds.addActionListener(e -> com.intellij.ide.util.PropertiesComponent.getInstance().setValue("sulfurframe.sharedInstance", shareWorlds.isSelected(), false));
         buttons.add(shareWorlds);
+        debug.setToolTipText("Run client with a debug port and attach the IDE debugger (breakpoints; the game pauses while stopped)");
+        debug.addActionListener(e -> com.intellij.ide.util.PropertiesComponent.getInstance().setValue("sulfurframe.debug", debug.isSelected(), false));
+        buttons.add(debug);
         var north = new JPanel(new BorderLayout());
         north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);
         add(north, BorderLayout.NORTH);
         add(embedder.component(), BorderLayout.CENTER);
-        add(new JScrollPane(log), BorderLayout.SOUTH);
+        bottom.addTab("SulfurFrame", new JScrollPane(log));
+        bottom.setPreferredSize(new Dimension(400, 220));
+        add(bottom, BorderLayout.SOUTH);
         scan();
         Thread.ofPlatform().daemon().name("sf-temp-sweep").start(() -> TempWorlds.sweep(this::log));   // left over from a previous IDE session
     }
@@ -127,13 +136,14 @@ final class SulfurPanel extends JPanel {
         t.profile().evidence().forEach(e -> log("  " + e));
     }
 
-    private static String key(Workspace.Target t) { return t.buildRoot() + "|" + t.projectPath(); }
+    private static String key(Workspace.Target t) { return t.buildRoot() + "|" + t.projectPath() + (t.task().equals("runClient") ? "" : "|" + t.task()); }
 
     void runClient() { runClient(List.of()); }
 
     void runClient(List<String> gameArgs) {
         var t = (Workspace.Target) targets.getSelectedItem();
         if (t == null || !t.profile().isComplete()) { log("pick a client to run (none detected)"); return; }
+        if (launcher.running()) { log("the game is already running (or still starting): use Restart to start it again"); return; }
         if (!t.hasWrapper()) log("note: " + t.where() + " has no Gradle wrapper of its own; using the nearest parent's");
         launch(t, gameArgs);
     }
@@ -147,8 +157,36 @@ final class SulfurPanel extends JPanel {
             try { SharedInstance.apply(run, mc, t.dir().getFileName().toString(), this::log); }
             catch (Exception e) { log("shared instance not set up: " + e); }
         }
-        launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> { embedder.attach(pid); hotswapper.snapshot(t); }),
+        if (gameLogPanel != null) gameLogPanel.follow(t);
+        int port = 0;
+        if (debug.isSelected() && project != null) {
+            try { port = DebugAttach.freePort(); } catch (java.io.IOException e) { log("no free port for the debugger: " + e); }
+        }
+        launcher.setExtraJvmArgs(port > 0 ? List.of(DebugAttach.jdwpArg(port)) : List.of());
+        final int debugPort = port;
+        launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> {
+                    embedder.attach(pid); hotswapper.snapshot(t);
+                    TempWorlds.unpinAll();
+                    if (debugPort > 0) DebugAttach.attach(project, debugPort, this::log);
+                }),
                 () -> { if (share) SharedInstance.collect(run, mc); TempWorlds.sweep(this::log); });
+    }
+
+    private final JTabbedPane bottom = new JTabbedPane();
+    /** Game log, problems, crashes (needs the IDE project for source links); null until {@link #attachProject}. */
+    GameLogPanel gameLogPanel;
+
+    private com.intellij.openapi.project.Project project;
+
+    /** Start the game with a JDWP agent and attach the IDE debugger once it is up. */
+    final JCheckBox debug = new JCheckBox("Debug", com.intellij.ide.util.PropertiesComponent.getInstance().getBoolean("sulfurframe.debug", false));
+
+    void attachProject(com.intellij.openapi.project.Project project) {
+        this.project = project;
+        gameLogPanel = new GameLogPanel(project, this::selectedTarget, this::restartAsync, this::log);
+        bottom.addTab("Game log", gameLogPanel);
+        var t = selectedTarget();
+        if (t != null) gameLogPanel.follow(t);
     }
 
     /** One game folder per Minecraft version for all projects (worlds, options, resource packs). */
@@ -302,6 +340,58 @@ final class SulfurPanel extends JPanel {
 
     /** Name of the last test world created (self-test). */
     volatile String lastTestWorld;
+
+    // ------------------------------------------------------------------ what the player looks at
+
+    /** Last answer of the game (key=value), for the self-test. */
+    volatile java.util.Map<String, String> lastLook = java.util.Map.of();
+
+    void inspectAsync() { Thread.ofPlatform().daemon().name("sf-inspect").start(() -> { if (inspect()) SwingUtilities.invokeLater(this::showLook); }); }
+
+    /** Ask the agent what the crosshair is on (block or entity, classes, NBT). Blocking. */
+    boolean inspect() {
+        long pid = embedder.gamePid();
+        if (pid <= 0) { log("inspect: no game"); return false; }
+        try {
+            Path f = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "look-" + pid + ".txt");
+            Files.deleteIfExists(f);
+            Hotswapper.loadAgent(pid, agentJar, "codingFps=15,look=" + f);
+            for (int i = 0; i < 50 && !Files.exists(f); i++) Thread.sleep(100);
+            if (!Files.exists(f)) { log("inspect: no answer from the game"); return false; }
+            var m = new java.util.LinkedHashMap<String, String>();
+            for (String l : Files.readAllLines(f, StandardCharsets.UTF_8)) { int eq = l.indexOf('='); if (eq > 0) m.put(l.substring(0, eq), l.substring(eq + 1)); }
+            lastLook = m;
+            log("looking at: " + m.getOrDefault("state", m.getOrDefault("entity", m.getOrDefault("kind", "?"))));
+            return true;
+        } catch (Exception e) { log("inspect failed: " + e); return false; }
+    }
+
+    private void showLook() {
+        var m = lastLook;
+        var text = new StringBuilder();
+        for (var e : m.entrySet()) {
+            String v = e.getValue();
+            text.append(e.getKey()).append(": ").append(v.length() > 400 ? v.substring(0, 400) + "…" : v).append('\n');
+        }
+        var classes = m.entrySet().stream().filter(e -> e.getKey().endsWith("Class")).map(java.util.Map.Entry::getValue).distinct().toArray(String[]::new);
+        var area = new JTextArea(text.toString(), Math.min(14, m.size() + 2), 60);
+        area.setEditable(false); area.setLineWrap(true);
+        Object[] options = java.util.Arrays.copyOf(classes, classes.length + 1);
+        options[classes.length] = "Close";
+        int pick = JOptionPane.showOptionDialog(this, new JScrollPane(area), "Looking at", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, options, "Close");
+        if (pick >= 0 && pick < classes.length) openClass(classes[pick]);
+    }
+
+    /** Open a class by name: the project's own sources, or the game's (decompiled/attached) in the dev environment. */
+    void openClass(String fqn) {
+        if (project == null) return;
+        com.intellij.openapi.application.ReadAction.nonBlocking(() -> com.intellij.psi.JavaPsiFacade.getInstance(project)
+                        .findClass(fqn.replace('$', '.'), com.intellij.psi.search.GlobalSearchScope.allScope(project)))
+                .finishOnUiThread(com.intellij.openapi.application.ModalityState.defaultModalityState(), c -> {
+                    if (c != null) c.navigate(true); else log("class not found in the project: " + fqn);
+                })
+                .submit(com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService());
+    }
 
     void testWorldAsync(boolean temporary) { Thread.ofPlatform().daemon().name("sf-testworld").start(() -> testWorld(temporary)); }
 

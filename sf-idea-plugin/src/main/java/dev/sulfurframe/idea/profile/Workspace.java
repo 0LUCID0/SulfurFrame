@@ -24,10 +24,12 @@ import java.util.stream.Stream;
  */
 public final class Workspace {
     /** @param where location shown to the user: build folder relative to the opened folder, plus the project path */
-    public record Target(Path buildRoot, String projectPath, Path dir, ProjectProfile profile, String where) {
-        public String runTask() { return projectPath.equals(":") ? "runClient" : projectPath + ":runClient"; }
+    /** @param task the Gradle task that starts this client: runClient, or a Loom run config of its own (runAllModsClient) */
+    public record Target(Path buildRoot, String projectPath, Path dir, ProjectProfile profile, String where, String task) {
+        public Target(Path buildRoot, String projectPath, Path dir, ProjectProfile profile, String where) { this(buildRoot, projectPath, dir, profile, where, "runClient"); }
+        public String runTask() { return projectPath.equals(":") ? task : projectPath + ":" + task; }
         public boolean hasWrapper() { return Files.exists(buildRoot.resolve("gradlew.bat")) || Files.exists(buildRoot.resolve("gradlew")); }
-        public String label() { return profile + "  —  " + where + (hasWrapper() ? "" : "  (no gradlew)"); }
+        public String label() { return profile + "  —  " + where + (task.equals("runClient") ? "" : "  [" + task + "]") + (hasWrapper() ? "" : "  (no gradlew)"); }
         @Override public String toString() { return label(); }
     }
 
@@ -47,7 +49,7 @@ public final class Workspace {
             for (Target t : targetsOfBuild(root)) {
                 String rel = opened.relativize(root).toString().replace('\\', '/');
                 String where = (rel.isEmpty() ? "." : rel) + (t.projectPath().equals(":") ? "" : " " + t.projectPath());
-                out.add(new Target(t.buildRoot(), t.projectPath(), t.dir(), t.profile(), where));
+                out.add(new Target(t.buildRoot(), t.projectPath(), t.dir(), t.profile(), where, t.task()));
             }
         }
         // newest Minecraft first, then loader
@@ -98,14 +100,75 @@ public final class Workspace {
         var rootProfile = ProjectProfile.detect(root);
         if (rootProfile.loader() != Loader.UNKNOWN && rootProfile.loader() != Loader.VANILLA)
             out.add(new Target(root, ":", root, rootProfile, ""));
+        if (rootProfile.loader() != Loader.UNKNOWN && rootProfile.loader() != Loader.VANILLA)
+            for (String task : extraClientRuns(root)) out.add(new Target(root, ":", root, rootProfile, "", task));
         for (String path : includes(settings)) {
             Path dir = root.resolve(path.replaceFirst("^:", "").replace(':', '/'));
             if (!Files.exists(dir.resolve("build.gradle")) && !Files.exists(dir.resolve("build.gradle.kts"))) continue;
             var p = ProjectProfile.detect(dir, dir, root);
             if (p.loader() == Loader.UNKNOWN || p.loader() == Loader.VANILLA) continue;
             out.add(new Target(root, path.startsWith(":") ? path : ":" + path, dir, p, ""));
+            for (String task : extraClientRuns(dir)) out.add(new Target(root, path.startsWith(":") ? path : ":" + path, dir, p, "", task));
         }
         return out;
+    }
+
+    /**
+     * Client run configs a build script adds besides Loom's own "client": each becomes a task "run" + Name.
+     *   runConfigs.create("allModsClient") { inherit(runConfigs.getByName("client")) ... }   (Kotlin DSL)
+     *   loom { runs { allModsClient { client() } } }   /   runs { create("x") { client() } }  (Groovy / Kotlin)
+     * A config counts as a client when its name says so or its block calls client() / inherits "client".
+     */
+    static List<String> extraClientRuns(Path dir) throws IOException {
+        String s = ProjectProfile.stripComments(read(dir.resolve("build.gradle")) + read(dir.resolve("build.gradle.kts")));
+        var names = new LinkedHashSet<String>();
+        Matcher m = Pattern.compile("\\b(?:runConfigs|runs)\\s*(?:\\.\\s*(?:create|register|named)\\s*\\(\\s*[\"'](\\w+)[\"']|\\{)").matcher(s);
+        while (m.find()) {
+            if (m.group(1) != null) { consider(names, m.group(1), block(s, openAfter(s, m.end()))); continue; }
+            String body = block(s, m.end() - 1);
+            // inside runs { }: create("x") { } / register("x") { } / groovy  x { }
+            Matcher e = Pattern.compile("(?:(?:create|register|named)\\s*\\(\\s*[\"'](\\w+)[\"']\\s*\\)|(?<![\\w.])(\\w+))\\s*\\{").matcher(body);
+            int from = 0;
+            while (e.find(from)) {
+                String name = e.group(1) != null ? e.group(1) : e.group(2);
+                String inner = block(body, e.end() - 1);
+                consider(names, name, inner);
+                from = Math.max(e.end(), e.end() - 1 + inner.length() + 1);
+            }
+        }
+        names.remove("client");
+        names.remove("server");
+        var out = new ArrayList<String>();
+        for (String n : names) out.add("run" + Character.toUpperCase(n.charAt(0)) + n.substring(1));
+        return out;
+    }
+
+    private static void consider(Set<String> names, String name, String body) {
+        if (Set.of("configureEach", "all", "matching", "withType", "named", "create", "register", "getByName").contains(name)) return;
+        String lower = name.toLowerCase(Locale.ROOT);
+        // datagen / gametest configs inherit the client too, but they are not a game to play
+        boolean client = lower.contains("client") || !lower.matches(".*(data|gen|test).*")
+                && (body.matches("(?s).*\\bclient\\s*\\(\\s*\\).*") || body.matches("(?s).*inherit\\s*\\(.*[\"']client[\"'].*"));
+        if (client) names.add(name);
+    }
+
+    /** Index of the "{" that follows pos after blanks and a closing ")" (create("x") { ... }), or -1. */
+    private static int openAfter(String s, int pos) {
+        int i = pos;
+        while (i < s.length() && (Character.isWhitespace(s.charAt(i)) || s.charAt(i) == ')')) i++;
+        return i < s.length() && s.charAt(i) == '{' ? i : -1;
+    }
+
+    /** The text between the brace at {@code open} and its match ("" when open is -1). */
+    private static String block(String s, int open) {
+        if (open < 0) return "";
+        int depth = 0;
+        for (int i = open; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return s.substring(open + 1, i);
+        }
+        return s.substring(open + 1);
     }
 
     /** include("a", "b:c"), include 'a', ':b', includes listed one per call or comma-separated. */

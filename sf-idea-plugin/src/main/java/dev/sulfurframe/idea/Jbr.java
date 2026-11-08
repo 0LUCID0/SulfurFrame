@@ -52,11 +52,30 @@ final class Jbr {
     /** Groovy init script: runClient-like JavaExec tasks run on the JBR given as -PsfJbr=..., with enhanced redefinition. */
     static final String INIT_SCRIPT = """
             def sfJbr = gradle.startParameter.projectProperties['sfJbr']
-            if (sfJbr != null) allprojects {
+            // set when the JBR is a full JDK (has javac): then Gradle can resolve it as a toolchain
+            def sfJbrMajor = gradle.startParameter.projectProperties['sfJbrMajor']
+            def sfRun = gradle.startParameter.projectProperties['sfRunTask']
+            // afterEvaluate: registered after the build script's own configureEach blocks, so ours runs last.
+            if (sfJbr != null) allprojects { afterEvaluate {
                 tasks.withType(JavaExec).configureEach { t ->
-                    if (t.name ==~ /(?i).*runclient.*/) {
-                        try { t.javaLauncher.set((org.gradle.jvm.toolchain.JavaLauncher) null) } catch (Throwable ignored) { }
-                        t.executable = sfJbr
+                    if ((sfRun ? t.name == sfRun : t.name ==~ /(?i).*runclient.*/)) {
+                        def svc = sfJbrMajor ? project.extensions.findByType(org.gradle.jvm.toolchain.JavaToolchainService) : null
+                        if (svc != null) {
+                            // Builds that pick the game's Java with a toolchain (javaLauncher.set(launcherFor { 21 })) make
+                            // Gradle reject a different `executable` and need javaLauncher to have a value: so the
+                            // launcher itself becomes a JBR toolchain (found through org.gradle.java.installations.paths).
+                            t.javaLauncher.set(svc.launcherFor { spec ->
+                                spec.languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(sfJbrMajor as int))
+                                spec.vendor.set(org.gradle.jvm.toolchain.JvmVendorSpec.JETBRAINS)
+                            })
+                        } else {
+                            // no toolchain support (or a JBR without javac): plain executable, launcher cleared
+                            try {
+                                t.javaLauncher.convention((org.gradle.jvm.toolchain.JavaLauncher) null)
+                                t.javaLauncher.set((org.gradle.jvm.toolchain.JavaLauncher) null)
+                            } catch (Throwable ignored) { }
+                            t.executable = sfJbr
+                        }
                         t.jvmArgs('-XX:+AllowEnhancedClassRedefinition')
                         // Mixin's own hotswap agent: re-applies a changed mixin to its targets when the mixin is redefined
                         t.doFirst {
@@ -65,7 +84,7 @@ final class Jbr {
                         }
                     }
                 }
-            }
+            } }
             """;
 
     private Jbr() {}

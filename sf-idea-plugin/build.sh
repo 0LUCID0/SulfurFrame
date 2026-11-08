@@ -10,7 +10,7 @@ JDK="${JDK:-$HOME/.jdks/temurin-25.0.4.1/bin}"   # any JDK 25 (JBR has no javac/
 AGENT="../poc/agent/sf-agent.jar"
 [ -f "$AGENT" ] || (cd ../poc/agent && bash build.sh)
 rm -rf build && mkdir -p build/classes build/SulfurFrame/lib
-"$JDK/javac" -Xlint:-restricted -nowarn --release 25 -cp "$(cygpath -w "$IDEA_HOME/lib")/*" -d build/classes $(find src/main/java -name '*.java')
+"$JDK/javac" -Xlint:-restricted -nowarn --release 25 -cp "$(cygpath -w "$IDEA_HOME/lib")/*;$(cygpath -w "$IDEA_HOME/plugins/java/lib")/*;$(cygpath -w "$IDEA_HOME/plugins/java/lib/modules")/*" -d build/classes $(find src/main/java -name '*.java')
 cp -r src/main/resources/* build/classes/
 cp "$AGENT" build/classes/sf-agent.jar
 "$JDK/jar" --create --file build/SulfurFrame/lib/sulfurframe.jar -C build/classes .

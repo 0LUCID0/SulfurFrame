@@ -23,7 +23,13 @@ final class SharedInstance {
     static final List<String> FOLDERS = List.of("saves", "resourcepacks", "screenshots", "shaderpacks");
     static final List<String> FILES = List.of("options.txt", "servers.dat", "hotbar.nbt");
 
-    static Path root() { return Path.of(System.getProperty("user.home"), ".sulfurframe", "instances"); }
+    /** ~/.sulfurframe, or -Dsulfurframe.home (self-tests keep their worlds out of the real one). */
+    static Path home() {
+        String h = System.getProperty("sulfurframe.home");
+        return h != null ? Path.of(h) : Path.of(System.getProperty("user.home"), ".sulfurframe");
+    }
+
+    static Path root() { return home().resolve("instances"); }
 
     static Path forVersion(String mc) { return root().resolve(mc == null || mc.isBlank() ? "unknown" : mc); }
 

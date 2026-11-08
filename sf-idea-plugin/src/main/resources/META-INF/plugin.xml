@@ -10,6 +10,7 @@
     ]]></description>
     <idea-version since-build="262"/>
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.java</depends>
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="SulfurFrame" anchor="right" factoryClass="dev.sulfurframe.idea.SulfurToolWindowFactory"/>
         <postStartupActivity implementation="dev.sulfurframe.idea.AutoTestStartup"/>

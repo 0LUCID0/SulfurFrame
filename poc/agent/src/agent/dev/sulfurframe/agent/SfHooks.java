@@ -85,6 +85,7 @@ public final class SfHooks {
     public static boolean beforeGlfwSwap(long window) {
         glfwWindow = window;
         Lifeboat.glfw(window);
+        GlfwCursorFix.check(window);
         if (X11Lifeboat.windowGone) return true;
         pace();
         return false;
