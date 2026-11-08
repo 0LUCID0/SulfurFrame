@@ -50,7 +50,7 @@ final class SulfurPanel extends JPanel {
         launcher.setAgentJar(agentJar);
 
         log.setEditable(false);
-        log.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+        log.setFont(consoleFont());   // same font as the Game log console next to it
         targets.setRenderer(new MarqueeRenderer<>(targets));   // long client names scroll instead of being cut
         targets.addActionListener(e -> onTargetSelected());
         var buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
@@ -95,7 +95,15 @@ final class SulfurPanel extends JPanel {
         north.add(buttons, BorderLayout.CENTER);
         add(north, BorderLayout.NORTH);
         add(embedder.component(), BorderLayout.CENTER);
-        bottom.addTab("SulfurFrame", new JScrollPane(log));
+        // same layout as the Game log and Problems tabs: a button row on top, the text below
+        var logTop = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        var clearLog = new JButton("Clear");
+        clearLog.addActionListener(e -> log.setText(""));
+        logTop.add(clearLog);
+        var logTab = new JPanel(new BorderLayout());
+        logTab.add(logTop, BorderLayout.NORTH);
+        logTab.add(new JScrollPane(log), BorderLayout.CENTER);
+        bottom.addTab("SulfurFrame", logTab);
         bottom.setPreferredSize(new Dimension(400, 220));
         add(bottom, BorderLayout.SOUTH);
         scan();
@@ -181,10 +189,21 @@ final class SulfurPanel extends JPanel {
     /** Start the game with a JDWP agent and attach the IDE debugger once it is up. */
     final JCheckBox debug = new JCheckBox("Debug", com.intellij.ide.util.PropertiesComponent.getInstance().getBoolean("sulfurframe.debug", false));
 
+    /** The IDE console font (Settings | Editor | Color Scheme | Console Font), what the Game log console uses. */
+    private static Font consoleFont() {
+        try {
+            var scheme = com.intellij.openapi.editor.colors.EditorColorsManager.getInstance().getGlobalScheme();
+            return new Font(scheme.getConsoleFontName(), Font.PLAIN, scheme.getConsoleFontSize());
+        } catch (Throwable t) {
+            return new Font(Font.MONOSPACED, Font.PLAIN, 12);
+        }
+    }
+
     void attachProject(com.intellij.openapi.project.Project project) {
         this.project = project;
         gameLogPanel = new GameLogPanel(project, this::selectedTarget, this::restartAsync, this::log);
-        bottom.addTab("Game log", gameLogPanel);
+        bottom.addTab("Game log", gameLogPanel.logTab);
+        bottom.addTab("Problems", gameLogPanel.problemsTab);
         var t = selectedTarget();
         if (t != null) gameLogPanel.follow(t);
     }

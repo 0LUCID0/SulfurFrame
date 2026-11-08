@@ -31,7 +31,9 @@ import java.util.regex.Pattern;
  *   Crash     "Game crashed! Crash report saved to: ..." -> a notification with the cause, the first line of the
  *             project's own code in the stack (go there), the report, and a restart
  */
-final class GameLogPanel extends JPanel {
+final class GameLogPanel {
+    /** The two tabs, shown next to the SulfurFrame log in the tool window (one tab row, same layout as that log). */
+    final JComponent logTab, problemsTab;
     private final Project project;
     private final Supplier<Workspace.Target> target;
     private final Runnable restart;
@@ -50,7 +52,6 @@ final class GameLogPanel extends JPanel {
     volatile String lastCrash;
 
     GameLogPanel(Project project, Supplier<Workspace.Target> target, Runnable restart, Consumer<String> log) {
-        super(new BorderLayout());
         this.project = project; this.target = target; this.restart = restart; this.log = log;
         var builder = TextConsoleBuilderFactory.getInstance().createBuilder(project);
         builder.filters(ExceptionFilters.getFilters(GlobalSearchScope.allScope(project)));   // "at a.b.C.m(C.java:12)" -> link
@@ -61,9 +62,10 @@ final class GameLogPanel extends JPanel {
         var clear = new JButton("Clear");
         clear.addActionListener(e -> console.clear());
         top.add(clear);
-        var logTab = new JPanel(new BorderLayout());
-        logTab.add(top, BorderLayout.NORTH);
-        logTab.add(console.getComponent(), BorderLayout.CENTER);
+        var lt = new JPanel(new BorderLayout());
+        lt.add(top, BorderLayout.NORTH);
+        lt.add(console.getComponent(), BorderLayout.CENTER);
+        logTab = lt;
 
         var list = new JList<>(problems);
         list.addMouseListener(new MouseAdapter() {
@@ -75,14 +77,10 @@ final class GameLogPanel extends JPanel {
         var add = new JButton("Add missing translations");
         add.addActionListener(e -> Thread.ofPlatform().daemon().start(this::addMissingTranslations));
         probTop.add(scan); probTop.add(add);
-        var probTab = new JPanel(new BorderLayout());
-        probTab.add(probTop, BorderLayout.NORTH);
-        probTab.add(new JScrollPane(list), BorderLayout.CENTER);
-
-        var tabs = new JTabbedPane();
-        tabs.addTab("Game log", logTab);
-        tabs.addTab("Problems", probTab);
-        add(tabs, BorderLayout.CENTER);
+        var pt = new JPanel(new BorderLayout());
+        pt.add(probTop, BorderLayout.NORTH);
+        pt.add(new JScrollPane(list), BorderLayout.CENTER);
+        problemsTab = pt;
 
         gameLog.addListener(this::onLine);
     }
