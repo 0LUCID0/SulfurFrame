@@ -385,3 +385,11 @@ Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client +
 
 ## 저절로 전체화면이 되던 문제
 임베드한 직후 "game went fullscreen (F11)"로 IDE 밖으로 나가는 일이 모드가 많은 빌드(BuildPali)에서 실행마다 있었습니다. 판정이 창 스타일 `WS_POPUP` 하나였는데, GLFW는 테두리 없는 창의 스타일을 다시 계산할 때도 이 값을 줍니다. 진짜 F11은 창을 모니터 크기로 키우므로(`glfwSetWindowMonitor`), 이제 `WS_POPUP`이면서 모니터를 덮을 때만 전체화면으로 보고, 패널 크기 그대로인 `WS_POPUP`은 자식 창 스타일로 되돌려 IDE 안에 둡니다. 원인 모드는 플러그인 밖(같은 Gradle 명령, PoC 호스트 임베드)에서 재현되지 않아 아직 모릅니다.
+
+## 화면 배치 (UI 1단계)
+기능을 Swing 버튼 대신 IDE 액션으로 바꾸고(`SfActions.java`, `plugin.xml`), 기능마다 IntelliJ의 제자리에 둡니다.
+- **게임 툴 윈도우:** 위에 아이콘 툴바(Run Client, Restart, Hotswap, Datagen, Inspect, Worlds ▾, 옵션 ⚙). 폭이 모자라면 IntelliJ가 `»`로 접습니다(`ToolbarLayoutStrategy.AUTOLAYOUT_STRATEGY`). 대상 콤보박스는 2단계(실행 구성)까지 남깁니다.
+- **같은 액션이 있는 곳:** Tools | SulfurFrame, 상태 표시줄 메뉴, Find Action(Ctrl+Shift+A), Keymap(단축키 지정 가능).
+- **Settings | Tools | SulfurFrame** (`SulfurConfigurable.java`): Hotswap on save, 공유 월드, Run 때 디버거, 16:9, 코딩 중 프레임 상한(끄기 가능, 기본 15), 개발 모드 목록(IDE 전체 / 이 프로젝트만). 설정은 `Settings.java` 한 곳을 거치고, 예전 키를 그대로 써서 이전 선택이 이어집니다.
+- **상태 표시줄** (`SulfurStatusWidget.java`): 게임이 붙으면 `⛏ playing · 144 fps · 20 TPS · 2.1/4.0 GB`. 숫자는 에이전트가 1초마다 파일로 써 줍니다(`stats=`, `GameStats`). 누르면 SulfurFrame 메뉴.
+- **아래 툴 윈도우 "Minecraft Log"** (`SulfurLogToolWindowFactory.java`): Game log, Problems, SulfurFrame 로그 탭. Run/Build 창과 같은 자리입니다. 패널은 두 툴 윈도우 중 먼저 열리는 쪽이 만듭니다(`PanelHost.obtain`).

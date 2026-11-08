@@ -78,7 +78,7 @@ final class GameLauncher {
                 marker = tmp("launch-" + UUID.randomUUID() + ".pid");
                 Path init = tmp("sf-agent.init.gradle");
                 Files.writeString(init, AGENT_SCRIPT, StandardCharsets.UTF_8);
-                String spec = agentJar + "=codingFps=15,launch=" + marker;
+                String spec = agentJar + "=codingFps=" + Settings.codingFps() + ",launch=" + marker;
                 cmd.addAll(List.of("--init-script", init.toString(),
                         "-PsfAgent=" + Base64.getEncoder().encodeToString(spec.getBytes(StandardCharsets.UTF_8))));
             } else {

@@ -216,6 +216,7 @@ final class AutoTest {
             if (Boolean.getBoolean("sulfurframe.autotest.worlds"))
                 try { worldsFlow(p, Path.of(probe)); } catch (Exception ex) { check("worlds flow", false, ex.toString()); }
         }
+        uiChecks(p);
         lines.add("game pid " + e.gamePid() + " left running for inspection");
     }
 
@@ -480,6 +481,22 @@ final class AutoTest {
         before = p.embedder.gamePid();
         p.restart("SFWorld", null);
         waitForNewGame(p, before, gameLog, 300);
+    }
+
+    /** Actions and toolbar, the status bar numbers and the settings page (UI phase 1). */
+    private static void uiChecks(SulfurPanel p) {
+        var am = com.intellij.openapi.actionSystem.ActionManager.getInstance();
+        boolean actions = java.util.stream.Stream.of("SulfurFrame.RunClient", "SulfurFrame.Restart", "SulfurFrame.Hotswap", "SulfurFrame.Datagen",
+                "SulfurFrame.Inspect", "SulfurFrame.Worlds", "SulfurFrame.Options", "SulfurFrame.Toolbar", "SulfurFrame.Menu").allMatch(id -> am.getAction(id) != null);
+        check("actions registered (toolbar, Tools | SulfurFrame)", actions, "SulfurFrame.* actions");
+        if (project == null) return;
+        String text = "";
+        for (int i = 0; i < 30 && !(text = new SulfurStatusWidget(project).getText()).contains("fps"); i++) sleep(500);
+        check("status bar shows the game's numbers", text.contains("fps") && text.contains("GB"), text);
+        var page = new SulfurConfigurable(project);
+        final boolean[] ok = new boolean[1];
+        onEdt(() -> ok[0] = page.createComponent() != null && !page.isModified());
+        check("settings page builds, nothing modified", ok[0], "Settings | Tools | SulfurFrame");
     }
 
     /** Focus the game, move the real mouse over it, and see the player turn (yaw from the agent's look report). */

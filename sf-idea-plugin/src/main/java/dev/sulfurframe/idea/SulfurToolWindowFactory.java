@@ -12,13 +12,8 @@ import java.nio.file.Path;
 public final class SulfurToolWindowFactory implements ToolWindowFactory, DumbAware {
     @Override
     public void createToolWindowContent(Project project, ToolWindow toolWindow) {
-        Path dir = project.getBasePath() == null ? null : Path.of(project.getBasePath());
-        var props = com.intellij.ide.util.PropertiesComponent.getInstance(project);
-        var panel = new SulfurPanel(dir, () -> props.getValue("sulfurframe.target", ""), v -> props.setValue("sulfurframe.target", v),
-                () -> GameTab.open(project));
-        panel.attachProject(project);
-        var host = new PanelHost(panel);
-        PanelHost.register(project, host);
+        var host = PanelHost.obtain(project);
+        var panel = host.panel;
         var content = ContentFactory.getInstance().createContent(host.toolHolder, "", false);
         toolWindow.getContentManager().addContent(content);
         Disposer.register(toolWindow.getDisposable(), panel.embedder::dispose);

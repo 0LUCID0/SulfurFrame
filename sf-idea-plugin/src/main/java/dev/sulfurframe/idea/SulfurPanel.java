@@ -28,6 +28,14 @@ final class SulfurPanel extends JPanel {
     private final JTextArea log = new JTextArea(5, 40);
     String logText() { return log.getText(); }
     void setSwapOnSave(boolean on) { swapOnSave.setSelected(on); }
+
+    /** The settings page changed something: show it here (no events, nothing is stored again). */
+    void syncSettings() {
+        swapOnSave.setSelected(Settings.hotswapOnSave());
+        shareWorlds.setSelected(Settings.sharedWorlds());
+        debug.setSelected(Settings.debug());
+        if (keepRatio.isSelected() != Settings.keepRatio()) { keepRatio.setSelected(Settings.keepRatio()); embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0); }
+    }
     private final Path projectDir;
     private final Supplier<String> savedTarget;
     private final Consumer<String> saveTarget;
@@ -35,8 +43,8 @@ final class SulfurPanel extends JPanel {
     ProjectProfile profile;
     final Hotswapper hotswapper;
     private final Path agentJar;
-    private final JCheckBox swapOnSave = new JCheckBox("Hotswap on save", true);
-    private final JCheckBox keepRatio = new JCheckBox("16:9 (black bars)", true);
+    private final JCheckBox swapOnSave = new JCheckBox("Hotswap on save", Settings.hotswapOnSave());
+    private final JCheckBox keepRatio = new JCheckBox("16:9 (black bars)", Settings.keepRatio());
 
     SulfurPanel(Path projectDir, Supplier<String> savedTarget, Consumer<String> saveTarget, Runnable openAsTab) {
         super(new BorderLayout());
@@ -54,66 +62,23 @@ final class SulfurPanel extends JPanel {
         log.setFont(consoleFont());   // same font as the Game log console next to it
         targets.setRenderer(new MarqueeRenderer<>(targets));   // long client names scroll instead of being cut
         targets.addActionListener(e -> onTargetSelected());
-        // Frequent actions are buttons that wrap to more rows in a narrow tool window; the world tools and the
-        // settings / rarely used actions sit behind two menu buttons, so a sidebar-width panel shows everything.
-        var buttons = new JPanel(new WrapLayout(FlowLayout.LEFT, 4, 2));
-        buttons.addComponentListener(new java.awt.event.ComponentAdapter() {   // the row count follows the new width
-            private int lastHeight = -1;
-            @Override public void componentResized(java.awt.event.ComponentEvent e) {
-                int h = buttons.getPreferredSize().height;
-                if (h != lastHeight) { lastHeight = h; SwingUtilities.invokeLater(buttons::revalidate); }
-            }
-        });
-        buttons.add(button("Run client", this::runClient));
-        var restart = button("Restart", this::restartAsync);
-        restart.setToolTipText("Save and quit the game, start it again and go straight back into the same world");
-        buttons.add(restart);
-        buttons.add(button("Hotswap", this::hotswapAsync));
-        var gen = button("Datagen", this::datagenAsync);
-        gen.setToolTipText("Run the data generators (runDatagen / runData) and reload what they changed in the running game");
-        buttons.add(gen);
-        var look = button("Inspect", this::inspectAsync);
-        look.setToolTipText("What the player is looking at: block state, block entity / entity and its NBT, and its class");
-        buttons.add(look);
-
-        var worlds = new JPopupMenu();
-        worlds.add(menuItem("Snapshot", "Copy the open world (after saving it) so it can be restored", this::snapshotAsync));
-        worlds.add(menuItem("Restore…", "Put a world back to a snapshot and restart into it", this::restoreAsync));
-        worlds.addSeparator();
-        worlds.add(menuItem("Test world", "A kept test world (superflat, creative, cheats)", () -> testWorldAsync(false)));
-        worlds.add(menuItem("Temp world", "A throwaway test world: deleted automatically once the game exits", () -> testWorldAsync(true)));
-        buttons.add(menuButton("Worlds ▾", worlds));
-
+        // The functions are IDE actions (SfActions, plugin.xml): the same ones are in Tools | SulfurFrame, the status
+        // bar menu, Find Action and the keymap. Here they form an icon toolbar that folds what does not fit behind ».
+        var group = (com.intellij.openapi.actionSystem.ActionGroup) com.intellij.openapi.actionSystem.ActionManager.getInstance().getAction("SulfurFrame.Toolbar");
+        var toolbar = com.intellij.openapi.actionSystem.ActionManager.getInstance().createActionToolbar("SulfurFrame", group, true);
+        toolbar.setLayoutStrategy(com.intellij.openapi.actionSystem.toolbarLayout.ToolbarLayoutStrategy.AUTOLAYOUT_STRATEGY);
+        toolbar.setTargetComponent(this);
+        var buttons = toolbar.getComponent();
         keepRatio.setToolTipText("Keep the game at 16:9 (black bars) instead of stretching it to the panel");
-        keepRatio.addActionListener(e -> embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0));
+        keepRatio.addActionListener(e -> { embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0); Settings.set(Settings.KEEP_RATIO, keepRatio.isSelected(), true); });
+        if (!keepRatio.isSelected()) embedder.setAspect(0);
+        swapOnSave.addActionListener(e -> Settings.set(Settings.HOTSWAP_ON_SAVE, swapOnSave.isSelected(), true));
         swapOnSave.setToolTipText("Compile and reload changed classes into the running game whenever a source file is saved");
         shareWorlds.setToolTipText("Worlds, options and resource packs shared by all projects of the same Minecraft version ("
                 + SharedInstance.root() + "). Existing worlds of a project move there when it is first launched; nothing is deleted.");
-        shareWorlds.addActionListener(e -> com.intellij.ide.util.PropertiesComponent.getInstance().setValue("sulfurframe.sharedInstance", shareWorlds.isSelected(), false));
+        shareWorlds.addActionListener(e -> Settings.set(Settings.SHARED_WORLDS, shareWorlds.isSelected(), false));
         debug.setToolTipText("Run client with a debug port and attach the IDE debugger (breakpoints; the game pauses while stopped)");
-        debug.addActionListener(e -> com.intellij.ide.util.PropertiesComponent.getInstance().setValue("sulfurframe.debug", debug.isSelected(), false));
-        var more = new JPopupMenu();
-        more.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {   // rebuilt on open: the check marks follow the settings
-            @Override public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
-                more.removeAll();
-                for (JCheckBox c : new JCheckBox[]{swapOnSave, shareWorlds, debug, keepRatio}) more.add(checkItem(c));
-                more.addSeparator();
-                more.add(menuItem("Dev mods…", "Mods every dev client gets (Mod Menu, EMI, Jade ...)", SulfurPanel.this::editDevMods));
-                more.addSeparator();
-                more.add(menuItem("Open as tab", "Show the game in an editor tab instead of this tool window", openAsTab));
-                more.add(menuItem("Attach PID…", "Embed a Minecraft that is already running", () -> {
-                    String s = JOptionPane.showInputDialog(SulfurPanel.this, "PID of a running Minecraft:");
-                    if (s != null && !s.isBlank()) embedder.attach(Long.parseLong(s.trim()));
-                }));
-                more.add(menuItem("Detach", "Give the game window back as a normal window", embedder::detach));
-                more.add(menuItem("Rescan", "Look for runnable clients in the project again", SulfurPanel.this::scan));
-            }
-            @Override public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) { }
-            @Override public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) { }
-        });
-        var moreButton = menuButton("⋯", more);
-        moreButton.setToolTipText("Settings and more: hotswap on save, shared worlds, debug, 16:9, dev mods, open as tab, attach / detach, rescan");
-        buttons.add(moreButton);
+        debug.addActionListener(e -> Settings.set(Settings.DEBUG, debug.isSelected(), false));
         var north = new JPanel(new BorderLayout());
         north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);
@@ -124,35 +89,16 @@ final class SulfurPanel extends JPanel {
         var clearLog = new JButton("Clear");
         clearLog.addActionListener(e -> log.setText(""));
         logTop.add(clearLog);
-        var logTab = new JPanel(new BorderLayout());
+        // shown as a tab of the bottom "Minecraft Log" tool window, next to Game log and Problems
         logTab.add(logTop, BorderLayout.NORTH);
         logTab.add(new JScrollPane(log), BorderLayout.CENTER);
-        bottom.addTab("SulfurFrame", logTab);
-        bottom.setPreferredSize(new Dimension(400, 220));
-        add(bottom, BorderLayout.SOUTH);
         scan();
         Thread.ofPlatform().daemon().name("sf-temp-sweep").start(() -> TempWorlds.sweep(this::log));   // left over from a previous IDE session
     }
 
-    private JMenuItem menuItem(String text, String tip, Runnable r) {
-        var m = new JMenuItem(text);
-        m.setToolTipText(tip);
-        m.addActionListener(e -> r.run());
-        return m;
-    }
-
-    /** A menu check item standing for a settings checkbox (the checkbox keeps the state and its listeners). */
-    private JCheckBoxMenuItem checkItem(JCheckBox c) {
-        var m = new JCheckBoxMenuItem(c.getText(), c.isSelected());
-        m.setToolTipText(c.getToolTipText());
-        m.addActionListener(e -> { if (c.isSelected() != m.isSelected()) c.doClick(); });
-        return m;
-    }
-
-    private JButton menuButton(String text, JPopupMenu menu) {
-        var b = new JButton(text);
-        b.addActionListener(e -> menu.show(b, 0, b.getHeight()));
-        return b;
+    void attachPidDialog() {
+        String s = JOptionPane.showInputDialog(this, "PID of a running Minecraft:");
+        if (s != null && !s.isBlank()) embedder.attach(Long.parseLong(s.trim()));
     }
 
     private JButton button(String text, Runnable r) {
@@ -226,6 +172,7 @@ final class SulfurPanel extends JPanel {
                 launcher.setExtraJvmArgs(jvm);
                 launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> {
                             embedder.attach(pid); hotswapper.snapshot(t);
+                            startStats(pid);
                             TempWorlds.unpinAll();
                             if (debugPort > 0) DebugAttach.attach(project, debugPort, this::log);
                         }),
@@ -238,14 +185,15 @@ final class SulfurPanel extends JPanel {
 
     private final java.util.concurrent.atomic.AtomicBoolean launching = new java.util.concurrent.atomic.AtomicBoolean();
 
-    private final JTabbedPane bottom = new JTabbedPane();
+    /** The SulfurFrame log, a tab of the bottom "Minecraft Log" tool window. */
+    final JPanel logTab = new JPanel(new BorderLayout());
     /** Game log, problems, crashes (needs the IDE project for source links); null until {@link #attachProject}. */
     GameLogPanel gameLogPanel;
 
     private com.intellij.openapi.project.Project project;
 
     /** Start the game with a JDWP agent and attach the IDE debugger once it is up. */
-    final JCheckBox debug = new JCheckBox("Debug", com.intellij.ide.util.PropertiesComponent.getInstance().getBoolean("sulfurframe.debug", false));
+    final JCheckBox debug = new JCheckBox("Debug", Settings.debug());
 
     /** The IDE console font (Settings | Editor | Color Scheme | Console Font), what the Game log console uses. */
     private static Font consoleFont() {
@@ -260,15 +208,12 @@ final class SulfurPanel extends JPanel {
     void attachProject(com.intellij.openapi.project.Project project) {
         this.project = project;
         gameLogPanel = new GameLogPanel(project, this::selectedTarget, this::restartAsync, this::log);
-        bottom.addTab("Game log", gameLogPanel.logTab);
-        bottom.addTab("Problems", gameLogPanel.problemsTab);
         var t = selectedTarget();
         if (t != null) gameLogPanel.follow(t);
     }
 
     /** One game folder per Minecraft version for all projects (worlds, options, resource packs). */
-    final JCheckBox shareWorlds = new JCheckBox("Shared worlds",
-            com.intellij.ide.util.PropertiesComponent.getInstance().getBoolean("sulfurframe.sharedInstance", false));
+    final JCheckBox shareWorlds = new JCheckBox("Shared worlds", Settings.sharedWorlds());
 
     Workspace.Target selectedTarget() { return (Workspace.Target) targets.getSelectedItem(); }
 
@@ -317,7 +262,7 @@ final class SulfurPanel extends JPanel {
             if (game != null && game.isAlive()) {
                 Path wf = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "world-" + pid + ".txt");
                 Files.deleteIfExists(wf);
-                Hotswapper.loadAgent(pid, agentJar, "codingFps=15,world=" + wf + ",quit");
+                Hotswapper.loadAgent(pid, agentJar, "codingFps=" + Settings.codingFps() + ",world=" + wf + ",quit");
                 for (int i = 0; i < 50 && !Files.exists(wf); i++) Thread.sleep(100);
                 if (Files.exists(wf)) world = Files.readString(wf, StandardCharsets.UTF_8).strip();
                 log("restart: saving and quitting" + (world.isEmpty() ? "" : " (world '" + world + "')"));
@@ -345,7 +290,7 @@ final class SulfurPanel extends JPanel {
         if (pid <= 0 || ProcessHandle.of(pid).isEmpty()) return "";
         Path wf = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "world-" + pid + "-q.txt");
         Files.deleteIfExists(wf);
-        Hotswapper.loadAgent(pid, agentJar, "codingFps=15,world=" + wf);
+        Hotswapper.loadAgent(pid, agentJar, "codingFps=" + Settings.codingFps() + ",world=" + wf);
         for (int i = 0; i < 50 && !Files.exists(wf); i++) Thread.sleep(100);
         return Files.exists(wf) ? Files.readString(wf, StandardCharsets.UTF_8).strip() : "";
     }
@@ -364,7 +309,7 @@ final class SulfurPanel extends JPanel {
             long pid = embedder.gamePid();
             Path done = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "flush-" + pid + ".txt");
             Files.deleteIfExists(done);
-            Hotswapper.loadAgent(pid, agentJar, "codingFps=15,cmd=" + WorldSnapshots.b64("save-all flush") + ",done=" + done);
+            Hotswapper.loadAgent(pid, agentJar, "codingFps=" + Settings.codingFps() + ",cmd=" + WorldSnapshots.b64("save-all flush") + ",done=" + done);
             for (int i = 0; i < 150 && !Files.exists(done); i++) Thread.sleep(100);
             String flushed = Files.exists(done) ? Files.readString(done).strip() : "no answer";
             if (!flushed.equals("done")) log("snapshot: save-all flush: " + flushed + " (copying anyway)");
@@ -432,7 +377,7 @@ final class SulfurPanel extends JPanel {
         try {
             Path f = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "look-" + pid + ".txt");
             Files.deleteIfExists(f);
-            Hotswapper.loadAgent(pid, agentJar, "codingFps=15,look=" + f);
+            Hotswapper.loadAgent(pid, agentJar, "codingFps=" + Settings.codingFps() + ",look=" + f);
             for (int i = 0; i < 50 && !Files.exists(f); i++) Thread.sleep(100);
             if (!Files.exists(f)) { log("inspect: no answer from the game"); return false; }
             var m = new java.util.LinkedHashMap<String, String>();
@@ -529,67 +474,38 @@ final class SulfurPanel extends JPanel {
 
     // ------------------------------------------------------------------ dev mods
 
-    /** Pick the mods every dev client gets (Mod Menu ...): catalog + own Modrinth picks, IDE-wide or for this project. */
+    /** Dev mods are edited on the settings page (Settings | Tools | SulfurFrame). */
     void editDevMods() {
-        var model = new javax.swing.table.DefaultTableModel(new Object[]{"Use", "Mod", "Kind", "Loaders", "What it is for"}, 0) {
-            @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
-            @Override public boolean isCellEditable(int r, int c) { return c == 0; }
-        };
-        java.util.function.Consumer<List<DevMods.Entry>> fill = list -> {
-            model.setRowCount(0);
-            for (var e : list) {
-                var k = DevMods.known(e.slug());
-                model.addRow(new Object[]{e.on(), e.slug(), k == null ? "added" : k.tier() == DevMods.Tier.REQUIRED ? "required" : "optional",
-                        k == null ? "?" : String.join(", ", k.loaders().stream().map(l -> l.name().toLowerCase()).toList()),
-                        k == null ? "your own pick" : k.purpose()});
+        com.intellij.openapi.options.ShowSettingsUtil.getInstance().showSettingsDialog(project, SulfurConfigurable.class);
+    }
+
+    // ------------------------------------------------------------------ stats (status bar)
+
+    private volatile Path statsFile;
+
+    /** Ask the game's agent to write its numbers (fps, tick time, memory) every second, for the status bar. */
+    private void startStats(long pid) {
+        Thread.ofPlatform().daemon().name("sf-stats").start(() -> {
+            try {
+                Path f = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "stats-" + pid + ".txt");
+                Files.deleteIfExists(f);
+                Hotswapper.loadAgent(pid, agentJar, "codingFps=" + Settings.codingFps() + ",stats=" + f);
+                statsFile = f;
+            } catch (Exception e) {
+                log("status bar numbers unavailable: " + e.getMessage());
             }
-        };
-        var ownForProject = new JCheckBox("This project only", project != null && DevMods.stored(project) != null);
-        ownForProject.setEnabled(project != null);
-        ownForProject.setToolTipText("Keep a separate list for this project (e.g. without a mod it conflicts with); off = the IDE-wide list");
-        fill.accept(DevMods.effective(ownForProject.isSelected() ? project : null));
-        ownForProject.addActionListener(ev -> fill.accept(ownForProject.isSelected() ? DevMods.effective(project) : DevMods.effective(null)));
-        var table = new JTable(model);
-        table.getColumnModel().getColumn(0).setMaxWidth(40);
-        table.getColumnModel().getColumn(1).setPreferredWidth(90);
-        table.getColumnModel().getColumn(2).setMaxWidth(70);
-        table.getColumnModel().getColumn(3).setPreferredWidth(150);
-        table.getColumnModel().getColumn(4).setPreferredWidth(330);
-        var add = new JButton("Add…");
-        add.addActionListener(ev -> {
-            String s = JOptionPane.showInputDialog(this, "Modrinth project name or link (e.g. https://modrinth.com/mod/appleskin):");
-            if (s == null || s.isBlank()) return;
-            String slug = DevMods.slugOf(s);
-            for (int i = 0; i < model.getRowCount(); i++) if (slug.equals(model.getValueAt(i, 1))) { model.setValueAt(true, i, 0); return; }
-            model.addRow(new Object[]{true, slug, "added", "?", "your own pick"});
         });
-        var remove = new JButton("Remove");
-        remove.setToolTipText("Remove an added mod (catalog mods are turned off instead)");
-        remove.addActionListener(ev -> {
-            int r = table.getSelectedRow();
-            if (r < 0) return;
-            if (DevMods.known(String.valueOf(model.getValueAt(r, 1))) != null) model.setValueAt(false, r, 0); else model.removeRow(r);
-        });
-        var reset = new JButton("Defaults");
-        reset.addActionListener(ev -> fill.accept(DevMods.defaults()));
-        var row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        row.add(add); row.add(remove); row.add(reset); row.add(ownForProject);
-        var note = new JLabel("<html>Each launch gets the newest build of the checked mods for its Minecraft version and loader, with<br>"
-                + "their required dependencies, from Modrinth (kept in " + DevMods.cacheDir("&lt;version&gt;").getParent() + ").<br>"
-                + "Mods the project already includes are skipped; the project's files are not changed. Loaded on Fabric and Quilt for now.</html>");
-        var panel = new JPanel(new BorderLayout(0, 6));
-        panel.add(row, BorderLayout.NORTH);
-        panel.add(new JScrollPane(table), BorderLayout.CENTER);
-        panel.add(note, BorderLayout.SOUTH);
-        panel.setPreferredSize(new Dimension(760, 320));
-        if (JOptionPane.showConfirmDialog(this, panel, "Dev mods", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
-        if (table.isEditing()) table.getCellEditor().stopCellEditing();
-        var out = new java.util.ArrayList<DevMods.Entry>();
-        for (int i = 0; i < model.getRowCount(); i++) out.add(new DevMods.Entry(String.valueOf(model.getValueAt(i, 1)), Boolean.TRUE.equals(model.getValueAt(i, 0))));
-        if (ownForProject.isSelected()) DevMods.store(project, out);
-        else { DevMods.store(null, out); if (project != null) DevMods.store(project, null); }
-        log("dev mods" + (ownForProject.isSelected() ? " (this project)" : "") + ": "
-                + (out.stream().noneMatch(DevMods.Entry::on) ? "none" : String.join(", ", out.stream().filter(DevMods.Entry::on).map(DevMods.Entry::slug).toList())) + " (next launch)");
+    }
+
+    /** The game's latest numbers (empty when there is no fresh report). */
+    java.util.Map<String, String> stats() {
+        Path f = statsFile;
+        var m = new java.util.LinkedHashMap<String, String>();
+        try {
+            if (f == null || !Files.exists(f) || System.currentTimeMillis() - Files.getLastModifiedTime(f).toMillis() > 3000) return m;
+            for (String l : Files.readAllLines(f, StandardCharsets.UTF_8)) { int eq = l.indexOf('='); if (eq > 0) m.put(l.substring(0, eq), l.substring(eq + 1)); }
+        } catch (Exception ignored) { }
+        return m;
     }
 
     // ------------------------------------------------------------------ datagen

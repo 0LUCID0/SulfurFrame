@@ -13,8 +13,91 @@
     <depends>com.intellij.java</depends>
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="SulfurFrame" anchor="right" factoryClass="dev.sulfurframe.idea.SulfurToolWindowFactory"/>
+        <toolWindow id="Minecraft Log" anchor="bottom" factoryClass="dev.sulfurframe.idea.SulfurLogToolWindowFactory" icon="AllIcons.Debugger.Console"/>
         <postStartupActivity implementation="dev.sulfurframe.idea.AutoTestStartup"/>
         <fileEditorProvider implementation="dev.sulfurframe.idea.GameTab$Provider"/>
         <notificationGroup id="SulfurFrame" displayType="BALLOON"/>
+        <statusBarWidgetFactory id="SulfurFrame.Status" implementation="dev.sulfurframe.idea.SulfurStatusWidget$Factory" order="first"/>
+        <projectConfigurable parentId="tools" instance="dev.sulfurframe.idea.SulfurConfigurable" id="dev.sulfurframe.settings" displayName="SulfurFrame"/>
     </extensions>
+    <actions>
+        <action id="SulfurFrame.RunClient" class="dev.sulfurframe.idea.SfActions$RunClient" text="Run Client"
+                description="Start the selected project's Minecraft dev client inside the IDE" icon="AllIcons.Actions.Execute"/>
+        <action id="SulfurFrame.Restart" class="dev.sulfurframe.idea.SfActions$Restart" text="Restart into the Same World"
+                description="Save and quit the game, start it again and go straight back into the same world" icon="AllIcons.Actions.Restart"/>
+        <action id="SulfurFrame.Hotswap" class="dev.sulfurframe.idea.SfActions$Hotswap" text="Hotswap"
+                description="Compile the changed code and reload it into the running game" icon="AllIcons.Actions.Compile"/>
+        <action id="SulfurFrame.Datagen" class="dev.sulfurframe.idea.SfActions$Datagen" text="Run Datagen"
+                description="Run the data generators and reload what they changed in the running game" icon="AllIcons.Actions.BuildLoadChanges"/>
+        <action id="SulfurFrame.Inspect" class="dev.sulfurframe.idea.SfActions$Inspect" text="Inspect What You Look At"
+                description="Block state, block entity / entity, its NBT and its class" icon="AllIcons.Actions.Find"/>
+        <action id="SulfurFrame.Snapshot" class="dev.sulfurframe.idea.SfActions$Snapshot" text="Snapshot World"
+                description="Copy the open world (after saving it) so it can be restored" icon="AllIcons.Actions.MenuSaveall"/>
+        <action id="SulfurFrame.Restore" class="dev.sulfurframe.idea.SfActions$Restore" text="Restore World…"
+                description="Put a world back to a snapshot and restart into it" icon="AllIcons.Actions.Rollback"/>
+        <action id="SulfurFrame.TestWorld" class="dev.sulfurframe.idea.SfActions$TestWorld" text="Test World"
+                description="A kept test world (superflat, creative, cheats)" icon="AllIcons.Actions.AddFile"/>
+        <action id="SulfurFrame.TempWorld" class="dev.sulfurframe.idea.SfActions$TempWorld" text="Temporary Test World"
+                description="A throwaway test world, deleted once the game exits" icon="AllIcons.Actions.Lightning"/>
+        <action id="SulfurFrame.HotswapOnSave" class="dev.sulfurframe.idea.SfActions$HotswapOnSave" text="Hotswap on Save"
+                description="Reload changed classes into the running game whenever a source file is saved"/>
+        <action id="SulfurFrame.SharedWorlds" class="dev.sulfurframe.idea.SfActions$SharedWorlds" text="Shared Worlds"
+                description="Worlds, options and resource packs shared by all projects of the same Minecraft version"/>
+        <action id="SulfurFrame.Debug" class="dev.sulfurframe.idea.SfActions$Debug" text="Attach Debugger on Run"
+                description="Run Client starts the game with a debug port and attaches the IDE debugger"/>
+        <action id="SulfurFrame.KeepRatio" class="dev.sulfurframe.idea.SfActions$KeepRatio" text="Keep 16:9"
+                description="Black bars instead of stretching the game to the panel"/>
+        <action id="SulfurFrame.OpenAsTab" class="dev.sulfurframe.idea.SfActions$OpenAsTab" text="Open Game as Editor Tab"
+                description="Show the game in an editor tab instead of the tool window" icon="AllIcons.Actions.MoveToWindow"/>
+        <action id="SulfurFrame.AttachPid" class="dev.sulfurframe.idea.SfActions$AttachPid" text="Attach to Running Minecraft…"
+                description="Embed a Minecraft that is already running (by process id)"/>
+        <action id="SulfurFrame.Detach" class="dev.sulfurframe.idea.SfActions$Detach" text="Detach Game Window"
+                description="Give the game window back as a normal window"/>
+        <action id="SulfurFrame.Rescan" class="dev.sulfurframe.idea.SfActions$Rescan" text="Rescan Project"
+                description="Look for runnable clients in the project again" icon="AllIcons.Actions.Refresh"/>
+        <action id="SulfurFrame.Settings" class="dev.sulfurframe.idea.SfActions$OpenSettings" text="SulfurFrame Settings…"
+                description="Settings | Tools | SulfurFrame: dev mods, coding frame rate, hotswap, shared worlds" icon="AllIcons.General.Settings"/>
+
+        <group id="SulfurFrame.Worlds" text="Worlds" popup="true" icon="AllIcons.Nodes.Folder">
+            <reference ref="SulfurFrame.Snapshot"/>
+            <reference ref="SulfurFrame.Restore"/>
+            <separator/>
+            <reference ref="SulfurFrame.TestWorld"/>
+            <reference ref="SulfurFrame.TempWorld"/>
+        </group>
+        <group id="SulfurFrame.Options" text="Options" popup="true" icon="AllIcons.General.GearPlain">
+            <reference ref="SulfurFrame.HotswapOnSave"/>
+            <reference ref="SulfurFrame.SharedWorlds"/>
+            <reference ref="SulfurFrame.Debug"/>
+            <reference ref="SulfurFrame.KeepRatio"/>
+            <separator/>
+            <reference ref="SulfurFrame.OpenAsTab"/>
+            <reference ref="SulfurFrame.AttachPid"/>
+            <reference ref="SulfurFrame.Detach"/>
+            <reference ref="SulfurFrame.Rescan"/>
+            <separator/>
+            <reference ref="SulfurFrame.Settings"/>
+        </group>
+        <group id="SulfurFrame.Toolbar">
+            <reference ref="SulfurFrame.RunClient"/>
+            <reference ref="SulfurFrame.Restart"/>
+            <reference ref="SulfurFrame.Hotswap"/>
+            <reference ref="SulfurFrame.Datagen"/>
+            <reference ref="SulfurFrame.Inspect"/>
+            <separator/>
+            <reference ref="SulfurFrame.Worlds"/>
+            <reference ref="SulfurFrame.Options"/>
+        </group>
+        <group id="SulfurFrame.Menu" text="SulfurFrame" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <reference ref="SulfurFrame.RunClient"/>
+            <reference ref="SulfurFrame.Restart"/>
+            <reference ref="SulfurFrame.Hotswap"/>
+            <reference ref="SulfurFrame.Datagen"/>
+            <reference ref="SulfurFrame.Inspect"/>
+            <separator/>
+            <reference ref="SulfurFrame.Worlds"/>
+            <reference ref="SulfurFrame.Options"/>
+        </group>
+    </actions>
 </idea-plugin>

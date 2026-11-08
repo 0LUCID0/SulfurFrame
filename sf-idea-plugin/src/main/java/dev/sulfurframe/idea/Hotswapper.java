@@ -88,7 +88,7 @@ final class Hotswapper {
             String what = (assets ? "assets" : "") + (assets && data ? "+" : "") + (data ? "data" : "");
             try {
                 var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(gamePid));
-                try { vm.loadAgent(agentJar.toString(), "codingFps=15,reload=" + what); } finally { vm.detach(); }
+                try { vm.loadAgent(agentJar.toString(), "codingFps=" + Settings.codingFps() + ",reload=" + what); } finally { vm.detach(); }
             } catch (com.sun.tools.attach.AgentLoadException e) {
                 if (!String.valueOf(e.getMessage()).endsWith(": 0")) throw e;
             }
@@ -173,7 +173,7 @@ final class Hotswapper {
 
             try {
                 var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(gamePid));
-                try { vm.loadAgent(agentJar.toString(), "codingFps=15,redefine=" + list); } finally { vm.detach(); }
+                try { vm.loadAgent(agentJar.toString(), "codingFps=" + Settings.codingFps() + ",redefine=" + list); } finally { vm.detach(); }
             } catch (com.sun.tools.attach.AgentLoadException e) {
                 if (!String.valueOf(e.getMessage()).endsWith(": 0")) throw e;   // Java 8 game: reply-format quirk
             }

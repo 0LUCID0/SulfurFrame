@@ -25,8 +25,23 @@ final class PanelHost {
         toolHolder.add(panel, BorderLayout.CENTER);
     }
 
+    /** The project's panel, created on first use (by the game tool window or the log tool window, whichever opens first). */
+    static synchronized PanelHost obtain(Project project) {
+        var h = HOSTS.get(project);
+        if (h != null) return h;
+        java.nio.file.Path dir = project.getBasePath() == null ? null : java.nio.file.Path.of(project.getBasePath());
+        var props = com.intellij.ide.util.PropertiesComponent.getInstance(project);
+        var panel = new SulfurPanel(dir, () -> props.getValue("sulfurframe.target", ""), v -> props.setValue("sulfurframe.target", v),
+                () -> GameTab.open(project));
+        panel.attachProject(project);
+        h = new PanelHost(panel);
+        HOSTS.put(project, h);
+        return h;
+    }
+
     static void register(Project p, PanelHost h) { HOSTS.put(p, h); }
     static PanelHost of(Project p) { return HOSTS.get(p); }
+    static java.util.List<PanelHost> all() { synchronized (HOSTS) { return java.util.List.copyOf(HOSTS.values()); } }
 
     boolean inEditor() { return editorHolder != null; }
 

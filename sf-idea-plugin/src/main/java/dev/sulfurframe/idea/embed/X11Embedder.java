@@ -235,7 +235,7 @@ public final class X11Embedder implements GameView {
         if (jar == null) return;
         try {
             var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(pid));
-            try { vm.loadAgent(jar.toString(), "codingFps=15"); } finally { vm.detach(); }
+            try { vm.loadAgent(jar.toString(), "codingFps=" + dev.sulfurframe.idea.Settings.codingFps()); } finally { vm.detach(); }
             log.accept("agent loaded");
         } catch (com.sun.tools.attach.AgentLoadException e) {
             log.accept(String.valueOf(e.getMessage()).endsWith(": 0") ? "agent loaded (Java 8 game)" : "agent load failed: " + e.getMessage());
