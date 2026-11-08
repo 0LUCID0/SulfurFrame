@@ -67,6 +67,9 @@ final class SulfurPanel extends JPanel {
         keepRatio.addActionListener(e -> embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0));
         buttons.add(keepRatio);
         buttons.add(button("Hotswap", this::hotswapAsync));
+        var gen = button("Datagen", this::datagenAsync);
+        gen.setToolTipText("Run the data generators (runDatagen / runData) and reload what they changed in the running game");
+        buttons.add(gen);
         var restart = button("Restart", this::restartAsync);
         restart.setToolTipText("Save and quit the game, start it again and go straight back into the same world");
         buttons.add(restart);
@@ -469,8 +472,49 @@ final class SulfurPanel extends JPanel {
                 || n.startsWith("build.gradle") || n.startsWith("settings.gradle") || n.equals("gradle.properties") || n.equals("libs.versions.toml");
     }
 
+    // ------------------------------------------------------------------ datagen
+
+    private final java.util.concurrent.atomic.AtomicBoolean datagenBusy = new java.util.concurrent.atomic.AtomicBoolean();
+    /** Generated folders are written by datagen, not saved by the user: the save listener ignores them for a moment. */
+    private volatile List<Path> datagenDirs = List.of();
+    private volatile long datagenQuietUntil;
+    volatile Datagen.Result lastDatagen;
+
+    void datagenAsync() {
+        var t = selectedTarget();
+        if (t == null) { log("datagen: pick a project first"); return; }
+        if (!datagenBusy.compareAndSet(false, true)) { log("datagen is already running"); return; }
+        Thread.ofPlatform().daemon().name("sf-datagen").start(() -> {
+            try {
+                var r = Datagen.run(t, this::log);
+                lastDatagen = r;
+                if (!r.ok()) { log("datagen failed (" + r.ms() / 1000 + " s)"); return; }
+                log("datagen: " + r.changed().size() + " file(s) changed (" + r.added() + " new, " + r.removed() + " removed) in " + r.ms() / 1000 + " s");
+                if (r.changed().isEmpty()) return;
+                datagenDirs = r.outputs();
+                datagenQuietUntil = System.currentTimeMillis() + 15_000;
+                try {   // show the new files in the project view and editors
+                    com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshNioFiles(r.outputs(), true, true, null);
+                } catch (Throwable ignored) { }
+                if (!embedder.attached()) { log("datagen: no game running; the changes apply when it starts"); return; }
+                if (!hotswapper.reloadResources(t, embedder.gamePid(), agentJar, r.changed()))
+                    log("datagen: the generated folder is not a resource folder of this project (sourceSets.main.resources.srcDir); restart to apply");
+            } finally {
+                datagenBusy.set(false);
+            }
+        });
+    }
+
+    private boolean writtenByDatagen(Path f) {
+        if (System.currentTimeMillis() > datagenQuietUntil) return false;
+        Path abs = f.toAbsolutePath().normalize();
+        return datagenDirs.stream().anyMatch(abs::startsWith);
+    }
+
     /** Source files were saved: hotswap if they belong to the selected target and a game is attached. */
     void onSourcesSaved(java.util.List<Path> files) {
+        files = files.stream().filter(f -> !writtenByDatagen(f)).toList();
+        if (files.isEmpty()) return;
         var t = selectedTarget();
         if (!swapOnSave.isSelected() || t == null || !embedder.attached()) return;
         Path dir = t.dir().toAbsolutePath().normalize();
@@ -505,14 +549,29 @@ final class SulfurPanel extends JPanel {
             if (!StandardCharsets.US_ASCII.newEncoder().canEncode(dir.toString()))
                 dir = Path.of(System.getenv().getOrDefault("PUBLIC", "C:\\Users\\Public"), "sulfurframe");
             Files.createDirectories(dir);
-            Path jar = dir.resolve("sf-agent.jar");
-            Files.copy(in, jar, StandardCopyOption.REPLACE_EXISTING);
+            // Named by content: a game still running (from another IDE, or an older plugin) keeps its copy locked on
+            // Windows, and overwriting it failed, leaving this IDE without the agent and so without the "which game is
+            // ours" marker (it then embedded another Minecraft). An identical copy is reused as is.
+            byte[] bytes = in.readAllBytes();
+            var crc = new java.util.zip.CRC32();
+            crc.update(bytes);
+            Path jar = dir.resolve(String.format("sf-agent-%08x.jar", crc.getValue()));
+            if (!Files.exists(jar) || Files.size(jar) != bytes.length) {
+                Path tmp = dir.resolve(jar.getFileName() + "." + ProcessHandle.current().pid() + ".part");
+                Files.write(tmp, bytes);
+                Files.move(tmp, jar, StandardCopyOption.REPLACE_EXISTING);
+            }
+            try (var old = Files.newDirectoryStream(dir, "sf-agent*.jar")) {   // older builds: gone unless a game holds them
+                for (Path o : old) if (!o.equals(jar)) try { Files.delete(o); } catch (IOException ignored) { }
+            }
             return jar;
         } catch (Exception e) {
             log("could not extract the agent: " + e);
             return null;
         }
     }
+
+    Path agentJar() { return agentJar; }
 
     /** For the self-test. */
     int targetCount() { return targets.getItemCount(); }

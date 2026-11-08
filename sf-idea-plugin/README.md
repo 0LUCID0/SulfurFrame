@@ -349,3 +349,17 @@ Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client +
 
 ## 긴 클라이언트 이름
 목록에서 넘치는 이름은 `…`로 자르지 않고 흘러갑니다(1.5초 멈춤 → 끝까지 → 멈춤 → 처음으로). 닫힌 목록의 선택 항목과 펼친 목록의 가리킨 줄만 움직이고, 넘칠 때만 다시 그립니다(`MarqueeRenderer.java`).
+
+## Datagen 버튼
+**Datagen**을 누르면 프로젝트의 데이터 생성 태스크를 돌리고, 바뀐 생성 파일만 골라 떠 있는 게임에 넘깁니다(`Datagen.java`). 넘기는 길은 저장한 리소스와 같습니다: 게임의 리소스 폴더로 복사한 뒤 `assets/`는 클라이언트 리로드, `data/`는 `/reload`.
+- **태스크:** 빌드 스크립트의 실행 설정 중 이름이 데이터인 것(Loom `datagen`, ModDevGradle `data`/`clientData`, NeoGradle `data`)을 쓰고, 없으면 로더 기본값(Fabric `runDatagen`, NeoForge/Forge `runData`)을 씁니다.
+- **출력 폴더:** datagen 인자(`-Dfabric-api.datagen.output-dir=${file("…")}`, `--output`, `file("…")`)에서 읽고, 없으면 `src/main/generated`, `src/generated/resources`를 봅니다.
+- **바뀐 파일:** 실행 전후 내용(CRC32)을 비교합니다. datagen이 같은 내용으로 다시 써도 바뀐 것으로 치지 않고, datagen 자체 기록인 `.cache`는 뺍니다.
+- 생성 폴더는 사용자가 저장한 파일이 아니라서, 끝난 뒤 15초 동안은 저장 감지가 그 폴더를 무시합니다(같은 리로드를 두 번 하지 않게). IDE 파일 목록도 새로고침합니다.
+- 생성 폴더가 리소스 폴더(`sourceSets.main.resources.srcDir`)가 아니면 게임에 넘길 수 없어서 재시작하라고 알립니다.
+
+검증(lucid 사본): 생성 파일 하나(`data/c/tags/item/ingots.json`)를 지우고 실행 → `runDatagen` 53초, 바뀐 파일은 그 파일 하나(새 파일 1).
+자동 테스트(샌드박스 IDE): 생성 파일 삭제 → Datagen → 그 파일이 다시 생기고 떠 있는 게임이 `data` 리로드(1개 파일). 마우스 클릭 확인만 화면이 가려져 건너뜀.
+
+### 에이전트 jar가 잠겨 있을 때
+플러그인은 시작할 때 에이전트를 `%TEMP%\sulfurframe`에 풀어 둡니다. 예전에는 늘 같은 이름(`sf-agent.jar`)이라, 다른 IDE에서 띄운 게임이 그 파일을 잡고 있으면 덮어쓰기가 실패했습니다. 그러면 에이전트가 없어서 "어느 게임이 내 것인지" 표시도 없었고, 그 사이 뜬 다른 Minecraft(테스트의 미끼)를 붙였습니다. 이제 내용으로 이름을 붙이고(`sf-agent-<crc>.jar`) 같은 파일이 있으면 그대로 씁니다. 잠긴 옛 파일은 건드리지 않습니다.

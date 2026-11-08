@@ -120,11 +120,22 @@ public final class Workspace {
      * A config counts as a client when its name says so or its block calls client() / inherits "client".
      */
     static List<String> extraClientRuns(Path dir) throws IOException {
-        String s = ProjectProfile.stripComments(read(dir.resolve("build.gradle")) + read(dir.resolve("build.gradle.kts")));
         var names = new LinkedHashSet<String>();
+        runConfigs(dir).forEach((name, body) -> consider(names, name, body));
+        names.remove("client");
+        names.remove("server");
+        var out = new ArrayList<String>();
+        for (String n : names) out.add("run" + Character.toUpperCase(n.charAt(0)) + n.substring(1));
+        return out;
+    }
+
+    /** Run configs declared in the build script (Loom runConfigs / runs, ModDevGradle and NeoGradle runs), name -> block. */
+    public static Map<String, String> runConfigs(Path dir) throws IOException {
+        String s = ProjectProfile.stripComments(read(dir.resolve("build.gradle")) + read(dir.resolve("build.gradle.kts")));
+        var names = new LinkedHashMap<String, String>();
         Matcher m = Pattern.compile("\\b(?:runConfigs|runs)\\s*(?:\\.\\s*(?:create|register|named)\\s*\\(\\s*[\"'](\\w+)[\"']|\\{)").matcher(s);
         while (m.find()) {
-            if (m.group(1) != null) { consider(names, m.group(1), block(s, openAfter(s, m.end()))); continue; }
+            if (m.group(1) != null) { names.putIfAbsent(m.group(1), block(s, openAfter(s, m.end()))); continue; }
             String body = block(s, m.end() - 1);
             // inside runs { }: create("x") { } / register("x") { } / groovy  x { }
             Matcher e = Pattern.compile("(?:(?:create|register|named)\\s*\\(\\s*[\"'](\\w+)[\"']\\s*\\)|(?<![\\w.])(\\w+))\\s*\\{").matcher(body);
@@ -132,15 +143,11 @@ public final class Workspace {
             while (e.find(from)) {
                 String name = e.group(1) != null ? e.group(1) : e.group(2);
                 String inner = block(body, e.end() - 1);
-                consider(names, name, inner);
+                if (!Set.of("configureEach", "all", "matching", "withType", "named", "create", "register", "getByName").contains(name)) names.putIfAbsent(name, inner);
                 from = Math.max(e.end(), e.end() - 1 + inner.length() + 1);
             }
         }
-        names.remove("client");
-        names.remove("server");
-        var out = new ArrayList<String>();
-        for (String n : names) out.add("run" + Character.toUpperCase(n.charAt(0)) + n.substring(1));
-        return out;
+        return names;
     }
 
     private static void consider(Set<String> names, String name, String body) {

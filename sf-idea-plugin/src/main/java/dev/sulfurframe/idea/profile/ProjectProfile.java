@@ -233,7 +233,7 @@ public record ProjectProfile(Path dir, String minecraftVersion, Loader loader, S
         return sb.toString();
     }
 
-    static String stripComments(String s) {
+    public static String stripComments(String s) {
         return s.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)(^|[^:])//.*$", "$1");
     }
 

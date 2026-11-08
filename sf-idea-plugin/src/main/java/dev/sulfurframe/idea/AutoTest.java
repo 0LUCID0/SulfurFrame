@@ -447,6 +447,20 @@ final class AutoTest {
         // mouse look while embedded: the grab made after the focusing click must reach GLFW (agent GlfwCursorFix)
         mouseLookCheck(p, gameLog);
 
+        // datagen: a generated file is missing -> Datagen brings it back and the running game reloads it
+        Path gen = t.dir().resolve("src/main/generated/data/c/tags/item/ingots.json");
+        if (Files.exists(gen)) {
+            Files.delete(gen);
+            p.hotswapper.lastResources = "";
+            p.lastDatagen = null;
+            p.datagenAsync();
+            for (int i = 0; i < 400 && p.lastDatagen == null; i++) sleep(500);
+            for (int i = 0; i < 20 && p.hotswapper.lastResources.isEmpty(); i++) sleep(500);
+            var r = p.lastDatagen;
+            check("datagen: task run, regenerated file found, game reloaded it", r != null && r.ok() && r.added() == 1 && Files.exists(gen)
+                    && p.hotswapper.lastResources.startsWith("data"), (r == null ? "no result" : r.changed() + " in " + r.ms() + " ms") + ", reload " + p.hotswapper.lastResources);
+        }
+
         // debugger attached by Run client (-Dsulfurframe.autotest.debug=true turns the checkbox on before launching)
         if (Boolean.getBoolean("sulfurframe.autotest.debug") && project != null) {
             var sessions = com.intellij.xdebugger.XDebuggerManager.getInstance(project).getDebugSessions();
@@ -519,7 +533,7 @@ final class AutoTest {
     }
 
     private static Path agentJarOf(SulfurPanel p) {
-        return Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "sf-agent.jar");
+        return p.agentJar();
     }
 
     private static boolean waitForLog(Path log, String text, int seconds) {
