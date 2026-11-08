@@ -93,6 +93,7 @@ final class SulfurPanel extends JPanel {
         debug.setToolTipText("Run client with a debug port and attach the IDE debugger (breakpoints; the game pauses while stopped)");
         debug.addActionListener(e -> com.intellij.ide.util.PropertiesComponent.getInstance().setValue("sulfurframe.debug", debug.isSelected(), false));
         buttons.add(debug);
+        buttons.add(button("Dev mods…", this::editDevMods));
         var north = new JPanel(new BorderLayout());
         north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);
@@ -154,7 +155,7 @@ final class SulfurPanel extends JPanel {
     void runClient(List<String> gameArgs) {
         var t = (Workspace.Target) targets.getSelectedItem();
         if (t == null || !t.profile().isComplete()) { log("pick a client to run (none detected)"); return; }
-        if (launcher.running()) { log("the game is already running (or still starting): use Restart to start it again"); return; }
+        if (launcher.running() || launching.get()) { log("the game is already running (or still starting): use Restart to start it again"); return; }
         if (!t.hasWrapper()) log("note: " + t.where() + " has no Gradle wrapper of its own; using the nearest parent's");
         launch(t, gameArgs);
     }
@@ -173,15 +174,28 @@ final class SulfurPanel extends JPanel {
         if (debug.isSelected() && project != null) {
             try { port = DebugAttach.freePort(); } catch (java.io.IOException e) { log("no free port for the debugger: " + e); }
         }
-        launcher.setExtraJvmArgs(port > 0 ? List.of(DebugAttach.jdwpArg(port)) : List.of());
         final int debugPort = port;
-        launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> {
-                    embedder.attach(pid); hotswapper.snapshot(t);
-                    TempWorlds.unpinAll();
-                    if (debugPort > 0) DebugAttach.attach(project, debugPort, this::log);
-                }),
-                () -> { if (share) SharedInstance.collect(run, mc); TempWorlds.sweep(this::log); });
+        launching.set(true);
+        // off the EDT: the dev mods may have to be downloaded first
+        Thread.ofPlatform().daemon().name("sf-launch").start(() -> {
+            try {
+                var jvm = new java.util.ArrayList<String>();
+                if (debugPort > 0) jvm.add(DebugAttach.jdwpArg(debugPort));
+                jvm.addAll(DevMods.jvmArgs(project, t, this::log));
+                launcher.setExtraJvmArgs(jvm);
+                launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> {
+                            embedder.attach(pid); hotswapper.snapshot(t);
+                            TempWorlds.unpinAll();
+                            if (debugPort > 0) DebugAttach.attach(project, debugPort, this::log);
+                        }),
+                        () -> { if (share) SharedInstance.collect(run, mc); TempWorlds.sweep(this::log); });
+            } finally {
+                launching.set(false);
+            }
+        });
     }
+
+    private final java.util.concurrent.atomic.AtomicBoolean launching = new java.util.concurrent.atomic.AtomicBoolean();
 
     private final JTabbedPane bottom = new JTabbedPane();
     /** Game log, problems, crashes (needs the IDE project for source links); null until {@link #attachProject}. */
@@ -470,6 +484,71 @@ final class SulfurPanel extends JPanel {
         return n.equals("fabric.mod.json") || n.equals("quilt.mod.json") || n.endsWith("mods.toml") || n.endsWith(".accesswidener")
                 || n.equals("accesstransformer.cfg") || n.endsWith(".mixins.json") || n.equals("mixins.json")
                 || n.startsWith("build.gradle") || n.startsWith("settings.gradle") || n.equals("gradle.properties") || n.equals("libs.versions.toml");
+    }
+
+    // ------------------------------------------------------------------ dev mods
+
+    /** Pick the mods every dev client gets (Mod Menu ...): catalog + own Modrinth picks, IDE-wide or for this project. */
+    void editDevMods() {
+        var model = new javax.swing.table.DefaultTableModel(new Object[]{"Use", "Mod", "Kind", "Loaders", "What it is for"}, 0) {
+            @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
+            @Override public boolean isCellEditable(int r, int c) { return c == 0; }
+        };
+        java.util.function.Consumer<List<DevMods.Entry>> fill = list -> {
+            model.setRowCount(0);
+            for (var e : list) {
+                var k = DevMods.known(e.slug());
+                model.addRow(new Object[]{e.on(), e.slug(), k == null ? "added" : k.tier() == DevMods.Tier.REQUIRED ? "required" : "optional",
+                        k == null ? "?" : String.join(", ", k.loaders().stream().map(l -> l.name().toLowerCase()).toList()),
+                        k == null ? "your own pick" : k.purpose()});
+            }
+        };
+        var ownForProject = new JCheckBox("This project only", project != null && DevMods.stored(project) != null);
+        ownForProject.setEnabled(project != null);
+        ownForProject.setToolTipText("Keep a separate list for this project (e.g. without a mod it conflicts with); off = the IDE-wide list");
+        fill.accept(DevMods.effective(ownForProject.isSelected() ? project : null));
+        ownForProject.addActionListener(ev -> fill.accept(ownForProject.isSelected() ? DevMods.effective(project) : DevMods.effective(null)));
+        var table = new JTable(model);
+        table.getColumnModel().getColumn(0).setMaxWidth(40);
+        table.getColumnModel().getColumn(1).setPreferredWidth(90);
+        table.getColumnModel().getColumn(2).setMaxWidth(70);
+        table.getColumnModel().getColumn(3).setPreferredWidth(150);
+        table.getColumnModel().getColumn(4).setPreferredWidth(330);
+        var add = new JButton("Add…");
+        add.addActionListener(ev -> {
+            String s = JOptionPane.showInputDialog(this, "Modrinth project name or link (e.g. https://modrinth.com/mod/appleskin):");
+            if (s == null || s.isBlank()) return;
+            String slug = DevMods.slugOf(s);
+            for (int i = 0; i < model.getRowCount(); i++) if (slug.equals(model.getValueAt(i, 1))) { model.setValueAt(true, i, 0); return; }
+            model.addRow(new Object[]{true, slug, "added", "?", "your own pick"});
+        });
+        var remove = new JButton("Remove");
+        remove.setToolTipText("Remove an added mod (catalog mods are turned off instead)");
+        remove.addActionListener(ev -> {
+            int r = table.getSelectedRow();
+            if (r < 0) return;
+            if (DevMods.known(String.valueOf(model.getValueAt(r, 1))) != null) model.setValueAt(false, r, 0); else model.removeRow(r);
+        });
+        var reset = new JButton("Defaults");
+        reset.addActionListener(ev -> fill.accept(DevMods.defaults()));
+        var row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        row.add(add); row.add(remove); row.add(reset); row.add(ownForProject);
+        var note = new JLabel("<html>Each launch gets the newest build of the checked mods for its Minecraft version and loader, with<br>"
+                + "their required dependencies, from Modrinth (kept in " + DevMods.cacheDir("&lt;version&gt;").getParent() + ").<br>"
+                + "Mods the project already includes are skipped; the project's files are not changed. Loaded on Fabric and Quilt for now.</html>");
+        var panel = new JPanel(new BorderLayout(0, 6));
+        panel.add(row, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        panel.add(note, BorderLayout.SOUTH);
+        panel.setPreferredSize(new Dimension(760, 320));
+        if (JOptionPane.showConfirmDialog(this, panel, "Dev mods", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        if (table.isEditing()) table.getCellEditor().stopCellEditing();
+        var out = new java.util.ArrayList<DevMods.Entry>();
+        for (int i = 0; i < model.getRowCount(); i++) out.add(new DevMods.Entry(String.valueOf(model.getValueAt(i, 1)), Boolean.TRUE.equals(model.getValueAt(i, 0))));
+        if (ownForProject.isSelected()) DevMods.store(project, out);
+        else { DevMods.store(null, out); if (project != null) DevMods.store(project, null); }
+        log("dev mods" + (ownForProject.isSelected() ? " (this project)" : "") + ": "
+                + (out.stream().noneMatch(DevMods.Entry::on) ? "none" : String.join(", ", out.stream().filter(DevMods.Entry::on).map(DevMods.Entry::slug).toList())) + " (next launch)");
     }
 
     // ------------------------------------------------------------------ datagen

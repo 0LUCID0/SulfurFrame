@@ -363,3 +363,25 @@ Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client +
 
 ### 에이전트 jar가 잠겨 있을 때
 플러그인은 시작할 때 에이전트를 `%TEMP%\sulfurframe`에 풀어 둡니다. 예전에는 늘 같은 이름(`sf-agent.jar`)이라, 다른 IDE에서 띄운 게임이 그 파일을 잡고 있으면 덮어쓰기가 실패했습니다. 그러면 에이전트가 없어서 "어느 게임이 내 것인지" 표시도 없었고, 그 사이 뜬 다른 Minecraft(테스트의 미끼)를 붙였습니다. 이제 내용으로 이름을 붙이고(`sf-agent-<crc>.jar`) 같은 파일이 있으면 그대로 씁니다. 잠긴 옛 파일은 건드리지 않습니다.
+
+## 개발 모드 (Dev mods…)
+개발용 게임마다 있으면 좋은 모드를 프로젝트를 고치지 않고 넣습니다(`DevMods.java`). 실행할 때마다 체크된 모드의 그 마인크래프트 버전·로더용 최신 빌드를 Modrinth에서 받아(필수 의존성 포함, `~/.sulfurframe/devmods/<버전>/`에 보관) Fabric/Quilt 게임에 `-Dfabric.addMods`로 붙입니다. 오프라인이면 받아 둔 파일을 씁니다.
+
+| 모드 | 로더 | 구분 | 용도 |
+|---|---|---|---|
+| modmenu | Fabric, Quilt | 필수(기본 켬) | 모드 목록과 설정 화면(Fabric에는 기본으로 없음) |
+| emi, jei | 모두 / Fabric·NeoForge·Forge | 선택 | 레시피·아이템 확인 |
+| jade | 모두 | 선택 | 보고 있는 블록·엔티티와 그 모드 |
+| spark | 모두 | 선택 | 프로파일러 |
+| mixintrace | Fabric, Quilt | 선택 | 크래시 보고서에 믹스인 정보 |
+| sodium | Fabric, Quilt, NeoForge | 선택 | 흔한 렌더러 교체 모드와의 호환 확인(충돌할 수 있음) |
+
+- NeoForge/Forge는 모드 목록과 설정 화면이 기본으로 있어서 필수가 없습니다. 이 로더에서 넣는 방식은 다음 단계입니다(지금은 Fabric/Quilt만).
+- WorldEdit은 넣지 않습니다(건축 도구는 BuildPali의 몫).
+- 목록 밖의 모드는 Modrinth 이름이나 링크로 추가합니다. **This project only**를 켜면 그 프로젝트만의 목록을 따로 둡니다(예: 충돌하는 모드 끄기).
+- 프로젝트가 이미 넣은 모드(빌드 스크립트에 이름이 있거나 클래스패스에 jar가 있음)는 건너뜁니다. Fabric은 같은 모드 id 두 개를 받지 않습니다.
+
+검증: lucid 사본(1.21.1)에 Mod Menu 11.0.5가 로드되고 초기화됨(업데이트 확인까지). Maxwells_Chamber(26.3)는 21.0.0을 고름. BuildPali는 Mod Menu를 직접 넣어서 건너뜀.
+
+## 저절로 전체화면이 되던 문제
+임베드한 직후 "game went fullscreen (F11)"로 IDE 밖으로 나가는 일이 모드가 많은 빌드(BuildPali)에서 실행마다 있었습니다. 판정이 창 스타일 `WS_POPUP` 하나였는데, GLFW는 테두리 없는 창의 스타일을 다시 계산할 때도 이 값을 줍니다. 진짜 F11은 창을 모니터 크기로 키우므로(`glfwSetWindowMonitor`), 이제 `WS_POPUP`이면서 모니터를 덮을 때만 전체화면으로 보고, 패널 크기 그대로인 `WS_POPUP`은 자식 창 스타일로 되돌려 IDE 안에 둡니다. 원인 모드는 플러그인 밖(같은 Gradle 명령, PoC 호스트 임베드)에서 재현되지 않아 아직 모릅니다.
