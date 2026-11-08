@@ -56,7 +56,7 @@ final class Hotswap {
             out.add("error " + t);
             SfHooks.log("hotswap failed: " + t);
         }
-        try { Files.write(Paths.get(listFile + ".result"), out, StandardCharsets.UTF_8); } catch (IOException ignored) { }
+        try { AnswerFile.write(listFile + ".result", out); } catch (IOException ignored) { }
     }
 
     static String reason(Throwable t) {

@@ -37,7 +37,7 @@ final class GameLauncher {
         ProjectProfile profile = target.profile();
         Path dir = target.buildRoot();
         Path wrapper = findWrapper(dir);
-        if (wrapper == null) { log.accept("no gradlew.bat in " + dir + " or its parents"); return; }
+        if (wrapper == null) { log.accept("no gradlew.bat in " + dir + " or its parents"); onEnd.run(); return; }
         Set<Long> before = new HashSet<>(dev.sulfurframe.idea.embed.NativeWindows.gameWindows());
         try {
             // every init script below patches exactly this task (runClient, or a run config like runAllModsClient)
@@ -96,6 +96,7 @@ final class GameLauncher {
             Thread.ofPlatform().daemon().name("sf-gradle-out").start(() -> pump(gradle));
         } catch (IOException e) {
             log.accept("could not start Gradle: " + e);
+            onEnd.run();
             return;
         }
         final Path mine = marker;
@@ -166,10 +167,21 @@ final class GameLauncher {
             }
             """;
 
+    /** Every line Gradle (and the game through it) prints, for the Run window; set per launch. */
+    volatile java.util.function.Consumer<String> output;
+
+    /** Exit code of the last Gradle run, -1 while it runs or before any. */
+    int exitCode() { Process g = gradle; return g == null || g.isAlive() ? -1 : g.exitValue(); }
+
+    /** Stop the Gradle run (and with it the game, if Gradle still holds it). */
+    void stopGradle() { Process g = gradle; if (g != null && g.isAlive()) { g.descendants().forEach(ProcessHandle::destroy); g.destroy(); } }
+
     private void pump(Process p) {
         try (var r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
             boolean why = false;   // after "* What went wrong:" show the reason lines, they are the useful part
             for (String line; (line = r.readLine()) != null; ) {
+                var out = output;
+                if (out != null) out.accept(line);
                 if (line.startsWith("* What went wrong")) { why = true; continue; }
                 if (line.startsWith("* Try")) why = false;
                 if (why && !line.isBlank()) log.accept("[gradle] " + line.strip());

@@ -18,6 +18,8 @@
         <fileEditorProvider implementation="dev.sulfurframe.idea.GameTab$Provider"/>
         <notificationGroup id="SulfurFrame" displayType="BALLOON"/>
         <statusBarWidgetFactory id="SulfurFrame.Status" implementation="dev.sulfurframe.idea.SulfurStatusWidget$Factory" order="first"/>
+        <configurationType implementation="dev.sulfurframe.idea.SulfurRunConfigurationType"/>
+        <programRunner implementation="dev.sulfurframe.idea.SulfurProgramRunner"/>
         <projectConfigurable parentId="tools" instance="dev.sulfurframe.idea.SulfurConfigurable" id="dev.sulfurframe.settings" displayName="SulfurFrame"/>
     </extensions>
     <actions>
@@ -43,8 +45,6 @@
                 description="Reload changed classes into the running game whenever a source file is saved"/>
         <action id="SulfurFrame.SharedWorlds" class="dev.sulfurframe.idea.SfActions$SharedWorlds" text="Shared Worlds"
                 description="Worlds, options and resource packs shared by all projects of the same Minecraft version"/>
-        <action id="SulfurFrame.Debug" class="dev.sulfurframe.idea.SfActions$Debug" text="Attach Debugger on Run"
-                description="Run Client starts the game with a debug port and attaches the IDE debugger"/>
         <action id="SulfurFrame.KeepRatio" class="dev.sulfurframe.idea.SfActions$KeepRatio" text="Keep 16:9"
                 description="Black bars instead of stretching the game to the panel"/>
         <action id="SulfurFrame.OpenAsTab" class="dev.sulfurframe.idea.SfActions$OpenAsTab" text="Open Game as Editor Tab"
@@ -68,7 +68,6 @@
         <group id="SulfurFrame.Options" text="Options" popup="true" icon="AllIcons.General.GearPlain">
             <reference ref="SulfurFrame.HotswapOnSave"/>
             <reference ref="SulfurFrame.SharedWorlds"/>
-            <reference ref="SulfurFrame.Debug"/>
             <reference ref="SulfurFrame.KeepRatio"/>
             <separator/>
             <reference ref="SulfurFrame.OpenAsTab"/>

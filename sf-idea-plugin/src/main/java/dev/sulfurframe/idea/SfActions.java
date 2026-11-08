@@ -84,10 +84,6 @@ final class SfActions {
         boolean get() { return Settings.sharedWorlds(); }
         void set(boolean on) { Settings.set(Settings.SHARED_WORLDS, on, false); }
     }
-    public static final class Debug extends SettingToggle {
-        boolean get() { return Settings.debug(); }
-        void set(boolean on) { Settings.set(Settings.DEBUG, on, false); }
-    }
     public static final class KeepRatio extends SettingToggle {
         boolean get() { return Settings.keepRatio(); }
         void set(boolean on) { Settings.set(Settings.KEEP_RATIO, on, true); }

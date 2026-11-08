@@ -393,3 +393,11 @@ Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client +
 - **Settings | Tools | SulfurFrame** (`SulfurConfigurable.java`): Hotswap on save, 공유 월드, Run 때 디버거, 16:9, 코딩 중 프레임 상한(끄기 가능, 기본 15), 개발 모드 목록(IDE 전체 / 이 프로젝트만). 설정은 `Settings.java` 한 곳을 거치고, 예전 키를 그대로 써서 이전 선택이 이어집니다.
 - **상태 표시줄** (`SulfurStatusWidget.java`): 게임이 붙으면 `⛏ playing · 144 fps · 20 TPS · 2.1/4.0 GB`. 숫자는 에이전트가 1초마다 파일로 써 줍니다(`stats=`, `GameStats`). 누르면 SulfurFrame 메뉴.
 - **아래 툴 윈도우 "Minecraft Log"** (`SulfurLogToolWindowFactory.java`): Game log, Problems, SulfurFrame 로그 탭. Run/Build 창과 같은 자리입니다. 패널은 두 툴 윈도우 중 먼저 열리는 쪽이 만듭니다(`PanelHost.obtain`).
+
+## 실행 구성 (UI 2단계)
+마인크래프트 클라이언트가 IntelliJ 실행 구성이 됩니다(`SulfurRunConfigurationType`, `SulfurRunConfiguration`, `SulfurRunState`, `SulfurProgramRunner`).
+- 스캔이 찾은 클라이언트마다 "Minecraft: <위치> [태스크]" 실행 구성을 만듭니다. 메인 툴바의 실행 구성 목록에서 고르고 ▶ Run, 🐞 Debug, ■ Stop, Rerun(Ctrl+F5), Shift+F10/F9를 그대로 씁니다. 패널의 대상 콤보박스는 없어졌고, 패널 기능(핫스왑, Inspect …)은 선택된 실행 구성의 클라이언트를 따릅니다.
+- 실행은 예전처럼 패널이 합니다(Gradle, 에이전트, 임베드). Run 창에는 Gradle과 게임의 출력이 소스 링크와 함께 나옵니다.
+- **Stop**은 프로세스를 죽이지 않고 저장 후 종료합니다(에이전트 `world=…,quit`). 그때 있던 월드를 기억해서 **Rerun**은 같은 월드로 돌아갑니다. 실행 구성에 "Join world"를 적으면 처음부터 그 월드로 들어갑니다.
+- **Debug**로 실행하면 디버그 포트를 열고 창이 뜨면 디버거를 붙입니다(설정의 "Debug" 체크박스를 대신함).
+- 패널의 Restart, Test world 등도 실행 구성을 거쳐 시작해서, Run 창이 늘 지금 게임을 보여 줍니다.

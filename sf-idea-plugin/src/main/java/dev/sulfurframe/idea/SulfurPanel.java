@@ -33,7 +33,6 @@ final class SulfurPanel extends JPanel {
     void syncSettings() {
         swapOnSave.setSelected(Settings.hotswapOnSave());
         shareWorlds.setSelected(Settings.sharedWorlds());
-        debug.setSelected(Settings.debug());
         if (keepRatio.isSelected() != Settings.keepRatio()) { keepRatio.setSelected(Settings.keepRatio()); embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0); }
     }
     private final Path projectDir;
@@ -60,7 +59,6 @@ final class SulfurPanel extends JPanel {
 
         log.setEditable(false);
         log.setFont(consoleFont());   // same font as the Game log console next to it
-        targets.setRenderer(new MarqueeRenderer<>(targets));   // long client names scroll instead of being cut
         targets.addActionListener(e -> onTargetSelected());
         // The functions are IDE actions (SfActions, plugin.xml): the same ones are in Tools | SulfurFrame, the status
         // bar menu, Find Action and the keymap. Here they form an icon toolbar that folds what does not fit behind ».
@@ -80,7 +78,6 @@ final class SulfurPanel extends JPanel {
         debug.setToolTipText("Run client with a debug port and attach the IDE debugger (breakpoints; the game pauses while stopped)");
         debug.addActionListener(e -> Settings.set(Settings.DEBUG, debug.isSelected(), false));
         var north = new JPanel(new BorderLayout());
-        north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);
         add(north, BorderLayout.NORTH);
         add(embedder.component(), BorderLayout.CENTER);
@@ -124,6 +121,7 @@ final class SulfurPanel extends JPanel {
         for (int i = 0; i < targets.getItemCount(); i++)
             if (key(targets.getItemAt(i)).equals(want)) { targets.setSelectedIndex(i); break; }
         onTargetSelected();
+        ensureConfigs(found);
     }
 
     private void onTargetSelected() {
@@ -135,7 +133,7 @@ final class SulfurPanel extends JPanel {
         t.profile().evidence().forEach(e -> log("  " + e));
     }
 
-    private static String key(Workspace.Target t) { return t.buildRoot() + "|" + t.projectPath() + (t.task().equals("runClient") ? "" : "|" + t.task()); }
+    static String key(Workspace.Target t) { return t.buildRoot() + "|" + t.projectPath() + (t.task().equals("runClient") ? "" : "|" + t.task()); }
 
     void runClient() { runClient(List.of()); }
 
@@ -144,11 +142,13 @@ final class SulfurPanel extends JPanel {
         if (t == null || !t.profile().isComplete()) { log("pick a client to run (none detected)"); return; }
         if (launcher.running() || launching.get()) { log("the game is already running (or still starting): use Restart to start it again"); return; }
         if (!t.hasWrapper()) log("note: " + t.where() + " has no Gradle wrapper of its own; using the nearest parent's");
-        launch(t, gameArgs);
+        startRun(t, gameArgs, debug.isSelected());
     }
 
     /** Every launch (Run client, Restart): shared instance first if on, Gradle, embed, and collect when the game ends. */
-    private void launch(Workspace.Target t, List<String> gameArgs) {
+    private void launch(Workspace.Target t, List<String> gameArgs, boolean debugRun, SulfurRunState.Session session) {
+        currentDebug = debugRun;
+        launcher.output = session == null ? null : session::line;
         String mc = t.profile().minecraftVersion();
         Path run = SharedInstance.runDir(t);
         boolean share = shareWorlds.isSelected();
@@ -158,7 +158,7 @@ final class SulfurPanel extends JPanel {
         }
         if (gameLogPanel != null) gameLogPanel.follow(t);
         int port = 0;
-        if (debug.isSelected() && project != null) {
+        if (debugRun && project != null) {
             try { port = DebugAttach.freePort(); } catch (java.io.IOException e) { log("no free port for the debugger: " + e); }
         }
         final int debugPort = port;
@@ -176,7 +176,11 @@ final class SulfurPanel extends JPanel {
                             TempWorlds.unpinAll();
                             if (debugPort > 0) DebugAttach.attach(project, debugPort, this::log);
                         }),
-                        () -> { if (share) SharedInstance.collect(run, mc); TempWorlds.sweep(this::log); });
+                        () -> {
+                            if (share) SharedInstance.collect(run, mc);
+                            TempWorlds.sweep(this::log);
+                            if (session != null) session.ended(launcher.exitCode());
+                        });
             } finally {
                 launching.set(false);
             }
@@ -192,8 +196,8 @@ final class SulfurPanel extends JPanel {
 
     private com.intellij.openapi.project.Project project;
 
-    /** Start the game with a JDWP agent and attach the IDE debugger once it is up. */
-    final JCheckBox debug = new JCheckBox("Debug", Settings.debug());
+    /** Panel-started launches use the Debug executor (debug port + debugger attach); the IDE's Debug button does the same. */
+    final JCheckBox debug = new JCheckBox("Debug", false);
 
     /** The IDE console font (Settings | Editor | Color Scheme | Console Font), what the Game log console uses. */
     private static Font consoleFont() {
@@ -215,7 +219,14 @@ final class SulfurPanel extends JPanel {
     /** One game folder per Minecraft version for all projects (worlds, options, resource packs). */
     final JCheckBox shareWorlds = new JCheckBox("Shared worlds", Settings.sharedWorlds());
 
-    Workspace.Target selectedTarget() { return (Workspace.Target) targets.getSelectedItem(); }
+    /** The client the IDE's selected run configuration starts (if it is one of ours), else the last one used. */
+    Workspace.Target selectedTarget() {
+        if (project != null && !project.isDisposed()) {
+            var sel = com.intellij.execution.RunManager.getInstance(project).getSelectedConfiguration();
+            if (sel != null && sel.getConfiguration() instanceof SulfurRunConfiguration c) { var t = targetByKey(c.target); if (t != null) return t; }
+        }
+        return (Workspace.Target) targets.getSelectedItem();
+    }
 
     /** Compile the selected target and reload what changed into the running game (background thread). */
     void hotswapAsync() {
@@ -274,7 +285,8 @@ final class SulfurPanel extends JPanel {
             TempWorlds.pin(world);   // coming back into it: the old game's exit sweep must not take it
             var args = !world.isEmpty() && quickPlay(t.profile().minecraftVersion()) ? List.of("--quickPlaySingleplayer", world) : List.<String>of();
             lastRestartWorld = world;
-            SwingUtilities.invokeLater(() -> launch(t, args));
+            for (int i = 0; i < 300 && launcher.running(); i++) Thread.sleep(100);   // the old run ends (its Run tab shows it), then the new one starts
+            SwingUtilities.invokeLater(() -> startRun(t, args, currentDebug));
         } catch (Exception e) {
             log("restart failed: " + e);
         } finally {
@@ -433,7 +445,7 @@ final class SulfurPanel extends JPanel {
             log((temporary ? "temporary " : "") + "test world '" + name + "' created (superflat, creative, cheats, no day/weather cycle"
                     + (temporary ? "; deleted when the game exits" : "") + ")");
             if (embedder.attached()) restart(name, null);
-            else { final String n = name; SwingUtilities.invokeLater(() -> launch(t, List.of("--quickPlaySingleplayer", n))); }
+            else { final String n = name; SwingUtilities.invokeLater(() -> startRun(t, List.of("--quickPlaySingleplayer", n), debug.isSelected())); }
         } catch (Exception e) {
             log("test world failed: " + e);
         }
@@ -477,6 +489,107 @@ final class SulfurPanel extends JPanel {
     /** Dev mods are edited on the settings page (Settings | Tools | SulfurFrame). */
     void editDevMods() {
         com.intellij.openapi.options.ShowSettingsUtil.getInstance().showSettingsDialog(project, SulfurConfigurable.class);
+    }
+
+    // ------------------------------------------------------------------ run configurations
+
+    /** Debug mode of the current / last launch: a restart keeps it. */
+    private volatile boolean currentDebug;
+    private final java.util.Map<String, String> quitWorlds = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Long> quitTimes = new java.util.concurrent.ConcurrentHashMap<>();
+
+    Workspace.Target targetByKey(String key) {
+        for (int i = 0; i < targets.getItemCount(); i++) if (key(targets.getItemAt(i)).equals(key)) return targets.getItemAt(i);
+        return null;
+    }
+
+    /** World the game of this client was in when it was last stopped from the IDE (within 30 min), else "". */
+    String lastQuitWorld(Workspace.Target t) {
+        Long at = quitTimes.get(key(t));
+        return at != null && System.currentTimeMillis() - at < 30 * 60_000 ? quitWorlds.getOrDefault(key(t), "") : "";
+    }
+
+    /** The run configuration of a client, created if it has none yet. EDT. */
+    private com.intellij.execution.RunnerAndConfigurationSettings configFor(Workspace.Target t) {
+        var rm = com.intellij.execution.RunManager.getInstance(project);
+        for (var s : rm.getConfigurationSettingsList(SulfurRunConfigurationType.get()))
+            if (s.getConfiguration() instanceof SulfurRunConfiguration c && c.target.equals(key(t))) return s;
+        var s = rm.createConfiguration(SulfurRunConfiguration.nameFor(t), SulfurRunConfigurationType.get().factory());
+        ((SulfurRunConfiguration) s.getConfiguration()).target = key(t);
+        rm.addConfiguration(s);
+        return s;
+    }
+
+    /** Every detected client gets its run configuration; the remembered one is selected if nothing of ours is. */
+    private void ensureConfigs(List<Workspace.Target> found) {
+        if (project == null || found.isEmpty()) return;
+        SwingUtilities.invokeLater(() -> {
+            if (project.isDisposed()) return;
+            var rm = com.intellij.execution.RunManager.getInstance(project);
+            com.intellij.execution.RunnerAndConfigurationSettings remembered = null;
+            for (var t : found) { var s = configFor(t); if (key(t).equals(savedTarget.get())) remembered = s; }
+            var sel = rm.getSelectedConfiguration();
+            if (sel == null || !(sel.getConfiguration() instanceof SulfurRunConfiguration)) rm.setSelectedConfiguration(remembered != null ? remembered : configFor(found.get(0)));
+        });
+    }
+
+    /** Start a client through its run configuration (Run window, Stop, Rerun); without a project directly. */
+    void startRun(Workspace.Target t, List<String> gameArgs, boolean debugRun) {
+        if (project == null) { launch(t, gameArgs, debugRun, null); return; }
+        try {
+            var s = configFor(t);
+            var executor = debugRun ? com.intellij.execution.executors.DefaultDebugExecutor.getDebugExecutorInstance()
+                    : com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance();
+            var env = com.intellij.execution.runners.ExecutionEnvironmentBuilder.create(executor, s).build();
+            env.putUserData(SulfurRunState.GAME_ARGS, gameArgs);
+            com.intellij.execution.ProgramRunnerUtil.executeConfiguration(env, false, true);
+        } catch (Exception e) {
+            log("could not start the run configuration: " + e.getMessage());
+        }
+    }
+
+    /** Called by a run configuration's state. False if a game of ours is already running or starting. */
+    boolean launchSession(Workspace.Target t, List<String> gameArgs, boolean debugRun, SulfurRunState.Session session) {
+        if (launcher.running() || launching.get()) return false;
+        if (!t.hasWrapper()) log("note: " + t.where() + " has no Gradle wrapper of its own; using the nearest parent's");
+        saveTarget.accept(key(t));
+        selectInList(t);
+        launch(t, gameArgs, debugRun, session);
+        return true;
+    }
+
+    /** Stop from the Run window: save and quit (remembering the world for Rerun), stop Gradle if the game is gone. */
+    void stopSession(SulfurRunState.Session session) {
+        var t = selectedTarget();
+        Thread.ofPlatform().daemon().name("sf-stop").start(() -> {
+            try {
+                long pid = embedder.gamePid();
+                var game = pid > 0 ? ProcessHandle.of(pid).orElse(null) : null;
+                if (game != null && game.isAlive()) {
+                    Path wf = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "world-" + pid + "-stop.txt");
+                    Files.deleteIfExists(wf);
+                    Hotswapper.loadAgent(pid, agentJar, "codingFps=" + Settings.codingFps() + ",world=" + wf + ",quit");
+                    for (int i = 0; i < 50 && !Files.exists(wf); i++) Thread.sleep(100);
+                    String world = Files.exists(wf) ? Files.readString(wf, StandardCharsets.UTF_8).strip() : "";
+                    if (t != null) { quitWorlds.put(key(t), world); quitTimes.put(key(t), System.currentTimeMillis()); }
+                    log("stop: saving and quitting" + (world.isEmpty() ? "" : " (world '" + world + "')"));
+                    try { game.onExit().get(90, java.util.concurrent.TimeUnit.SECONDS); }
+                    catch (java.util.concurrent.TimeoutException e) { log("stop: the game did not exit in 90 s, stopping it"); game.destroyForcibly(); }
+                }
+                for (int i = 0; i < 100 && launcher.running(); i++) Thread.sleep(100);
+                launcher.stopGradle();
+                for (int i = 0; i < 50 && launcher.running(); i++) Thread.sleep(100);
+            } catch (Exception e) {
+                log("stop failed: " + e);
+                launcher.stopGradle();
+            } finally {
+                if (!launcher.running()) session.ended(launcher.exitCode());
+            }
+        });
+    }
+
+    private void selectInList(Workspace.Target t) {
+        SwingUtilities.invokeLater(() -> { for (int i = 0; i < targets.getItemCount(); i++) if (targets.getItemAt(i) == t) { targets.setSelectedIndex(i); break; } });
     }
 
     // ------------------------------------------------------------------ stats (status bar)
@@ -611,6 +724,9 @@ final class SulfurPanel extends JPanel {
 
     /** For the self-test. */
     int targetCount() { return targets.getItemCount(); }
-    void selectTarget(int i) { targets.setSelectedIndex(i); }
+    void selectTarget(int i) {
+        targets.setSelectedIndex(i);
+        if (project != null) com.intellij.execution.RunManager.getInstance(project).setSelectedConfiguration(configFor(targets.getItemAt(i)));
+    }
     Workspace.Target targetAt(int i) { return targets.getItemAt(i); }
 }

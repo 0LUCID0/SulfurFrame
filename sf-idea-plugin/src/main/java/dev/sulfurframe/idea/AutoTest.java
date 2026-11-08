@@ -497,6 +497,26 @@ final class AutoTest {
         final boolean[] ok = new boolean[1];
         onEdt(() -> ok[0] = page.createComponent() != null && !page.isModified());
         check("settings page builds, nothing modified", ok[0], "Settings | Tools | SulfurFrame");
+        runConfigChecks(p);
+    }
+
+    /** UI phase 2: run configurations, the Run window, Rerun = save, quit and back into the same world. */
+    private static void runConfigChecks(SulfurPanel p) {
+        var rm = com.intellij.execution.RunManager.getInstance(project);
+        int configs = rm.getConfigurationSettingsList(SulfurRunConfigurationType.get()).size();
+        check("run configurations created for the clients", configs >= p.targetCount(), configs + " for " + p.targetCount() + " client(s)");
+        com.intellij.execution.ui.RunContentDescriptor d = null;
+        for (var x : com.intellij.execution.ui.RunContentManager.getInstance(project).getAllDescriptors())
+            if (x.getProcessHandler() instanceof SulfurRunState.Session s && !s.isProcessTerminated()) d = x;
+        check("the running game has a Run window tab", d != null, d == null ? "none" : d.getDisplayName());
+        if (d == null || !p.embedder.attached()) return;
+        Path gameLog = SharedInstance.runDir(p.selectedTarget()).resolve("logs/latest.log");
+        long before = p.embedder.gamePid();
+        final var desc = d;
+        onEdt(() -> com.intellij.execution.runners.ExecutionUtil.restart(desc));   // the IDE's Rerun
+        boolean back = waitForNewGame(p, before, gameLog, 300) && waitForLog(gameLog, "joined the game", 120);
+        check("Rerun: saved and quit, then back in the same world", back && p.logText().contains("stop: saving and quitting (world 'SFWorld')"),
+                "new game " + back + ", " + (p.logText().contains("stop: saving and quitting") ? "stopped gracefully" : "no graceful stop"));
     }
 
     /** Focus the game, move the real mouse over it, and see the player turn (yaw from the agent's look report). */

@@ -26,7 +26,7 @@ final class GameSession {
     static void writeWorld(Instrumentation inst, String file) {
         String world = "";
         try { world = openWorld(inst); } catch (Throwable t) { SfHooks.log("session: world lookup failed: " + t); }
-        try { Files.write(Paths.get(file), Collections.singletonList(world), StandardCharsets.UTF_8); } catch (IOException ignored) { }
+        try { AnswerFile.write(file, Collections.singletonList(world)); } catch (IOException ignored) { }
         SfHooks.log("session: open world '" + world + "'");
     }
 
@@ -103,7 +103,7 @@ final class GameSession {
 
     private static void done(String file, String text) {
         if (file == null) return;
-        try { Files.write(Paths.get(file), Collections.singletonList(text), StandardCharsets.UTF_8); } catch (IOException ignored) { }
+        try { AnswerFile.write(file, Collections.singletonList(text)); } catch (IOException ignored) { }
     }
 
     /** Ask the game to quit normally (saves the world), through the window like the lifeboat does. */

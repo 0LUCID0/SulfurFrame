@@ -126,7 +126,7 @@ final class LookAt {
     private static List<String> list(String s) { List<String> l = new ArrayList<String>(); l.add(s); return l; }
 
     private static void out(String file, List<String> lines) {
-        try { Files.write(Paths.get(file), lines, StandardCharsets.UTF_8); } catch (IOException ignored) { }
+        try { AnswerFile.write(file, lines); } catch (IOException ignored) { }
     }
 
     private LookAt() {}
