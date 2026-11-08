@@ -36,6 +36,7 @@ final class SulfurPanel extends JPanel {
     final Hotswapper hotswapper;
     private final Path agentJar;
     private final JCheckBox swapOnSave = new JCheckBox("Hotswap on save", true);
+    private final JCheckBox keepRatio = new JCheckBox("16:9 (black bars)", true);
 
     SulfurPanel(Path projectDir, Supplier<String> savedTarget, Consumer<String> saveTarget, Runnable openAsTab) {
         super(new BorderLayout());
@@ -53,47 +54,66 @@ final class SulfurPanel extends JPanel {
         log.setFont(consoleFont());   // same font as the Game log console next to it
         targets.setRenderer(new MarqueeRenderer<>(targets));   // long client names scroll instead of being cut
         targets.addActionListener(e -> onTargetSelected());
-        var buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+        // Frequent actions are buttons that wrap to more rows in a narrow tool window; the world tools and the
+        // settings / rarely used actions sit behind two menu buttons, so a sidebar-width panel shows everything.
+        var buttons = new JPanel(new WrapLayout(FlowLayout.LEFT, 4, 2));
+        buttons.addComponentListener(new java.awt.event.ComponentAdapter() {   // the row count follows the new width
+            private int lastHeight = -1;
+            @Override public void componentResized(java.awt.event.ComponentEvent e) {
+                int h = buttons.getPreferredSize().height;
+                if (h != lastHeight) { lastHeight = h; SwingUtilities.invokeLater(buttons::revalidate); }
+            }
+        });
         buttons.add(button("Run client", this::runClient));
-        buttons.add(button("Attach PID…", () -> {
-            String s = JOptionPane.showInputDialog(this, "PID of a running Minecraft:");
-            if (s != null && !s.isBlank()) embedder.attach(Long.parseLong(s.trim()));
-        }));
-        buttons.add(button("Detach", embedder::detach));
-        buttons.add(button("Rescan", this::scan));
-        buttons.add(button("Open as tab", openAsTab));
-        var keepRatio = new JCheckBox("16:9", true);
-        keepRatio.setToolTipText("Keep the game at 16:9 (black bars) instead of stretching it to the panel");
-        keepRatio.addActionListener(e -> embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0));
-        buttons.add(keepRatio);
+        var restart = button("Restart", this::restartAsync);
+        restart.setToolTipText("Save and quit the game, start it again and go straight back into the same world");
+        buttons.add(restart);
         buttons.add(button("Hotswap", this::hotswapAsync));
         var gen = button("Datagen", this::datagenAsync);
         gen.setToolTipText("Run the data generators (runDatagen / runData) and reload what they changed in the running game");
         buttons.add(gen);
-        var restart = button("Restart", this::restartAsync);
-        restart.setToolTipText("Save and quit the game, start it again and go straight back into the same world");
-        buttons.add(restart);
-        buttons.add(button("Snapshot", this::snapshotAsync));
-        buttons.add(button("Restore…", this::restoreAsync));
-        var tw = button("Test world", () -> testWorldAsync(false));
-        tw.setToolTipText("A kept test world (superflat, creative, cheats)");
-        buttons.add(tw);
-        var tmp = button("Temp world", () -> testWorldAsync(true));
-        tmp.setToolTipText("A throwaway test world: deleted automatically once the game exits");
-        buttons.add(tmp);
         var look = button("Inspect", this::inspectAsync);
         look.setToolTipText("What the player is looking at: block state, block entity / entity and its NBT, and its class");
         buttons.add(look);
+
+        var worlds = new JPopupMenu();
+        worlds.add(menuItem("Snapshot", "Copy the open world (after saving it) so it can be restored", this::snapshotAsync));
+        worlds.add(menuItem("Restore…", "Put a world back to a snapshot and restart into it", this::restoreAsync));
+        worlds.addSeparator();
+        worlds.add(menuItem("Test world", "A kept test world (superflat, creative, cheats)", () -> testWorldAsync(false)));
+        worlds.add(menuItem("Temp world", "A throwaway test world: deleted automatically once the game exits", () -> testWorldAsync(true)));
+        buttons.add(menuButton("Worlds ▾", worlds));
+
+        keepRatio.setToolTipText("Keep the game at 16:9 (black bars) instead of stretching it to the panel");
+        keepRatio.addActionListener(e -> embedder.setAspect(keepRatio.isSelected() ? 16.0 / 9.0 : 0));
         swapOnSave.setToolTipText("Compile and reload changed classes into the running game whenever a source file is saved");
-        buttons.add(swapOnSave);
         shareWorlds.setToolTipText("Worlds, options and resource packs shared by all projects of the same Minecraft version ("
                 + SharedInstance.root() + "). Existing worlds of a project move there when it is first launched; nothing is deleted.");
         shareWorlds.addActionListener(e -> com.intellij.ide.util.PropertiesComponent.getInstance().setValue("sulfurframe.sharedInstance", shareWorlds.isSelected(), false));
-        buttons.add(shareWorlds);
         debug.setToolTipText("Run client with a debug port and attach the IDE debugger (breakpoints; the game pauses while stopped)");
         debug.addActionListener(e -> com.intellij.ide.util.PropertiesComponent.getInstance().setValue("sulfurframe.debug", debug.isSelected(), false));
-        buttons.add(debug);
-        buttons.add(button("Dev mods…", this::editDevMods));
+        var more = new JPopupMenu();
+        more.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {   // rebuilt on open: the check marks follow the settings
+            @Override public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+                more.removeAll();
+                for (JCheckBox c : new JCheckBox[]{swapOnSave, shareWorlds, debug, keepRatio}) more.add(checkItem(c));
+                more.addSeparator();
+                more.add(menuItem("Dev mods…", "Mods every dev client gets (Mod Menu, EMI, Jade ...)", SulfurPanel.this::editDevMods));
+                more.addSeparator();
+                more.add(menuItem("Open as tab", "Show the game in an editor tab instead of this tool window", openAsTab));
+                more.add(menuItem("Attach PID…", "Embed a Minecraft that is already running", () -> {
+                    String s = JOptionPane.showInputDialog(SulfurPanel.this, "PID of a running Minecraft:");
+                    if (s != null && !s.isBlank()) embedder.attach(Long.parseLong(s.trim()));
+                }));
+                more.add(menuItem("Detach", "Give the game window back as a normal window", embedder::detach));
+                more.add(menuItem("Rescan", "Look for runnable clients in the project again", SulfurPanel.this::scan));
+            }
+            @Override public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) { }
+            @Override public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) { }
+        });
+        var moreButton = menuButton("⋯", more);
+        moreButton.setToolTipText("Settings and more: hotswap on save, shared worlds, debug, 16:9, dev mods, open as tab, attach / detach, rescan");
+        buttons.add(moreButton);
         var north = new JPanel(new BorderLayout());
         north.add(targets, BorderLayout.NORTH);
         north.add(buttons, BorderLayout.CENTER);
@@ -112,6 +132,27 @@ final class SulfurPanel extends JPanel {
         add(bottom, BorderLayout.SOUTH);
         scan();
         Thread.ofPlatform().daemon().name("sf-temp-sweep").start(() -> TempWorlds.sweep(this::log));   // left over from a previous IDE session
+    }
+
+    private JMenuItem menuItem(String text, String tip, Runnable r) {
+        var m = new JMenuItem(text);
+        m.setToolTipText(tip);
+        m.addActionListener(e -> r.run());
+        return m;
+    }
+
+    /** A menu check item standing for a settings checkbox (the checkbox keeps the state and its listeners). */
+    private JCheckBoxMenuItem checkItem(JCheckBox c) {
+        var m = new JCheckBoxMenuItem(c.getText(), c.isSelected());
+        m.setToolTipText(c.getToolTipText());
+        m.addActionListener(e -> { if (c.isSelected() != m.isSelected()) c.doClick(); });
+        return m;
+    }
+
+    private JButton menuButton(String text, JPopupMenu menu) {
+        var b = new JButton(text);
+        b.addActionListener(e -> menu.show(b, 0, b.getHeight()));
+        return b;
     }
 
     private JButton button(String text, Runnable r) {
