@@ -139,3 +139,16 @@ Java 설정, 전역), 공식 런처(설치 → 편집 → 추가 옵션 → JVM 
 `maxwells_chamber.enter`를 G로 바꿔도 마스터로 가지 않았고(E 유지), 그 모드가 없는 인스턴스에는 모드 키가 추가되지 않았습니다.
 
 플레이용 인스턴스(남의 모드가 든 Modrinth·Prism)의 키 복원은 `own-profiles --from-backup`으로 할 수 있습니다(미적용).
+
+## 2-4단계: IDE 플러그인과 연결
+
+- **플러그인이 실행하는 개발 클라이언트**(Run client)는 에이전트 인자로 `gameDir=<run 폴더>`, `ownMods=<모드ID+…>`,
+  `createMaster=true`를 넘깁니다. 실행 폴더와 개발 중인 모드는 추측하지 않고 열린 프로젝트에서 가져옵니다
+  (`sf-idea-plugin/.../profile/ModIds.java`). 마스터가 없으면 첫 개발 실행이 마스터를 만듭니다.
+- **`SharedInstance`(MC 버전별 공용 폴더)는 더 이상 `options.txt`를 통째로 복사하지 않습니다.** 같은 버전 프로젝트끼리 파일을
+  통째로 돌려쓰면 한 프로젝트의 모드 키가 다른 프로젝트로 넘어가고, 개발 중인 모드 키 제외도 무시됐습니다. 월드·리소스팩·
+  스크린샷·셰이더팩 링크와 `servers.dat`·`hotbar.nbt` 복사는 그대로입니다. `run/`에 `options.txt`가 아직 없는 새 프로젝트만
+  공용 폴더의 것을 한 번 받습니다.
+- 검증: 플러그인의 `ModIds`가 프로젝트 4곳의 ID를 읽었습니다(`maxwells_chamber`, `disconnected1nn`, `lcd`, `untitled1`).
+  플러그인과 같은 인자로 바닐라 1.21.1을 실행하니 빈 폴더에 마스터가 생겼고(144개), 넘긴 모드 ID(`testmod`)의 키는 마스터에
+  들어가지 않았습니다. **IDE 안에서 Run client로 실행하는 흐름은 아직 시험하지 않았습니다.**

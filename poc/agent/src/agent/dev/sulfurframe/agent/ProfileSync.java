@@ -12,8 +12,9 @@ import java.nio.file.Paths;
  * Runs in premain, before Minecraft reads options.txt, and again from a shutdown hook after it last saved it.
  * Works for any launcher: all of them let you add JVM arguments.
  *
- * Agent arguments: sync=off (disable), master=<dir> (default ~/.sulfurframe/profile), gameDir=<dir> (override).
- * Does nothing until a master profile exists (created by `OptionsSync pull --apply` or the IDE).
+ * Agent arguments: sync=off (disable), master=<dir> (default ~/.sulfurframe/profile), gameDir=<dir> (override),
+ * ownMods=<id>+<id> (the project's mod IDs, from the IDE), createMaster=true (start a master from this instance).
+ * Without createMaster it does nothing until a master profile exists (created by `OptionsSync pull --apply` or the IDE).
  */
 final class ProfileSync {
     static void start(String args) {
@@ -22,13 +23,17 @@ final class ProfileSync {
         final Path master = masterArg != null ? Paths.get(masterArg) : OptionsSync.defaultMaster();
         final Path gameDir = dirArg != null ? Paths.get(dirArg) : gameDir();
         if (gameDir == null) { SfHooks.log("auto-sync: game directory not found, skipped"); return; }
+        // from the IDE: ownMods=a+b (the project's mod IDs; '+' because ',' separates agent arguments), createMaster=true
+        String own = arg(args, "ownMods");
+        final java.util.Set<String> ownMods = own == null ? null : new java.util.TreeSet<>(java.util.Arrays.asList(own.isEmpty() ? new String[0] : own.split("\\+")));
+        boolean createMaster = "true".equals(arg(args, "createMaster"));
         try {
-            OptionsSync.atGameStart(gameDir, master);
+            OptionsSync.atGameStart(gameDir, master, ownMods, createMaster);
         } catch (Throwable t) {
             SfHooks.log("auto-sync at start failed (the game starts normally): " + t);
         }
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try { OptionsSync.atGameExit(gameDir, master); }
+            try { OptionsSync.atGameExit(gameDir, master, ownMods); }
             catch (Throwable t) { System.out.println("[SF-Sync] auto-sync at exit failed: " + t); }
         }, "sf-profile-sync"));
     }

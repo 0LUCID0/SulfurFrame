@@ -78,7 +78,13 @@ final class GameLauncher {
                 marker = tmp("launch-" + UUID.randomUUID() + ".pid");
                 Path init = tmp("sf-agent.init.gradle");
                 Files.writeString(init, AGENT_SCRIPT, StandardCharsets.UTF_8);
-                String spec = agentJar + "=codingFps=" + Settings.codingFps() + ",launch=" + marker;
+                // options sync: the IDE knows the run folder and the mods this project builds (their key bindings
+                // are left to the code's defaults), and starts the master profile on the first dev run
+                Path runDir = SharedInstance.runDir(target);
+                String ownMods = String.join("+", dev.sulfurframe.idea.profile.ModIds.of(target.dir()));
+                String spec = agentJar + "=codingFps=" + Settings.codingFps() + ",launch=" + marker
+                        + ",gameDir=" + runDir + ",ownMods=" + ownMods + ",createMaster=true";
+                log.accept("options sync: run folder " + runDir + (ownMods.isEmpty() ? "" : ", own mod keys left to the code: " + ownMods.replace('+', ' ')));
                 cmd.addAll(List.of("--init-script", init.toString(),
                         "-PsfAgent=" + Base64.getEncoder().encodeToString(spec.getBytes(StandardCharsets.UTF_8))));
             } else {

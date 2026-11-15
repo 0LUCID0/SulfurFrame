@@ -14,14 +14,20 @@ import java.util.stream.Stream;
  * point into ~/.sulfurframe/instances/<mc version>/:
  *   saves, resourcepacks, screenshots, shaderpacks   linked (Windows: directory junction, no admin rights needed;
  *                                                     elsewhere: symbolic link)
- *   options.txt, servers.dat, hotbar.nbt             copied in before a launch and back after the game exits (the game
+ *   servers.dat, hotbar.nbt                          copied in before a launch and back after the game exits (the game
  *                                                     rewrites these files whole, which would break a link)
+ *   options.txt                                      NOT copied any more: key bindings and options are merged through
+ *                                                     the master profile by the agent (dev.sulfurframe.profile
+ *                                                     .OptionsSync), across versions and launchers, and without moving
+ *                                                     one project's own mod keys into another. Copying the whole file
+ *                                                     between projects of a version did exactly that. A project whose
+ *                                                     run/ has no options.txt yet still gets the shared one once.
  * When a project is first linked, the worlds already in its run/saves move into the shared folder; a world whose name
  * is taken there keeps its data under "name (project)". Nothing is deleted.
  */
 final class SharedInstance {
     static final List<String> FOLDERS = List.of("saves", "resourcepacks", "screenshots", "shaderpacks");
-    static final List<String> FILES = List.of("options.txt", "servers.dat", "hotbar.nbt");
+    static final List<String> FILES = List.of("servers.dat", "hotbar.nbt");
 
     /** ~/.sulfurframe, or -Dsulfurframe.home (self-tests keep their worlds out of the real one). */
     static Path home() {
@@ -60,6 +66,10 @@ final class SharedInstance {
             if (Files.exists(from) && (!Files.exists(to) || Files.getLastModifiedTime(from).compareTo(Files.getLastModifiedTime(to)) > 0))
                 Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
         }
+        // a fresh project starts from the version's last options instead of the game's defaults; from then on the
+        // master profile keeps them in step
+        Path seed = shared.resolve("options.txt"), opts = run.resolve("options.txt");
+        if (Files.exists(seed) && !Files.exists(opts)) Files.copy(seed, opts);
         log.accept("shared instance " + mc + ": " + shared);
     }
 

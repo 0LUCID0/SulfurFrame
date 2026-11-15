@@ -233,10 +233,21 @@ public class OptionsSync {
      * Before the game reads options.txt: take this instance's edits made since the last sync (e.g. while the exit
      * sync could not run, after a crash) into the master, then merge everyone else's changes into this instance.
      */
-    public static void atGameStart(Path gameDir, Path masterDir) throws Exception {
-        if (!Files.exists(masterDir.resolve("options.master"))) { log("[SF-Sync] ", "no master profile yet (" + masterDir + "): auto-sync off"); return; }
+    public static void atGameStart(Path gameDir, Path masterDir) throws Exception { atGameStart(gameDir, masterDir, null, false); }
+
+    /**
+     * @param ownMods      mod IDs developed in this instance's project, as the IDE knows them (null: work them out from
+     *                     the folder); their key bindings are never synced
+     * @param createMaster with no master yet, start one from this instance (the IDE's dev runs) instead of doing nothing
+     */
+    public static void atGameStart(Path gameDir, Path masterDir, Set<String> ownMods, boolean createMaster) throws Exception {
+        if (!Files.exists(masterDir.resolve("options.master"))) {
+            if (!createMaster) { log("[SF-Sync] ", "no master profile yet (" + masterDir + "): auto-sync off"); return; }
+            log("[SF-Sync] ", "no master profile yet: starting one from " + gameDir);
+        }
         try (FileLock ignored = lock(masterDir)) {
             OptionsSync s = new OptionsSync(masterDir, "[SF-Sync] ");
+            s.ownModsOverride = ownMods;
             s.out("game start: " + gameDir);
             s.pullAll(Collections.singletonList(gameDir));
             s.saveMaster();
@@ -245,10 +256,13 @@ public class OptionsSync {
     }
 
     /** After the game has saved options.txt for the last time: take what the player changed into the master. */
-    public static void atGameExit(Path gameDir, Path masterDir) throws Exception {
+    public static void atGameExit(Path gameDir, Path masterDir) throws Exception { atGameExit(gameDir, masterDir, null); }
+
+    public static void atGameExit(Path gameDir, Path masterDir, Set<String> ownMods) throws Exception {
         if (!Files.exists(masterDir.resolve("options.master"))) return;
         try (FileLock ignored = lock(masterDir)) {
             OptionsSync s = new OptionsSync(masterDir, "[SF-Sync] ");
+            s.ownModsOverride = ownMods;
             s.out("game exit: " + gameDir);
             s.pullAll(Collections.singletonList(gameDir));
             s.saveMaster();
@@ -367,6 +381,7 @@ public class OptionsSync {
      * defaults from the code, or a changed default binding could never be tested (the master would put the old one back).
      */
     Set<String> ownMods = Collections.emptySet();
+    Set<String> ownModsOverride;   // from the IDE, which knows the project; null = detect from the folder
 
     boolean shared(String key) {
         if (!matches(share, key) || matches(keep, key)) return false;
@@ -386,7 +401,7 @@ public class OptionsSync {
         List<String> names = new ArrayList<>();
         if (Files.exists(pf)) for (String l : globs(pf)) for (String n : l.split(",")) if (!n.trim().isEmpty()) names.add(n.trim());
         active = names;
-        ownMods = devModIds(gameDir);
+        ownMods = ownModsOverride != null ? ownModsOverride : devModIds(gameDir);
     }
 
     // =================================================================== pull
