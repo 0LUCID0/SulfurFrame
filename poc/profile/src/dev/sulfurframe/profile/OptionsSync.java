@@ -57,13 +57,25 @@ public class OptionsSync {
         String cmd = a[0];
         Path master = defaultMaster();
         boolean apply = false;
-        List<Path> dirs = new ArrayList<>();
+        List<String> pos = new ArrayList<>();
         for (int i = 1; i < a.length; i++) {
             if (a[i].equals("--master")) master = Paths.get(a[++i]);
             else if (a[i].equals("--apply")) apply = true;
-            else dirs.add(Paths.get(a[i]));
+            else pos.add(a[i]);
         }
         OptionsSync sync = new OptionsSync(master, "");
+        if (cmd.equals("profile-new")) {   // profile-new <name> <gameDir> <key or glob>[,...]
+            sync.newProfile(pos.get(0), Paths.get(pos.get(1)), Arrays.asList(pos.get(2).split(",")), apply);
+            return;
+        }
+        if (cmd.equals("assign")) {        // assign <gameDir> <name>[,<name>...]   ("-" removes the assignment)
+            sync.assign(Paths.get(pos.get(0)), pos.get(1), apply);
+            return;
+        }
+        List<Path> dirs = new ArrayList<>();
+        for (String p : pos) dirs.add(Paths.get(p));
+        if (cmd.equals("profiles")) { sync.listProfiles(dirs); return; }
+        if (cmd.equals("suggest")) { sync.suggest(dirs); return; }
         if (cmd.equals("pull")) {
             sync.pullAll(dirs);
             if (apply) sync.saveMaster(); else System.out.println("(dry run: master not written; add --apply)");
@@ -72,6 +84,85 @@ public class OptionsSync {
             for (Path d : dirs) sync.push(d, write, true);
             if (cmd.equals("push") && !apply) System.out.println("(dry run: nothing written; add --apply)");
         } else throw new IllegalArgumentException(cmd);
+    }
+
+    // =================================================================== profiles (command line)
+
+    void listProfiles(List<Path> dirs) throws IOException {
+        if (profiles.isEmpty()) System.out.println("no profiles in " + masterDir.resolve("profiles"));
+        for (Map.Entry<String, Map<String, String>> p : profiles.entrySet())
+            System.out.println("profile " + p.getKey() + ": " + p.getValue().size() + " key(s) " + p.getValue().keySet());
+        for (Path d : dirs) { loadKeep(d); System.out.println("  " + d + " -> " + (active.isEmpty() ? "(base only)" : String.join("+", active))); }
+    }
+
+    /**
+     * Where do the instances disagree? Keys whose values split the instances the same way are grouped: each group is
+     * a candidate profile (e.g. the instances that unbind the shader keys, or that move attack to another button).
+     */
+    void suggest(List<Path> dirs) throws IOException {
+        Map<Path, Map<String, String>> vals = new LinkedHashMap<>();
+        for (Path d : dirs) {
+            loadKeep(d);
+            Path f = d.resolve("options.txt");
+            if (Files.exists(f)) vals.put(d, sharedValues(read(f)));
+        }
+        Set<String> keys = new TreeSet<>();
+        for (Map<String, String> m : vals.values()) keys.addAll(m.keySet());
+        Map<String, List<String>> bySplit = new LinkedHashMap<>();   // "value=instances | ..." -> keys
+        for (String k : keys) {
+            Map<String, List<String>> groups = new TreeMap<>();
+            for (Map.Entry<Path, Map<String, String>> e : vals.entrySet()) {
+                String v = e.getValue().get(k);
+                if (v != null) groups.computeIfAbsent(v, x -> new ArrayList<>()).add(name(e.getKey()));
+            }
+            if (groups.size() < 2) continue;
+            List<String> parts = new ArrayList<>();
+            for (List<String> g : groups.values()) parts.add(g.toString());
+            Collections.sort(parts);
+            bySplit.computeIfAbsent(String.join(" | ", parts), x -> new ArrayList<>()).add(k);
+        }
+        if (bySplit.isEmpty()) { System.out.println("the instances agree on every shared key"); return; }
+        int n = 0;
+        for (Map.Entry<String, List<String>> e : bySplit.entrySet()) {
+            System.out.println("candidate " + (++n) + ": " + e.getValue().size() + " key(s) " + e.getValue());
+            System.out.println("    split: " + e.getKey());
+        }
+        System.out.println("\nmake one with: profile-new <name> <gameDir> <key or glob>[,...]  then  assign <gameDir> <name>");
+    }
+
+    static String name(Path d) {
+        Path n = d.getFileName();
+        String s = n == null ? d.toString() : n.toString();
+        if ((s.equals("run") || s.equals("minecraft") || s.equals(".minecraft")) && d.getParent() != null) s = d.getParent().getFileName() + "/" + s;
+        return s;
+    }
+
+    /** New profile from an instance's current values for the matching shared keys. */
+    void newProfile(String name, Path from, List<String> globs, boolean apply) throws IOException {
+        if (!name.matches("[A-Za-z0-9_-]+")) throw new IllegalArgumentException("profile name: letters, digits, - and _ only");
+        loadKeep(from);
+        Map<String, String> m = new TreeMap<>();
+        for (Map.Entry<String, String> e : sharedValues(read(from.resolve("options.txt"))).entrySet())
+            if (matches(globs, e.getKey())) m.put(e.getKey(), e.getValue());
+        System.out.println("profile " + name + " from " + from + ": " + m.size() + " key(s)");
+        for (Map.Entry<String, String> e : m.entrySet()) System.out.println("  " + e.getKey() + ":" + e.getValue());
+        if (!apply) { System.out.println("(dry run: add --apply)"); return; }
+        profiles.put(name, m);
+        saveProfile(name);
+        System.out.println("written: " + masterDir.resolve("profiles").resolve(name + ".txt"));
+    }
+
+    void assign(Path gameDir, String names, boolean apply) throws IOException {
+        Path f = gameDir.resolve("sulfurframe-profile.txt");
+        if (names.equals("-")) {
+            System.out.println("remove " + f);
+            if (apply) Files.deleteIfExists(f); else System.out.println("(dry run: add --apply)");
+            return;
+        }
+        for (String n : names.split(",")) if (!profiles.containsKey(n.trim())) System.out.println("  ! no profile '" + n.trim() + "' yet");
+        System.out.println(gameDir + " -> " + names);
+        if (apply) write(f, "# SulfurFrame content profiles for this instance (later ones win)\n" + names + "\n");
+        else System.out.println("(dry run: add --apply)");
     }
 
     // =================================================================== auto-sync (called by the javaagent)
@@ -127,6 +218,15 @@ public class OptionsSync {
     final List<String> share;
     List<String> keep = Collections.emptyList();
 
+    /**
+     * Content profiles: named key->value sets (<master>/profiles/<name>.txt, "key:value" lines) layered over the base
+     * master for the instances that list them in <gameDir>/sulfurframe-profile.txt (later names win). An edit to a key
+     * a profile owns goes to that profile, so it reaches only the instances using the same profile.
+     */
+    final Map<String, Map<String, String>> profiles = new TreeMap<>();
+    final Set<String> dirtyProfiles = new TreeSet<>();
+    List<String> active = Collections.emptyList();
+
     OptionsSync(Path masterDir, String prefix) throws IOException {
         this.masterDir = masterDir;
         this.prefix = prefix;
@@ -139,6 +239,45 @@ public class OptionsSync {
         }
         Path sf = masterDir.resolve("share.txt");
         share = Files.exists(sf) ? globs(sf) : DEFAULT_SHARE;
+        Path pd = masterDir.resolve("profiles");
+        if (Files.isDirectory(pd)) {
+            try (DirectoryStream<Path> ds = Files.newDirectoryStream(pd, "*.txt")) {
+                for (Path p : ds) {
+                    Map<String, String> m = new TreeMap<>();
+                    for (String l : Files.readAllLines(p, StandardCharsets.UTF_8)) {
+                        int c = l.indexOf(':');
+                        if (c > 0 && !l.startsWith("#")) m.put(l.substring(0, c), l.substring(c + 1));
+                    }
+                    String n = p.getFileName().toString();
+                    profiles.put(n.substring(0, n.length() - 4), m);
+                }
+            }
+        }
+    }
+
+    void saveProfile(String name) throws IOException {
+        Path pd = masterDir.resolve("profiles");
+        Files.createDirectories(pd);
+        StringBuilder sb = new StringBuilder("# SulfurFrame content profile '" + name + "': key:value, layered over the base master\n");
+        for (Map.Entry<String, String> e : profiles.get(name).entrySet()) sb.append(e.getKey()).append(':').append(e.getValue()).append('\n');
+        write(pd.resolve(name + ".txt"), sb.toString());
+    }
+
+    /** The active profile (last listed wins) that owns this key, or null when the base master decides. */
+    String owner(String key) {
+        for (int i = active.size() - 1; i >= 0; i--) {
+            Map<String, String> p = profiles.get(active.get(i));
+            if (p != null && p.containsKey(key)) return active.get(i);
+        }
+        return null;
+    }
+
+    /** Value this instance should hold for a shared key: its profiles first, then the base master. */
+    String effective(String key) {
+        String o = owner(key);
+        if (o != null) return profiles.get(o).get(key);
+        Entry e = master.get(key);
+        return e == null ? null : e.value;
     }
 
     static List<String> globs(Path f) throws IOException {
@@ -154,6 +293,8 @@ public class OptionsSync {
             sb.append(e.getKey()).append('\t').append(e.getValue().value).append('\t')
               .append(e.getValue().modified).append('\t').append(e.getValue().source).append('\n');
         write(masterDir.resolve("options.master"), sb.toString());
+        for (String p : dirtyProfiles) { saveProfile(p); out("profile written: " + p); }
+        dirtyProfiles.clear();
         Path sf = masterDir.resolve("share.txt");
         if (!Files.exists(sf)) write(sf, "# options shared across instances (glob: *)\n" + String.join("\n", DEFAULT_SHARE) + "\n");
         out("master written: " + masterDir.resolve("options.master") + " (" + master.size() + " entries)");
@@ -170,6 +311,10 @@ public class OptionsSync {
     void loadKeep(Path gameDir) throws IOException {
         Path f = gameDir.resolve("sulfurframe-keep.txt");
         keep = Files.exists(f) ? globs(f) : Collections.<String>emptyList();
+        Path pf = gameDir.resolve("sulfurframe-profile.txt");   // profile names, one per line or comma separated
+        List<String> names = new ArrayList<>();
+        if (Files.exists(pf)) for (String l : globs(pf)) for (String n : l.split(",")) if (!n.trim().isEmpty()) names.add(n.trim());
+        active = names;
     }
 
     // =================================================================== pull
@@ -192,6 +337,16 @@ public class OptionsSync {
             int edited = 0;
             for (Map.Entry<String, String> e : values.entrySet()) {
                 String k = e.getKey(), v = e.getValue();
+                String o = owner(k);
+                if (o != null) {   // a profile owns this key here: edits go to the profile, and it takes no part in the base vote
+                    if (base != null && base.containsKey(k) && !base.get(k).equals(v) && !v.equals(profiles.get(o).get(k))) {
+                        profiles.get(o).put(k, v);
+                        dirtyProfiles.add(o);
+                        out("  profile " + o + ": " + k + " = " + v + " (edited in " + gameDir.getFileName() + ")");
+                        edited++;
+                    }
+                    continue;
+                }
                 if (base != null && base.containsKey(k) && !base.get(k).equals(v)) {
                     edits.computeIfAbsent(k, x -> new ArrayList<>()).add(new Edit(v, mtime, gameDir));
                     edited++;
@@ -286,9 +441,9 @@ public class OptionsSync {
         for (String l : lines) {
             int c = l.indexOf(':');
             String k = c > 0 ? l.substring(0, c) : null;
-            if (k == null || !shared(k) || !master.containsKey(k)) { result.add(l); if (k != null) seen.add(k); continue; }
+            if (k == null || !shared(k) || effective(k) == null) { result.add(l); if (k != null) seen.add(k); continue; }
             seen.add(k);
-            String want = convertFor(k, master.get(k).value, legacy);
+            String want = convertFor(k, effective(k), legacy);
             String have = l.substring(c + 1);
             if (want == null || want.equals(have)) { result.add(l); continue; }
             result.add(k + ":" + want);
@@ -297,16 +452,19 @@ public class OptionsSync {
         // keys this instance has never written: vanilla ones always, a mod's only where that mod is present
         Set<String> namespaces = new HashSet<>();
         for (String k : seen) if (k.startsWith("key_")) namespaces.add(namespace(k));
-        for (Map.Entry<String, Entry> e : master.entrySet()) {
-            String k = e.getKey();
+        Set<String> candidates = new TreeSet<>(master.keySet());
+        for (String p : active) if (profiles.containsKey(p)) candidates.addAll(profiles.get(p).keySet());
+        for (String k : candidates) {
             if (seen.contains(k) || !shared(k)) continue;
             if (k.startsWith("key_") && !namespace(k).equals("key") && !namespaces.contains(namespace(k))) continue;
-            String want = convertFor(k, e.getValue().value, legacy);
+            String want = convertFor(k, effective(k), legacy);
             if (want == null) continue;
             result.add(k + ":" + want);
             changes.add("  + " + k + ":" + want);
         }
-        out((write ? "push " : "would push to ") + gameDir + (legacy ? " [pre-1.13 keys]" : "") + ": " + changes.size() + " change(s)");
+        out((write ? "push " : "would push to ") + gameDir + (legacy ? " [pre-1.13 keys]" : "")
+                + (active.isEmpty() ? "" : " [profiles " + String.join("+", active) + "]") + ": " + changes.size() + " change(s)");
+        for (String p : active) if (!profiles.containsKey(p)) out("  ! unknown profile '" + p + "' in sulfurframe-profile.txt");
         int limit = Integer.getInteger("sf.limit", 40);
         for (int i = 0; i < Math.min(limit, changes.size()); i++) out(changes.get(i));
         if (changes.size() > limit) out("  … " + (changes.size() - limit) + " more");
