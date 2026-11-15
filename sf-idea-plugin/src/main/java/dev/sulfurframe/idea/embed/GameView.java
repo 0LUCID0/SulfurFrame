@@ -9,6 +9,8 @@ import java.util.function.Consumer;
  * {@link X11Embedder} (XReparentWindow; needs the IDE on XToolkit, not the Wayland toolkit).
  */
 public interface GameView {
+    /** The game's own word on whether it is fullscreen (true / false), or null if unknown; lets F11 be told apart from a merely borderless window. */
+    default void setFullscreenHint(java.util.function.Supplier<Boolean> hint) { }
     Component component();
     boolean attach(long pid);
     void detach();

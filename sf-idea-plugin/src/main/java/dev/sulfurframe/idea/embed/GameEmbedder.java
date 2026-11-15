@@ -246,14 +246,16 @@ public final class GameEmbedder implements GameView {
      * back as a clean child. Polled from the watchdog thread.
      */
     private long popupSince;   // when the embedded game turned WS_POPUP (0: it is not)
+    private volatile java.util.function.Supplier<Boolean> fullscreenHint = () -> null;
+    @Override public void setFullscreenHint(java.util.function.Supplier<Boolean> hint) { fullscreenHint = hint == null ? () -> null : hint; }
     private int borderlessFixes;
 
     /**
      * WS_POPUP alone is not F11: GLFW also gives an undecorated window that style when something recomputes its
-     * styles (seen with a mod-heavy build: the game "went fullscreen" right after embedding, every launch). A real
-     * F11 also sizes the window to the monitor (glfwSetWindowMonitor), so that is the test; a popup that stays at
-     * panel size is turned back into a plain child and stays in the IDE. A short grace period covers the moment
-     * between GLFW's style change and its resize.
+     * styles (seen with a mod-heavy build: the game "went fullscreen" right after embedding, every launch). The size
+     * cannot tell either (a child is never resized to the monitor). So the game is asked: the agent reports GLFW's
+     * own fullscreen state with its stats. Fullscreen -> out of the IDE; reported windowed (a fresh report, after a
+     * grace period) -> back to a plain child, stays embedded; no report (SDL, no agent) -> treated as F11 as before.
      */
     private void watchFullscreen() {
         long h = fullscreen ? fullscreenHwnd : game;
@@ -264,15 +266,17 @@ public final class GameEmbedder implements GameView {
         if (!popup) { popupSince = 0; return; }
         long now = System.currentTimeMillis();
         if (popupSince == 0) popupSince = now;
-        var r = Win32.windowRect(h);
-        Rectangle mon = monitorOfCanvas();
-        boolean coversMonitor = r != null && r.width() >= mon.width - 2 && r.height() >= mon.height - 2;
-        if (coversMonitor) { popupSince = 0; SwingUtilities.invokeLater(() -> enterFullscreen(h)); return; }
-        if (now - popupSince < 400) return;
+        Boolean says = fullscreenHint.get();
+        if (Boolean.TRUE.equals(says) || says == null && now - popupSince >= 400) {
+            popupSince = 0;
+            SwingUtilities.invokeLater(() -> enterFullscreen(h));
+            return;
+        }
+        if (now - popupSince < 2500) return;   // the stats report comes once a second: wait for one written after F11
         popupSince = 0;
         Win32.setLongPtr(h, Win32.GWL_STYLE, (style & ~(Win32.WS_POPUP | Win32.WS_CAPTION | Win32.WS_THICKFRAME)) | Win32.WS_CHILD | Win32.WS_VISIBLE);
         SwingUtilities.invokeLater(() -> syncBounds(Win32.SWP_FRAMECHANGED | Win32.SWP_SHOWWINDOW));
-        if (borderlessFixes++ == 0) log.accept("game window turned borderless without covering the monitor (not F11): kept in the IDE");
+        if (borderlessFixes++ == 0) log.accept("game window turned borderless but is not fullscreen (the game says so): kept in the IDE");
     }
 
     private void enterFullscreen(long h) {

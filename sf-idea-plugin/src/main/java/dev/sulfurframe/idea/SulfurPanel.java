@@ -51,6 +51,7 @@ final class SulfurPanel extends JPanel {
         this.savedTarget = savedTarget;
         this.saveTarget = saveTarget;
         embedder = GameView.create(this::log);
+        embedder.setFullscreenHint(() -> { var s = stats(); return s.containsKey("fullscreen") ? Boolean.valueOf(s.get("fullscreen")) : null; });
         launcher = new GameLauncher(this::log);
         hotswapper = new Hotswapper(this::log, Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe"));
         agentJar = extractAgent();

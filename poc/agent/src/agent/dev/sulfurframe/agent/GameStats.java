@@ -54,6 +54,8 @@ final class GameStats {
                 Runtime rt = Runtime.getRuntime();
                 out.add("heapMb=" + (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024));
                 out.add("maxMb=" + rt.maxMemory() / (1024 * 1024));
+                int fs = GlfwCursorFix.fullscreen;
+                if (fs >= 0) out.add("fullscreen=" + (fs == 1));
                 AnswerFile.write(file, out);
             } catch (InterruptedException e) {
                 return;

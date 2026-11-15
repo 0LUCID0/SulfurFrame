@@ -29,6 +29,10 @@ final class GlfwCursorFix {
     private static long checkedAt, window, hwnd;
     private static int lastMode;
     private static Method getInputMode, setInputMode, getWin32Window, invP, invPP, invPPPPI;
+    private static Method getWindowMonitor;
+    /** GLFW's own fullscreen state (window on a monitor): 1 / 0, -1 while unknown. Read by GameStats for the IDE, which
+     *  cannot tell F11 from a merely borderless window by its style alone. */
+    static volatile int fullscreen = -1;
     private static long fnGetFocus, fnGetParent, fnSendMessage;
     private static boolean addressFirst;
 
@@ -41,6 +45,7 @@ final class GlfwCursorFix {
             if (getInputMode == null) init();
             if (w != window) { window = w; hwnd = (Long) getWin32Window.invoke(null, w); lastMode = 0; }
             int mode = (Integer) getInputMode.invoke(null, w, GLFW_CURSOR);
+            fullscreen = (Long) getWindowMonitor.invoke(null, w) != 0 ? 1 : 0;
             int was = lastMode;
             lastMode = mode;
             boolean grab = mode == GLFW_CURSOR_DISABLED && was != GLFW_CURSOR_DISABLED;
@@ -83,6 +88,7 @@ final class GlfwCursorFix {
     private static void init() throws Exception {
         ClassLoader l = SfHooks.lwjglClassLoader();
         getInputMode = Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwGetInputMode", long.class, int.class);
+        getWindowMonitor = Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwGetWindowMonitor", long.class);
         setInputMode = Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwSetInputMode", long.class, int.class, int.class);
         getWin32Window = Class.forName("org.lwjgl.glfw.GLFWNativeWin32", false, l).getMethod("glfwGetWin32Window", long.class);
         Class<?> jni = Class.forName("org.lwjgl.system.JNI", false, l);
