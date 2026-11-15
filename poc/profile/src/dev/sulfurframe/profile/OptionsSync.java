@@ -68,6 +68,16 @@ public class OptionsSync {
             sync.newProfile(pos.get(0), Paths.get(pos.get(1)), Arrays.asList(pos.get(2).split(",")), apply);
             return;
         }
+        if (cmd.equals("own-profiles")) {  // own-profiles [--from-backup] [--keys glob,...] <gameDir>...
+            boolean fromBackup = pos.remove("--from-backup");
+            List<String> keys = Collections.singletonList("key_*");
+            int ki = pos.indexOf("--keys");
+            if (ki >= 0) { keys = Arrays.asList(pos.get(ki + 1).split(",")); pos.remove(ki + 1); pos.remove(ki); }
+            List<Path> ds = new ArrayList<>();
+            for (String p : pos) ds.add(Paths.get(p));
+            sync.ownProfiles(ds, keys, fromBackup, apply);
+            return;
+        }
         if (cmd.equals("assign")) {        // assign <gameDir> <name>[,<name>...]   ("-" removes the assignment)
             sync.assign(Paths.get(pos.get(0)), pos.get(1), apply);
             return;
@@ -137,6 +147,15 @@ public class OptionsSync {
         return s;
     }
 
+    /** "…/.minecraft" -> official, "…/<instance>/minecraft" or "…/<project>/run" -> the parent's name. */
+    static String instanceName(Path d) {
+        Path n = d.getFileName();
+        String s = n == null ? d.toString() : n.toString();
+        if (s.equals(".minecraft")) return "official";
+        if ((s.equals("run") || s.equals("minecraft")) && d.getParent() != null) return d.getParent().getFileName().toString();
+        return s;
+    }
+
     /** New profile from an instance's current values for the matching shared keys. */
     void newProfile(String name, Path from, List<String> globs, boolean apply) throws IOException {
         if (!name.matches("[A-Za-z0-9_-]+")) throw new IllegalArgumentException("profile name: letters, digits, - and _ only");
@@ -150,6 +169,49 @@ public class OptionsSync {
         profiles.put(name, m);
         saveProfile(name);
         System.out.println("written: " + masterDir.resolve("profiles").resolve(name + ".txt"));
+    }
+
+    /**
+     * Give every instance its own profile: the keys (default key_*) where the instance differs from the base master.
+     * With --from-backup the instance's values come from its oldest options.txt.sf-bak-* (its setup before the first
+     * sync); otherwise from its current options.txt. The profile is named inst-<instance> and listed last (highest
+     * priority) in the instance's sulfurframe-profile.txt; other profiles already listed there stay.
+     */
+    void ownProfiles(List<Path> dirs, List<String> globs, boolean fromBackup, boolean apply) throws IOException {
+        for (Path d : dirs) {
+            Path src = d.resolve("options.txt");
+            if (fromBackup) {
+                List<Path> baks = new ArrayList<>();
+                try (DirectoryStream<Path> ds = Files.newDirectoryStream(d, "options.txt.sf-bak-*")) { for (Path p : ds) baks.add(p); }
+                Collections.sort(baks);
+                if (baks.isEmpty()) { System.out.println(name(d) + ": no backup, skipped"); continue; }
+                src = baks.get(0);
+            }
+            if (!Files.exists(src)) { System.out.println(name(d) + ": no options.txt, skipped"); continue; }
+            keep = Collections.emptyList();
+            active = Collections.emptyList();          // compare against the base master alone
+            Map<String, String> own = new TreeMap<>();
+            for (Map.Entry<String, String> e : sharedValues(read(src)).entrySet()) {
+                if (!matches(globs, e.getKey())) continue;
+                Entry b = master.get(e.getKey());
+                if (b == null || !b.value.equals(e.getValue())) own.put(e.getKey(), e.getValue());
+            }
+            String pname = "inst-" + instanceName(d).replaceAll("[^A-Za-z0-9._-]+", "_").replaceAll("^_+|_+$", "");
+            System.out.println(name(d) + " -> profile " + pname + ": " + own.size() + " key(s)" + (fromBackup ? " (from " + src.getFileName() + ")" : ""));
+            for (Map.Entry<String, String> e : own.entrySet()) {
+                Entry b = master.get(e.getKey());
+                System.out.println("    " + e.getKey() + ": " + e.getValue() + "   (base: " + (b == null ? "-" : b.value) + ")");
+            }
+            if (own.isEmpty() || !apply) continue;
+            profiles.put(pname, own);
+            saveProfile(pname);
+            loadKeep(d);
+            List<String> names = new ArrayList<>(active);
+            names.remove(pname);
+            names.add(pname);
+            write(d.resolve("sulfurframe-profile.txt"), "# SulfurFrame content profiles for this instance (later ones win)\n" + String.join(",", names) + "\n");
+        }
+        if (!apply) System.out.println("(dry run: add --apply)");
     }
 
     void assign(Path gameDir, String names, boolean apply) throws IOException {
@@ -300,7 +362,16 @@ public class OptionsSync {
         out("master written: " + masterDir.resolve("options.master") + " (" + master.size() + " entries)");
     }
 
-    boolean shared(String key) { return matches(share, key) && !matches(keep, key); }
+    /**
+     * Keys of the mod being developed in this instance's project are never synced: the game should always show the
+     * defaults from the code, or a changed default binding could never be tested (the master would put the old one back).
+     */
+    Set<String> ownMods = Collections.emptySet();
+
+    boolean shared(String key) {
+        if (!matches(share, key) || matches(keep, key)) return false;
+        return !(key.startsWith("key_") && ownMods.contains(namespace(key)));
+    }
 
     static boolean matches(List<String> globs, String key) {
         for (String g : globs) if (g.endsWith("*") ? key.startsWith(g.substring(0, g.length() - 1)) : key.equals(g)) return true;
@@ -315,6 +386,7 @@ public class OptionsSync {
         List<String> names = new ArrayList<>();
         if (Files.exists(pf)) for (String l : globs(pf)) for (String n : l.split(",")) if (!n.trim().isEmpty()) names.add(n.trim());
         active = names;
+        ownMods = devModIds(gameDir);
     }
 
     // =================================================================== pull
@@ -465,6 +537,7 @@ public class OptionsSync {
         out((write ? "push " : "would push to ") + gameDir + (legacy ? " [pre-1.13 keys]" : "")
                 + (active.isEmpty() ? "" : " [profiles " + String.join("+", active) + "]") + ": " + changes.size() + " change(s)");
         for (String p : active) if (!profiles.containsKey(p)) out("  ! unknown profile '" + p + "' in sulfurframe-profile.txt");
+        if (!ownMods.isEmpty()) out("  (keys of the mod(s) developed here are not synced: " + ownMods + ")");
         int limit = Integer.getInteger("sf.limit", 40);
         for (int i = 0; i < Math.min(limit, changes.size()); i++) out(changes.get(i));
         if (changes.size() > limit) out("  … " + (changes.size() - limit) + " more");
@@ -488,11 +561,39 @@ public class OptionsSync {
         for (int i = 0; i < baks.size() - keep; i++) Files.deleteIfExists(baks.get(i));
     }
 
-    /** "key_key.jump" -> "key" (vanilla), "key_iris.keybind.reload" -> "iris". */
+    /**
+     * Which mod a key binding belongs to. "key" = vanilla. Many mods name their bindings "key.<modid>.<action>", so
+     * only "key.<action>", "key.hotbar.N" and "key.debug.*" count as vanilla; "key.<x>.<y>" belongs to mod x;
+     * "<ns>.<...>" (e.g. iris.keybind.reload) belongs to ns.
+     */
     static String namespace(String key) {
-        String rest = key.substring(4);
-        int dot = rest.indexOf('.');
-        return dot < 0 ? rest : rest.substring(0, dot);
+        String[] seg = key.substring(4).split("\\.");
+        if (!seg[0].equals("key")) return seg[0];
+        if (seg.length <= 2 || seg[1].equals("hotbar") || seg[1].equals("debug")) return "key";
+        return seg[1];
+    }
+
+    /** Mod IDs of the project this game dir is the run directory of (none for launcher instances). */
+    static Set<String> devModIds(Path gameDir) {
+        Set<String> ids = new TreeSet<>();
+        Path dir = gameDir.toAbsolutePath().normalize();
+        for (int up = 0; up < 3 && dir != null; up++, dir = dir.getParent()) {
+            Path src = dir.resolve("src");
+            if (!Files.isDirectory(src) || !Files.exists(dir.resolve("build.gradle")) && !Files.exists(dir.resolve("build.gradle.kts"))) continue;
+            try (java.util.stream.Stream<Path> s = Files.walk(src, 6)) {
+                for (Path f : (Iterable<Path>) s::iterator) {
+                    String n = f.getFileName().toString();
+                    if (!(n.equals("fabric.mod.json") || n.equals("quilt.mod.json") || n.equals("mods.toml")
+                            || n.equals("neoforge.mods.toml") || n.equals("mcmod.info"))) continue;
+                    String text = new String(Files.readAllBytes(f), StandardCharsets.UTF_8);
+                    java.util.regex.Matcher m = java.util.regex.Pattern
+                            .compile("\"id\"\\s*:\\s*\"([a-z0-9_.-]+)\"|modId\\s*=\\s*\"([a-z0-9_.-]+)\"|\"modid\"\\s*:\\s*\"([a-z0-9_.-]+)\"").matcher(text);
+                    while (m.find()) ids.add(m.group(1) != null ? m.group(1) : m.group(2) != null ? m.group(2) : m.group(3));
+                }
+            } catch (IOException ignored) {}
+            break;   // the nearest Gradle project wins
+        }
+        return ids;
     }
 
     static String convertFor(String key, String modernValue, boolean legacy) {
