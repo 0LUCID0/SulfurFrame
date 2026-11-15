@@ -49,12 +49,10 @@ public class OptionsSync {
             }
         }
         var sync = new OptionsSync(master);
-        for (Path d : dirs) {
-            switch (cmd) {
-                case "pull" -> sync.pull(d);
-                case "push", "status" -> sync.push(d, cmd.equals("push") && apply);
-                default -> throw new IllegalArgumentException(cmd);
-            }
+        switch (cmd) {
+            case "pull" -> sync.pullAll(dirs);
+            case "push", "status" -> { for (Path d : dirs) sync.push(d, cmd.equals("push") && apply); }
+            default -> throw new IllegalArgumentException(cmd);
         }
         if (cmd.equals("pull")) {
             if (apply) sync.saveMaster();
@@ -115,30 +113,98 @@ public class OptionsSync {
 
     // =================================================================== pull / push
 
-    void pull(Path gameDir) throws IOException {
-        loadKeep(gameDir);
-        Path f = gameDir.resolve("options.txt");
-        if (!Files.exists(f)) { System.out.println("skip (no options.txt): " + gameDir); return; }
-        long mtime = Files.getLastModifiedTime(f).toMillis();
-        var lines = read(f);
+    /**
+     * Three-way merge. options.txt is rewritten on every game start, so a file's mtime says nothing about when the
+     * user changed a setting. Instead each instance has a baseline: the shared values it held right after our last
+     * push. A value that differs from its baseline is a real edit made in that instance and is propagated.
+     * Keys nobody edited (and the very first sync, when there are no baselines) are decided by majority vote.
+     */
+    void pullAll(List<Path> dirs) throws IOException {
+        record Edit(String value, long mtime, Path dir) {}
+        var edits = new TreeMap<String, List<Edit>>();
+        var votes = new TreeMap<String, Map<String, long[]>>();   // key -> value -> {count, latest mtime}
+        for (Path gameDir : dirs) {
+            loadKeep(gameDir);
+            Path f = gameDir.resolve("options.txt");
+            if (!Files.exists(f)) { System.out.println("skip (no options.txt): " + gameDir); continue; }
+            long mtime = Files.getLastModifiedTime(f).toMillis();
+            Map<String, String> base = loadBaseline(gameDir);
+            var values = sharedValues(read(f));
+            int edited = 0;
+            for (var e : values.entrySet()) {
+                String k = e.getKey(), v = e.getValue();
+                if (base != null && base.containsKey(k) && !base.get(k).equals(v)) {
+                    edits.computeIfAbsent(k, x -> new ArrayList<>()).add(new Edit(v, mtime, gameDir));
+                    edited++;
+                }
+                long[] t = votes.computeIfAbsent(k, x -> new HashMap<>()).computeIfAbsent(v, x -> new long[2]);
+                t[0]++;
+                t[1] = Math.max(t[1], mtime);
+            }
+            System.out.printf("read %s: %d shared values%s%n", gameDir, values.size(),
+                    base == null ? " (first sync: no baseline yet)" : ", " + edited + " edited since last sync");
+        }
+        int fromEdits = 0, fromVotes = 0, conflicts = 0;
+        for (var e : edits.entrySet()) {
+            var list = e.getValue();
+            Edit win = list.stream().max(Comparator.comparingLong(Edit::mtime)).orElseThrow();
+            if (list.stream().map(Edit::value).distinct().count() > 1) {
+                conflicts++;
+                System.out.println("  conflict " + e.getKey() + ": " + list.stream().map(x -> x.value() + " (" + x.dir().getFileName() + ")").toList()
+                        + " -> " + win.value() + " (most recently saved)");
+            }
+            master.put(e.getKey(), new Entry(win.value(), win.mtime(), win.dir().toString()));
+            fromEdits++;
+        }
+        for (var e : votes.entrySet()) {
+            if (edits.containsKey(e.getKey()) || master.containsKey(e.getKey())) continue;
+            var best = e.getValue().entrySet().stream()
+                    .max(Comparator.<Map.Entry<String, long[]>>comparingLong(x -> x.getValue()[0]).thenComparingLong(x -> x.getValue()[1]))
+                    .orElseThrow();
+            master.put(e.getKey(), new Entry(best.getKey(), best.getValue()[1],
+                    "majority " + best.getValue()[0] + "/" + e.getValue().values().stream().mapToLong(x -> x[0]).sum()));
+            fromVotes++;
+        }
+        System.out.printf("master: %d from edits, %d by majority, %d conflict(s)%n", fromEdits, fromVotes, conflicts);
+    }
+
+    /** Shared key -> value of one options.txt, key bindings in modern form. */
+    Map<String, String> sharedValues(List<String> lines) {
         boolean legacy = isLegacy(lines);
-        int added = 0, updated = 0, older = 0;
+        var out = new LinkedHashMap<String, String>();
         for (String l : lines) {
             int c = l.indexOf(':');
             if (c <= 0) continue;
             String k = l.substring(0, c), v = l.substring(c + 1);
             if (!shared(k)) continue;
-            if (legacy && k.startsWith("key_")) {
-                v = KeyCodes.toModern(v);
-                if (v == null) continue;   // unknown code: do not pollute the master
-            }
-            Entry cur = master.get(k);
-            if (cur == null) { master.put(k, new Entry(v, mtime, gameDir.toString())); added++; }
-            else if (cur.value().equals(v)) { /* same */ }
-            else if (mtime > cur.modified()) { master.put(k, new Entry(v, mtime, gameDir.toString())); updated++; }
-            else older++;
+            if (legacy && k.startsWith("key_")) { v = KeyCodes.toModern(v); if (v == null) continue; }
+            out.put(k, v);
         }
-        System.out.printf("pull %s%s: +%d new, %d updated, %d kept (master newer)%n", gameDir, legacy ? " [pre-1.13 keys]" : "", added, updated, older);
+        return out;
+    }
+
+    // ---- baselines: <master>/baselines/<hash>.txt, first line = game dir, then key \t value
+
+    Path baselineFile(Path gameDir) {
+        String id = Integer.toHexString(gameDir.toAbsolutePath().normalize().toString().toLowerCase(Locale.ROOT).hashCode());
+        return masterDir.resolve("baselines").resolve(id + ".txt");
+    }
+
+    Map<String, String> loadBaseline(Path gameDir) throws IOException {
+        Path f = baselineFile(gameDir);
+        if (!Files.exists(f)) return null;
+        var m = new HashMap<String, String>();
+        var lines = Files.readAllLines(f, StandardCharsets.UTF_8);
+        for (String l : lines.subList(1, lines.size())) { String[] p = l.split("\t", 2); if (p.length == 2) m.put(p[0], p[1]); }
+        return m;
+    }
+
+    void saveBaseline(Path gameDir, Map<String, String> values) throws IOException {
+        Path f = baselineFile(gameDir);
+        Files.createDirectories(f.getParent());
+        var sb = new StringBuilder(gameDir.toAbsolutePath().normalize().toString()).append('\n');
+        values.forEach((k, v) -> sb.append(k).append('\t').append(v).append('\n'));
+        Files.writeString(f, sb.toString(), StandardCharsets.UTF_8);
     }
 
     void push(Path gameDir, boolean write) throws IOException {
@@ -174,14 +240,18 @@ public class OptionsSync {
             changes.add("  + " + e.getKey() + ":" + want);
         }
         System.out.printf("%s %s%s: %d change(s)%n", write ? "push" : "would push to", gameDir, legacy ? " [pre-1.13 keys]" : "", changes.size());
-        changes.stream().limit(40).forEach(System.out::println);
-        if (changes.size() > 40) System.out.println("  … " + (changes.size() - 40) + " more");
-        if (!write || changes.isEmpty()) return;
+        int limit = Integer.getInteger("sf.limit", 40);
+        changes.stream().limit(limit).forEach(System.out::println);
+        if (changes.size() > limit) System.out.println("  … " + (changes.size() - limit) + " more");
+        if (!write) return;
         if (gameRunning(gameDir)) { System.out.println("  ! a game is running from this folder: not writing (it would overwrite on exit)"); return; }
-        Path bak = f.resolveSibling("options.txt.sf-bak-" + LocalDateTime.now().format(TS));
-        Files.copy(f, bak, StandardCopyOption.COPY_ATTRIBUTES);
-        Files.write(f, out, StandardCharsets.UTF_8);
-        System.out.println("  written; backup " + bak.getFileName());
+        if (!changes.isEmpty()) {
+            Path bak = f.resolveSibling("options.txt.sf-bak-" + LocalDateTime.now().format(TS));
+            Files.copy(f, bak, StandardCopyOption.COPY_ATTRIBUTES);
+            Files.write(f, out, StandardCharsets.UTF_8);
+            System.out.println("  written; backup " + bak.getFileName());
+        }
+        saveBaseline(gameDir, sharedValues(out));   // what this instance holds now = the base for the next merge
     }
 
     /** "key_key.jump" -> "key" (vanilla), "key_iris.keybind.reload" -> "iris". */
