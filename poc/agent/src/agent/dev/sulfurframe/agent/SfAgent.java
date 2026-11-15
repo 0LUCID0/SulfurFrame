@@ -89,6 +89,9 @@ public final class SfAgent {
         SfHooks.configure(args);
         if (installed) { SfHooks.log("already installed; settings updated (coding fps cap " + SfHooks.codingFps + ")"); return; }
         installed = true;
+        // options sync must run before Minecraft reads options.txt: only at startup, not when attached later
+        if (!attached) ProfileSync.start(args);
+        if ("sync".equals(ProfileSync.arg(args, "mode"))) { SfHooks.log("mode=sync: profile sync only, no LWJGL patches"); return; }
         try {
             registerHooks();   // before any class is patched
             ClassLoader impl = implLoader();

@@ -36,9 +36,9 @@ java InstanceScanner.java --dev-root "C:/path/to/workspace" [--json out.json]
 ## 2단계: 키 설정·옵션 병합 동기화 (`OptionsSync.java`)
 
 ```bash
-java OptionsSync.java pull   [--apply] <gameDir>...   # 인스턴스 → 마스터
-java OptionsSync.java status           <gameDir>...   # push하면 무엇이 바뀌는지
-java OptionsSync.java push   [--apply] <gameDir>...   # 마스터 → 인스턴스
+./options-sync.sh pull   [--apply] <gameDir>...   # 인스턴스 → 마스터
+./options-sync.sh status           <gameDir>...   # push하면 무엇이 바뀌는지
+./options-sync.sh push   [--apply] <gameDir>...   # 마스터 → 인스턴스
 ```
 
 - **`--apply` 없이는 아무것도 쓰지 않습니다.** 쓰기 전에는 `options.txt.sf-bak-<시각>` 백업을 남기고, 그 폴더로 게임이 실행 중이면 쓰지 않습니다.
@@ -69,3 +69,33 @@ java OptionsSync.java push   [--apply] <gameDir>...   # 마스터 → 인스턴�
 처음 만든 "최근 파일이 이긴다" 규칙은 미리보기에서 틀린 것으로 드러났습니다. 공식 런처의 `.minecraft`가 가장 최근에 저장됐다는 이유로
 다른 9곳의 언어를 `en_us`로, FOV를 70으로, 꺼 둔 음악을 다시 켜려 했습니다. 그래서 3방향 병합과 다수결로 바꿨습니다.
 바꾼 뒤에는 언어 `ko_kr`(9/10)처럼 대부분이 쓰는 값으로 맞춰집니다. FOV(70 vs 90)와 음악(켬 vs 끔)은 5:5 동률이었습니다.
+
+## 2-1단계: 자동 동기화 (javaagent)
+
+동기화 코드(`src/dev/sulfurframe/profile/OptionsSync.java`, Java 8 문법)가 `sf-agent.jar`에 함께 들어갑니다.
+- **게임 시작 시(`premain`):** 마인크래프트가 옵션을 읽기 전에 실행합니다. 이 인스턴스에서 바뀐 값을 마스터로 올리고, 다른 인스턴스의 변경을 받아옵니다.
+- **게임 종료 시(JVM 종료 훅):** 게임 중에 바꾼 값을 마스터로 올리고, 이 인스턴스의 기준값을 갱신합니다. 비정상 종료로 이 단계가
+  빠져도 다음 시작 때 기준값 비교로 따라잡습니다.
+- **게임 폴더 찾기:** 에이전트 인자 `gameDir=`, JVM 명령줄의 `--gameDir`, 작업 폴더 순(Prism, Modrinth, CurseForge, Gradle 실행은 작업 폴더가 게임 폴더).
+- **마스터 잠금:** 게임 여러 개가 동시에 켜지거나 꺼져도 마스터를 번갈아 씁니다(`<master>/lock`).
+- **기록:** 무엇을 동기화했는지 `<master>/sync.log`에 남습니다. 종료 시점에는 게임 로그가 이미 닫혀 있어서 따로 둡니다.
+- **백업:** 자동 동기화가 시작할 때마다 `options.txt`를 쓰므로, 인스턴스마다 최근 백업 5개만 유지합니다.
+- **에이전트 인자:** `mode=sync`(동기화만 하고 LWJGL 패치·FPS 제한은 안 함, 평소 플레이용), `sync=off`, `master=<dir>`.
+  마스터 프로필이 없으면 아무것도 하지 않습니다.
+
+설치: `./install-autosync.sh`가 에이전트를 빌드해 `~/.sulfurframe/sf-agent.jar`(한글 없는 경로: Java 8 제약)에 복사하고, 런처에 넣을
+JVM 인자를 출력합니다. **런처 설정은 바꾸지 않습니다.**
+```
+-javaagent:C:\Users\<you>\.sulfurframe\sf-agent.jar=mode=sync
+```
+런처별 위치: Prism(인스턴스 편집 → 설정 → Java 인수), Modrinth(프로필 설정 → Java/메모리 → JVM 인수), CurseForge(설정 → Minecraft →
+Java 설정, 전역), 공식 런처(설치 → 편집 → 추가 옵션 → JVM 인수).
+
+### 검증 (바닐라 1.21.1, 시험용 마스터 복사본, 2026-11-15)
+1. **처음 동기화하는 인스턴스:** 시작 때 마스터 값으로 맞춰졌고(버리기 키 J → Q), 기준값 파일이 생겼습니다.
+2. **게임이 꺼진 동안 바꾼 값:** 버리기 키를 J로 바꿔 두니 다음 시작 때 사용자 변경으로 인식되어 마스터로 올라갔습니다.
+3. **종료 시점:** 실행 중에 움직인 볼륨 슬라이더 값(0.349)이 종료 때 마스터로 올라갔습니다. 아무것도 만지지 않은 실행에서는 게임이
+   값을 바꾸지 않았습니다(오인 전파 없음).
+
+알려진 동작: 바닐라는 저장할 때 모르는 키(모드 키)를 지웁니다. 그래서 모드 없는 인스턴스에서는 매번 시작할 때 그 키를 다시 넣고
+게임이 다시 지웁니다. 동작에는 해가 없지만 시작할 때마다 백업이 하나씩 생깁니다(5개 유지).

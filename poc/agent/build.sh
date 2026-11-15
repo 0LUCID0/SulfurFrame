@@ -5,8 +5,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 JDK="${JDK:-$HOME/.jdks/temurin-25.0.4.1/bin}"
-ASM_JAR="${ASM_JAR:-$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.ow2.asm/asm/9.10.1" -name 'asm-9.10.1.jar' | head -1)}"
-[ -f "$ASM_JAR" ] || { echo "ASM 9.10.1 not found; set ASM_JAR" >&2; exit 1; }
+# newest ASM 9.x in the Gradle cache (9.8+ reads Java 25 class files); Gradle rotates its cache, so do not pin one
+ASM_JAR="${ASM_JAR:-$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.ow2.asm/asm" -name 'asm-9*.jar' ! -name '*sources*' 2>/dev/null | sort -V | tail -1)}"
+[ -f "$ASM_JAR" ] || { echo "no ASM 9.x jar in the Gradle cache; set ASM_JAR" >&2; exit 1; }
+echo "using $(basename "$ASM_JAR")"
 
 rm -rf out && mkdir -p out/impl out/agent out/asm
 # --release 8 warns that it is deprecated on JDK 25; the warning is expected
@@ -15,7 +17,7 @@ rm -rf out && mkdir -p out/impl out/agent out/asm
 cp -r out/asm/org out/impl/
 "$JDK/jar" --create --file out/agent/sf-impl.jar -C out/impl .
 
-"$JDK/javac" --release 8 -nowarn -Xlint:-options -d out/agent $(find src/agent -name '*.java')
+"$JDK/javac" --release 8 -nowarn -Xlint:-options -d out/agent $(find src/agent ../profile/src -name '*.java')   # + the options sync core
 cat > out/MANIFEST.MF <<'EOF'
 Premain-Class: dev.sulfurframe.agent.SfAgent
 Agent-Class: dev.sulfurframe.agent.SfAgent

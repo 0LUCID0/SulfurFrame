@@ -24,13 +24,11 @@ LOG="${TEMP:-/tmp}/sf-mc-$VERSION.log"
 [ -f "$INFO" ] || { echo "no cached metadata for $VERSION ($INFO)" >&2; exit 1; }
 
 JAVA_MAJOR=$(grep -o '"majorVersion": *[0-9]*' "$INFO" | grep -o '[0-9]*$')
-case "$JAVA_MAJOR" in
-  25) DEFAULT_JAVA="$HOME/.jdks/temurin-25.0.4.1/bin/java.exe" ;;
-  21) DEFAULT_JAVA="/c/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot/bin/java.exe" ;;
-  17) DEFAULT_JAVA="/c/Program Files/Eclipse Adoptium/jdk-17.0.16.8-hotspot/bin/java.exe" ;;
-  8)  DEFAULT_JAVA="/c/Program Files/Eclipse Adoptium/jdk-8.0.492.9-hotspot/bin/java.exe" ;;
-  *)  echo "no JDK mapping for Java $JAVA_MAJOR" >&2; exit 1 ;;
-esac
+# newest installed JDK of that major version (JDK updates change the folder names, so nothing is pinned)
+DEFAULT_JAVA=$(ls -d "/c/Program Files/Eclipse Adoptium/jdk-$JAVA_MAJOR."*/ "$HOME/.jdks/temurin-$JAVA_MAJOR."*/ 2>/dev/null \
+  | sort -V | tail -1 || true)
+[ -n "$DEFAULT_JAVA" ] || { echo "no JDK $JAVA_MAJOR installed (set SF_JAVA)" >&2; exit 1; }
+DEFAULT_JAVA="${DEFAULT_JAVA%/}/bin/java.exe"
 JAVA="${SF_JAVA:-$DEFAULT_JAVA}"
 
 CP=""
