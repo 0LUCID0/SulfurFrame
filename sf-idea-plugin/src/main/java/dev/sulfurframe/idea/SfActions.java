@@ -32,7 +32,9 @@ final class SfActions {
             e.getPresentation().setEnabled(project != null && (!needsGame() || host != null && host.panel.embedder.attached()));
         }
 
-        @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
+        // BGT: update() only reads a synchronized map and a volatile field. On EDT the toolbar's enable state waited
+        // for the UI thread, which a busy IDE (seen: a huge project tree being relaid out) held for 13-41 s per update.
+        @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.BGT; }
     }
 
     static void withPanel(Project project, Consumer<SulfurPanel> r) {
@@ -59,7 +61,7 @@ final class SfActions {
 
     public static final class OpenAsTab extends DumbAwareAction {
         @Override public void actionPerformed(AnActionEvent e) { if (e.getProject() != null) withPanel(e.getProject(), p -> GameTab.open(e.getProject())); }
-        @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
+        @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.BGT; }   // no update(): nothing to read
     }
 
     public static final class OpenSettings extends DumbAwareAction {
