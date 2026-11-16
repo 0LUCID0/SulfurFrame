@@ -98,10 +98,22 @@ final class AutoTest {
         if (dev.sulfurframe.idea.embed.GameView.linux()) { lines.add("F11 fullscreen: not handled on Linux yet (skipped)"); editorTab(p, game); return; }
         // F11: out of the IDE, covering the monitor
         var robot = new Robot();
-        onEdt(() -> javax.swing.SwingUtilities.getWindowAncestor(p).toFront());
+        var ide = javax.swing.SwingUtilities.getWindowAncestor(p);
+        onEdt(ide::toFront);
         sleep(500);
         e.focusGame();
         sleep(800);
+        // Windows' foreground lock: while another application is in front (the terminal that started the test),
+        // toFront() only flashes the taskbar button. Wait up to a minute for the IDE to be brought forward (a click
+        // on its title bar) instead of failing; then hand the focus to the game again.
+        long until = System.currentTimeMillis() + 60_000;
+        boolean waited = false;
+        while (NativeWindows.keyboardFocus() != game && System.currentTimeMillis() < until) {
+            if (!waited) { waited = true; System.err.println("SulfurFrame autotest: bring the IDE window to the front for the F11 test"); }
+            sleep(500);
+            if (ide.isActive()) { e.focusGame(); sleep(500); }
+        }
+        if (waited) lines.add("F11: waited for the IDE to come to the front (Windows foreground lock)");
         // never send a real key to another application
         if (NativeWindows.keyboardFocus() != game) { check("F11 -> fullscreen", false, "game does not have keyboard focus, key not sent"); return; }
         robot.keyPress(java.awt.event.KeyEvent.VK_F11); robot.keyRelease(java.awt.event.KeyEvent.VK_F11);
