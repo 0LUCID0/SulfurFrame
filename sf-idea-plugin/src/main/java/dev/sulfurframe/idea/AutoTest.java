@@ -312,6 +312,12 @@ final class AutoTest {
         var vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(src);
         if (vf != null) vf.refresh(true, false);   // async refresh: the VFS reports the change like a save
         check("hotswap on save (VFS change -> swap)", waitForLog(gameLog, "[SF-PROBE] v3", 60), "game log shows v3");
+
+        // a change made outside the IDE (external editor, coding agent): written to disk with no VFS refresh, which the
+        // IDE alone would only notice when its window is activated; the source folder watcher must pick it up
+        sleep(1500);
+        Files.writeString(src, original.replace("return \"v1\";", "return \"v3x\";"));
+        check("hotswap on an outside edit (file watcher, no IDE refresh)", waitForLog(gameLog, "[SF-PROBE] v3x", 60), "game log shows v3x");
         onEdt(() -> p.setSwapOnSave(false));   // from here on only the test's own swaps: no race with save-triggered ones
         sleep(1500);
 

@@ -132,6 +132,39 @@ final class SulfurPanel extends JPanel {
         saveTarget.accept(key(t));
         log("selected " + t.where() + ": " + t.profile());
         t.profile().evidence().forEach(e -> log("  " + e));
+        restartSourceWatcher();
+    }
+
+    // ------------------------------------------------------------------ changes made outside the IDE
+
+    private volatile java.util.function.Consumer<Path> sourceSink;
+    private SourceWatcher sourceWatcher;
+    private Path watchedRoot;
+
+    /** Where changed source files go (the tool window's debounced save handler); starts watching the selected build. */
+    void watchSources(java.util.function.Consumer<Path> sink) { sourceSink = sink; restartSourceWatcher(); }
+
+    synchronized void stopWatchingSources() {
+        sourceSink = null;
+        if (sourceWatcher != null) sourceWatcher.close();
+        sourceWatcher = null; watchedRoot = null;
+    }
+
+    /** Watch the selected target's build (all its modules' src folders); off the EDT, the folder walk can take a moment. */
+    private void restartSourceWatcher() {
+        var t = (Workspace.Target) targets.getSelectedItem();
+        var sink = sourceSink;
+        if (t == null || sink == null) return;
+        Path root = t.buildRoot().toAbsolutePath().normalize();
+        Thread.ofPlatform().daemon().name("sf-source-watch-start").start(() -> {
+            synchronized (this) {
+                if (sourceSink == null || (root.equals(watchedRoot) && sourceWatcher != null)) return;
+                if (sourceWatcher != null) sourceWatcher.close();
+                sourceWatcher = SourceWatcher.start(root, sink);
+                watchedRoot = root;
+                if (sourceWatcher != null) log("watching " + sourceWatcher.rootCount() + " source folder(s): files changed outside the IDE are hotswapped too");
+            }
+        });
     }
 
     static String key(Workspace.Target t) { return t.buildRoot() + "|" + t.projectPath() + (t.task().equals("runClient") ? "" : "|" + t.task()); }
@@ -672,9 +705,11 @@ final class SulfurPanel extends JPanel {
         var startup = all.stream().filter(SulfurPanel::needsRestart).toList();
         if (!startup.isEmpty())
             offerRestart(String.join(", ", startup.stream().map(f -> f.getFileName().toString()).distinct().toList()) + " changed (read only when the game starts)");
-        var mine = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(dir) && !needsRestart(f)).toList();
-        var code = mine.stream().filter(f -> f.toString().endsWith(".java") || f.toString().endsWith(".kt")).toList();
-        var res = mine.stream().filter(f -> !code.contains(f) && f.toString().replace('\\', '/').contains("/resources/")).toList();
+        // code from any module of the build (a run config like runAllModsClient runs several; the hotswap compiles and
+        // compares every source set on its class path); resources only from the target's own module
+        var code = all.stream().filter(f -> !needsRestart(f) && (f.toString().endsWith(".java") || f.toString().endsWith(".kt"))).toList();
+        var res = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(dir) && !needsRestart(f) && !code.contains(f)
+                && f.toString().replace('\\', '/').contains("/resources/")).toList();
         if (!code.isEmpty()) hotswapAsync();
         if (!res.isEmpty()) {
             long pid = embedder.gamePid();
