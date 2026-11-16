@@ -145,6 +145,35 @@ final class FastCompile {
         return Result.OK;
     }
 
+    /**
+     * Recompile the Java sources that mention any of these simple class names (as a word): the users of a class whose
+     * compile-time constants changed, which still hold the old values. Returns how many files were compiled, -1 if
+     * that failed (or fast compile is not available).
+     */
+    int compileUsersOf(Workspace.Target t, Collection<String> names) throws IOException, InterruptedException {
+        var sets = sourceSets(t);
+        if (sets == null || names.isEmpty()) return -1;
+        var word = java.util.regex.Pattern.compile("\\b(" + String.join("|", names.stream().map(java.util.regex.Pattern::quote).toList()) + ")\\b");
+        int total = 0;
+        for (SourceSet s : sets) {
+            if (s.name().equals("test") || s.name().endsWith("Test") || s.name().endsWith(":test")) continue;
+            var files = new ArrayList<Path>();
+            for (Path dir : s.srcDirs()) {
+                if (!Files.isDirectory(dir)) continue;
+                try (Stream<Path> w = Files.walk(dir)) {
+                    for (Path f : w.filter(p -> p.toString().endsWith(".java")).toList())
+                        if (word.matcher(Files.readString(f, StandardCharsets.UTF_8)).find()) files.add(f);
+                }
+            }
+            if (files.isEmpty()) continue;
+            Boolean ok = inProcess(s, sets, files);
+            if (ok == null) ok = s.javac() != null && Files.isExecutable(s.javac()) && javac(s, sets, files);
+            if (!ok) return -1;
+            total += files.size();
+        }
+        return total;
+    }
+
     private boolean javac(SourceSet s, List<SourceSet> all, List<Path> files) throws IOException, InterruptedException {
         var cp = new LinkedHashSet<Path>();
         for (SourceSet o : all) { cp.add(o.out()); if (o.kotlin() != null) cp.add(o.kotlin().out()); }   // other sets, and Kotlin output (Java may use it)

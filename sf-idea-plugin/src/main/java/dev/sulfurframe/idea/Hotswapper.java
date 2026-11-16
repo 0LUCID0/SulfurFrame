@@ -135,6 +135,7 @@ final class Hotswapper {
             long t0 = System.currentTimeMillis();
             boolean fresh = snapshot == null;   // attached without a snapshot: don't know which sources changed
             if (fresh) snapshot = scan(t);
+            adoptNewClassFiles(t);
             long started = System.currentTimeMillis();
             FastCompile.Result r = FastCompile.Result.UNAVAILABLE;
             int[] n = {0};
@@ -147,20 +148,20 @@ final class Hotswapper {
                 lastCompiler = "gradle";
             }
             sourcesSince = started;
-            Map<Path, Long> now = scan(t);
             var changed = new ArrayList<Path>();
-            for (var e : now.entrySet()) {
-                Long before = snapshot.get(e.getKey());
-                // a class file the snapshot did not have: new from this compile, or (the class roots grew once fast
-                // compile read the class path) one that was there all along, not to be sent again
-                if (before == null ? e.getValue() >= started - 1000 : before < e.getValue()) changed.add(e.getKey());
-            }
-            snapshot = now;
             var startup = new ArrayList<String>();
-            for (Path c : changed) {
-                byte[] after = Files.readAllBytes(c);
-                try { startup.addAll(StartupCode.changed(classBytes.get(c), after)); } catch (Throwable ignored) { }
-                classBytes.put(c, after);
+            var constantOwners = new LinkedHashSet<String>();
+            collectChanged(changed, startup, constantOwners, t);
+            // A changed compile-time constant (static final int/float/String...) is copied into every class that reads
+            // it; fast compile only rebuilt the edited file, so the readers would go on with the old value. Recompile
+            // the sources that mention the class and send what that changes too. (Gradle does this itself.)
+            if (!constantOwners.isEmpty() && r == FastCompile.Result.OK) {
+                int users = fast.compileUsersOf(t, constantOwners);
+                if (users < 0) log.accept("hotswap: constant changed in " + constantOwners + " but its users could not be recompiled: restart to apply it everywhere");
+                else {
+                    collectChanged(changed, startup, new LinkedHashSet<>(), t);
+                    log.accept("hotswap: constant changed in " + String.join(", ", constantOwners) + ": recompiled " + users + " file(s) that use it");
+                }
             }
             lastStartupChanges = List.copyOf(startup);
             if (changed.isEmpty()) { log.accept("hotswap: no class changed"); lastResult = List.of("redefined 0"); return true; }
@@ -233,6 +234,40 @@ final class Hotswapper {
                 }
         }
         return roots;
+    }
+
+    /**
+     * Class files whose bytes differ from what the game was last given, added to {@code changed}; the snapshot moves on.
+     * A newer file is not yet a changed class: a Gradle build rewrites every class file of a module, and sending them
+     * all (751 for a one-line edit) crashed the game inside the JVM's class redefinition.
+     */
+    private void collectChanged(List<Path> changed, List<String> startup, Set<String> constantOwners, Workspace.Target t) throws IOException {
+        Map<Path, Long> now = scan(t);
+        for (var e : now.entrySet()) {
+            Path c = e.getKey();
+            Long before = snapshot.get(c);
+            if (before != null && before >= e.getValue()) continue;
+            byte[] after = Files.readAllBytes(c), old = classBytes.get(c);
+            if (old != null && Arrays.equals(old, after)) continue;
+            try { startup.addAll(StartupCode.changed(old, after)); } catch (Throwable ignored) { }
+            try { constantOwners.addAll(StartupCode.constantOwnerNames(old, after)); } catch (Throwable ignored) { }
+            classBytes.put(c, after);
+            if (!changed.contains(c)) changed.add(c);
+        }
+        snapshot = now;
+    }
+
+    /**
+     * Class files the snapshot does not know yet, from output folders it did not cover (fast compile read the class
+     * path after the game started, and a run config brings other modules): what they hold now is what the game runs,
+     * so they become the baseline instead of being sent as changes. Before compiling.
+     */
+    private void adoptNewClassFiles(Workspace.Target t) throws IOException {
+        for (var e : scan(t).entrySet()) {
+            if (snapshot.containsKey(e.getKey())) continue;
+            snapshot.put(e.getKey(), e.getValue());
+            classBytes.put(e.getKey(), Files.readAllBytes(e.getKey()));
+        }
     }
 
     /** All .class files under the class roots, with their modification times. */

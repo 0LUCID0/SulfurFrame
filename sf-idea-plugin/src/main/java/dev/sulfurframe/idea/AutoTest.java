@@ -349,6 +349,30 @@ final class AutoTest {
         check("in-game message after a swap", waitForLog(gameLog, "in-game message shown: Hotswap", 10), "agent log line");
         Files.writeString(src, original);
 
+        // a compile-time constant: javac copied it into the probe, which fast compile did not touch; its users must be
+        // recompiled too or the game keeps printing the old value
+        Path konst = src.getParent().resolve("SfProbeConst.java");
+        if (Files.exists(konst) && waitForLog(gameLog, " k1", 20)) {
+            String k = Files.readString(konst);
+            Files.writeString(konst, k.replace("\"k1\"", "\"k2\""));
+            sleep(1500);
+            swapRetry(p, t);
+            check("constant change reaches the classes that copied it", waitForLog(gameLog, " k2", 20)
+                    && p.logText().contains("constant changed in SfProbeConst"), String.valueOf(p.hotswapper.lastResult));
+            Files.writeString(konst, k);
+            sleep(1500);
+            swapRetry(p, t);
+        }
+
+        // a Gradle build rewrites every class file with the same bytes: nothing may be sent (751 classes crashed a game)
+        try (var w = Files.walk(t.dir().resolve("build/classes"))) {
+            var now = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis());
+            for (Path c : w.filter(f -> f.toString().endsWith(".class")).toList()) Files.setLastModifiedTime(c, now);
+        }
+        swapRetry(p, t);
+        check("rebuilt class files with the same bytes are not sent", p.hotswapper.lastResult.contains("redefined 0"),
+                String.valueOf(p.hotswapper.lastResult));
+
         // a mixin: Mixin's own hotswap agent (put on the game JVM by Run client) re-applies it to its target
         Path mixin = src.getParent().resolve("mixin/SfMixinProbe.java");
         if (Files.exists(mixin) && waitForLog(gameLog, "[SF-MIXIN] m1", 30)) {

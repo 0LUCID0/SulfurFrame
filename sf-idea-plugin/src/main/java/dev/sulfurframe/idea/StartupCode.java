@@ -39,6 +39,30 @@ final class StartupCode {
         return out.stream().distinct().toList();
     }
 
+    /**
+     * Did a compile-time constant change (a static final primitive or String with a value: javac copies it into every
+     * class that reads it)? Returns the simple names the class is referred to by in source (Outer and Inner for
+     * Outer$Inner), or an empty list. The users need recompiling, or they keep the old value after a swap.
+     */
+    static List<String> constantOwnerNames(byte[] before, byte[] after) {
+        if (before == null || after == null || constants(before).equals(constants(after))) return List.of();
+        String n = new ClassReader(after).getClassName();
+        n = n.substring(n.lastIndexOf('/') + 1);
+        return Arrays.stream(n.split("\\$")).filter(s -> !s.isEmpty() && !Character.isDigit(s.charAt(0))).distinct().toList();
+    }
+
+    /** name -> value of every static final field with a ConstantValue. */
+    static Map<String, Object> constants(byte[] cls) {
+        var out = new TreeMap<String, Object>();
+        new ClassReader(cls).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public FieldVisitor visitField(int access, String name, String desc, String sig, Object value) {
+                if (value != null && (access & Opcodes.ACC_STATIC) != 0 && (access & Opcodes.ACC_FINAL) != 0) out.put(name, value);
+                return null;
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return out;
+    }
+
     private static String simpleName(byte[] cls) {
         String n = new ClassReader(cls).getClassName();
         return n.substring(n.lastIndexOf('/') + 1);
