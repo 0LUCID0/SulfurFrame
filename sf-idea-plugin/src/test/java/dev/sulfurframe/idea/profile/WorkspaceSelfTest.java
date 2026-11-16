@@ -21,7 +21,11 @@ public class WorkspaceSelfTest {
                 new Object[]{"architectury", List.of(
                         ":fabric:runClient FABRIC 1.21.1 0.16.10", ":neoforge:runClient NEOFORGE 1.21.1 21.1.265")},
                 new Object[]{"stonecutter", List.of(
-                        ":1.21.1:runClient FABRIC 1.21.1 0.16.10", ":1.20.1:runClient FABRIC 1.20.1 0.16.10")});
+                        ":1.21.1:runClient FABRIC 1.21.1 0.16.10", ":1.20.1:runClient FABRIC 1.20.1 0.16.10")},
+                // a run config of the project's own (all modules' mods) comes first, though ":addon" sorts before ":core"
+                new Object[]{"runconfig", List.of(
+                        ":core:mod-fabric:runAllModsClient FABRIC 1.21.1 0.16.10",
+                        ":addon:mod-fabric:runClient FABRIC 1.21.1 0.16.10", ":core:mod-fabric:runClient FABRIC 1.21.1 0.16.10")});
         var failures = new ArrayList<String>();
         for (Object[] c : cases) {
             var got = new ArrayList<String>();
