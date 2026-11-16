@@ -166,12 +166,7 @@ public class McFetch {
 
         var jv = (Map<String, Object>) v.get("javaVersion");
         int major = jv == null ? 8 : ((Number) jv.get("majorVersion")).intValue();
-        String java = !OS.equals("windows") ? unixJava(major) : switch (major) {
-            case 8 -> "C:/Program Files/Eclipse Adoptium/jdk-8.0.492.9-hotspot/bin/java.exe";
-            case 16, 17 -> "C:/Program Files/Eclipse Adoptium/jdk-17.0.16.8-hotspot/bin/java.exe";
-            case 21 -> "C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot/bin/java.exe";
-            default -> Path.of(System.getProperty("user.home"), ".jdks", "temurin-25.0.4.1", "bin", "java.exe").toString();
-        };
+        String java = !OS.equals("windows") ? unixJava(major) : javaFor(major);
 
         var cmd = new ArrayList<>(List.of(java, "-Xmx2G", "-Djava.library.path=" + natives));
         var extra = new ArrayList<String>();
@@ -387,13 +382,33 @@ public class McFetch {
         return g[0].replace('.', '/') + "/" + g[1] + "/" + ver + "/" + g[1] + "-" + ver + cls + "." + ext;
     }
 
+    /**
+     * Windows: the newest installed JDK of that major version (Eclipse Adoptium's folder, then ~/.jdks). Exact
+     * version paths broke at every JDK update.
+     */
     static String javaFor(int major) {
-        return switch (major) {
-            case 8 -> "C:/Program Files/Eclipse Adoptium/jdk-8.0.492.9-hotspot/bin/java.exe";
-            case 16, 17 -> "C:/Program Files/Eclipse Adoptium/jdk-17.0.16.8-hotspot/bin/java.exe";
-            case 21 -> "C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot/bin/java.exe";
-            default -> Path.of(System.getProperty("user.home"), ".jdks", "temurin-25.0.4.1", "bin", "java.exe").toString();
-        };
+        int want = major == 16 ? 17 : major;
+        var dirs = new ArrayList<Path>();
+        for (Path base : List.of(Path.of("C:/Program Files/Eclipse Adoptium"), Path.of(System.getProperty("user.home"), ".jdks"))) {
+            if (!Files.isDirectory(base)) continue;
+            try (var s = Files.list(base)) {
+                s.filter(d -> {
+                    var m = java.util.regex.Pattern.compile("(?:jdk-|temurin-|jbr-)?(\\d+)[.\\-_]").matcher(d.getFileName().toString() + ".");
+                    return m.lookingAt() && Integer.parseInt(m.group(1)) == want && Files.isRegularFile(d.resolve("bin/java.exe"));
+                }).forEach(dirs::add);
+            } catch (IOException ignored) { }
+        }
+        dirs.sort(Comparator.comparing(McFetch::versionKey));
+        if (dirs.isEmpty()) throw new IllegalStateException("no JDK " + want + " in C:/Program Files/Eclipse Adoptium or ~/.jdks");
+        return dirs.get(dirs.size() - 1).resolve("bin/java.exe").toString();
+    }
+
+    /** "jdk-21.0.13.9-hotspot" -> zero-padded numbers, so 21.0.13 sorts after 21.0.9. */
+    static String versionKey(Path d) {
+        var sb = new StringBuilder();
+        var m = java.util.regex.Pattern.compile("\\d+").matcher(d.getFileName().toString());
+        while (m.find()) sb.append(String.format("%08d.", Long.parseLong(m.group())));
+        return sb.toString();
     }
 
     @SuppressWarnings("unchecked")

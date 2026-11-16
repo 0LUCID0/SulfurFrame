@@ -122,7 +122,7 @@ java -cp out dev.sulfurframe.idea.profile.ProfileSelfTest sf-idea-plugin/src/tes
 fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접 선언, 버전 카탈로그)와 로컬 실제 프로젝트 4개를 정확히 감지했습니다.
 
 ## 아직 안 된 것
-- Linux: F11 전체화면, 실제 Linux 데스크톱(GNOME/KDE)과 GPU 드라이버 확인. 26.x(SDL3)와 1.12.2(LWJGL 2)는 PoC에서 확인(`poc/embed/README.md`), 플러그인으로는 1.21.1만 시험. 아래 "Linux (X11)" 참고.
+- Linux: 실제 Linux 데스크톱(GNOME/KDE, mutter/kwin)과 GPU 드라이버 확인. 지금까지는 Xvfb + openbox와 WSLg에서 확인했습니다. 26.x(SDL3)와 1.12.2(LWJGL 2)는 PoC에서 확인(`poc/embed/README.md`), 플러그인으로는 1.21.1만 시험. 아래 "Linux (X11)" 참고.
 - 모드마다 빌드와 월드가 따로인 불편(공유 인스턴스/월드), Gradle 플러그인 기반 정식 빌드, 마켓플레이스 배포 형태는 아직입니다.
 
 ## 컨테이너 폴더와 멀티 버전 프로젝트 (`profile/Workspace.java`)
@@ -323,7 +323,7 @@ PASS restart -> back in the same world          [world 'SFWorld']
 - **구조 변경:** JBR이 있으면 됩니다(위). Java 8/17 게임용 JBR은 시험하지 않았습니다. Attach PID로 붙인 게임은 이미 떠 있는 JVM이라, 직접 JBR과 플래그로 띄운 경우에만 구조 변경이 됩니다.
 - **새로 추가한 정적 필드의 초기값, 생성자 변경:** 이미 만들어진 객체와 클래스 초기화에는 반영되지 않습니다.
 - **Fabric 환경 어노테이션:** 바뀐 바이트에는 Knot의 `@Environment` 정리가 적용되지 않습니다. 클라이언트 개발 환경에서는 대개 문제가 없습니다.
-- NeoForge/Forge, Linux에서의 Mixin·리소스·게임 안 알림은 아직 시험하지 않았습니다.
+- NeoForge/Forge와 Linux에서의 Mixin 핫스왑은 아직 시험하지 않았습니다. NeoForge/Forge는 BuildPali가 그 로더로 넓힐 때 함께 합니다. Linux의 리소스 리로드와 게임 안 알림은 아래 "Linux (X11)"에서 확인했습니다.
 
 ## Linux (X11)
 
@@ -336,26 +336,45 @@ Windows의 `GameEmbedder`와 같은 기능 묶음(`GameView` 인터페이스)이
 - **키보드:** X11에서는 자식 창을 클릭해도 포커스가 옮겨지지 않습니다. 창 관리자들이 쓰는 방식대로 게임 창의 버튼에 패시브 그랩(`XGrabButton`, 동기 모드)을 걸고, 클릭이 오면 `XSetInputFocus` 후 `XAllowEvents(ReplayPointer)`로 그 클릭을 게임에 그대로 넘깁니다. IDE의 다른 곳을 클릭하면 키보드를 AWT로 돌려줍니다.
 - **숨김/이동:** 툴윈도우를 숨기거나 옮기기 전에 게임을 루트로 옮기고 매핑을 해제(park)합니다. 다시 보이면 새 Canvas로 넣습니다. 숨김 상태에서는 Windows의 최소화 대신 매핑 해제를 씁니다(자식 창에는 "최소화"가 없음, FPS는 에이전트가 제한). 힙 축소(jcmd)는 같고, 워킹셋 트림은 Windows 전용입니다.
 - **IDE 종료:** 셧다운 훅이 `override_redirect`를 끄고 루트로 돌려 일반 창으로 남깁니다. 크래시 때는 에이전트의 X11 구명보트가 월드를 저장하고 게임을 끝냅니다(`poc/embed/README.md`).
-- 폴더 탐색, 버전 결정, Run client(`gradlew`), 핫스왑은 OS와 무관한 코드라 그대로 씁니다. Run client와 핫스왑을 Linux IDE에서 실제로 돌려 보지는 않았습니다.
+- **F11 전체화면:** 게임이 전체화면을 요청하면 IDE 밖으로 꺼냅니다. `override_redirect`를 끄고, `_NET_WM_STATE_FULLSCREEN`을 붙여 루트에 매핑한 뒤 IDE 모니터 크기로 맞춥니다. 창 모드로 돌아오면 다시 넣습니다.
+  - 판단 기준은 게임 자신의 상태입니다. 에이전트가 1초마다 `glfwGetWindowMonitor` 결과를 보고합니다. 에이전트 없이는 창이 모니터 크기로 커졌는지로 판단합니다.
+  - 포커스는 `_NET_ACTIVE_WINDOW` 클라이언트 메시지(pager 출처)로 창 관리자에게 요청합니다. 새로 매핑된 창에 그냥 `XSetInputFocus`를 하면 openbox가 포커스 가로채기 방지로 IDE에 되돌렸고, GLFW는 포커스를 잃은 전체화면 창을 최소화했습니다.
+  - 바닐라처럼 난독화된 게임에서도 통계 파일(전체화면 여부, 힙)을 씁니다. 전에는 `Minecraft` 클래스를 이름으로 못 찾으면 아무것도 쓰지 않았습니다.
+- 폴더 탐색, 버전 결정, Run client(`gradlew`), 핫스왑은 OS와 무관한 코드라 그대로 씁니다. 아래처럼 Linux IDE에서 전부 돌려 봤습니다.
 
-검증(WSL2 Ubuntu 24.04 + WSLg, IntelliJ IDEA 2026.2.3 Linux판 `-Dawt.toolkit.name=XToolkit`, 바닐라 1.21.1, `-Dsulfurframe.autotest.pid`):
+**테스트 환경:** WSL2 Ubuntu 24.04, IntelliJ IDEA 2026.3 Linux판(`-Dawt.toolkit.name=XToolkit`), 바닐라 1.21.1 / lucid 사본(Fabric 1.21.1, Loom 1.19.4, Gradle 9.9.1).
+화면은 **Xvfb + openbox**입니다(`./sf-idea-plugin/xvfb-test.sh f11|runclient [핫스왑 프로브]`; `sudo apt install xvfb openbox xdotool x11-apps imagemagick` 필요).
+WSLg에서는 정확한 판단이 안 됩니다.
+- WSLg의 창 관리자는 Windows 쪽에서 활성인 창이 아니면 X 키보드 포커스를 None으로 돌려 놓습니다(`_NET_ACTIVE_WINDOW` 0). 그래서 임베드된 게임에 실제 키가 닿지 않습니다.
+- 전체화면을 빠져나오는 순간 WSLg의 X 서버가 죽은 적이 있습니다("X connection to :0 broken").
+- 전체화면으로 바뀌는 순간 IDE가 malloc 힙 손상으로 한 번 죽은 적도 있습니다. 스택이 남지 않았습니다. 감시 폴링의 X 호출을 작업 스레드 하나로 모은 뒤로는 재발하지 않았습니다.
+
+F11 흐름(`f11`, 바닐라를 pid로 붙임):
 ```
-PASS profile detected                 [FABRIC 1.21.1 0.17.2 (Java 21)]
+PASS profile detected  [FABRIC 1.21.1 0.17.2 (Java 21)]
 PASS embedded in the tool window
-PASS game sized to the canvas (16:9 fit)
+PASS game sized to the canvas (16:9 fit)  [game 454x255, canvas 454x824]
 PASS survives floating the tool window
 PASS survives re-docking
-PASS hidden -> game minimized         (X11: 매핑 해제, state HIDDEN)
+PASS hidden -> game minimized  [iconic true, state HIDDEN]
 PASS shown -> game restored
 PASS 16:9 letterbox
-F11 fullscreen: not handled on Linux yet (skipped)
+PASS F11 -> fullscreen  [fullscreen true, in canvas false, rect 1920x1080, monitor 1920x1080]
+PASS F11 again -> embedded, no title bar
 PASS open as editor tab
 PASS tab closed -> back in the tool window
 failures: 0
 ```
-![linux](snapshot-linux.png)
+Run client 흐름(`runclient`, 25개 모두 통과): Run client → 임베드 74초(첫 실행은 Loom 준비로 110초).
+- 핫스왑: 메서드 본문 javac 226~516 ms, 저장·외부 편집, 상수 전파, 같은 바이트 건너뛰기.
+- 메서드 추가 → 재시작 안내(Linux에는 JBR 21이 없어 구조 변경은 재시작).
+- 리소스 리로드, 시작 코드·`fabric.mod.json` 변경 → 재시작, 재시작 → 같은 월드, 상태바, Run 창, Rerun.
 
-Windows 회귀 확인: 같은 빌드로 Windows 샌드박스 IDE의 Run client + 핫스왑 자동 테스트를 다시 돌려 전부 통과(javac 핫스왑 2.4초).
+**찾아서 고친 것: 첫 실행 접근성 화면이 quick play를 막음.** 새 run 폴더에서는 Minecraft가 "Welcome to Minecraft! ... Narrator" 화면을 띄웁니다. 그 화면 때문에 `--quickPlaySingleplayer`가 월드에 들어가지 못하고, "같은 월드로 재시작"이 타이틀 화면에서 멈췄습니다. Windows 테스트 사본은 누군가 이 화면을 한 번 넘긴 상태(`onboardAccessibility:false`)라 드러나지 않았습니다. 이제 quick play로 실행할 때 run 폴더의 `options.txt`에 `onboardAccessibility:false`를 넣습니다(`SharedInstance.skipAccessibilityOnboarding`).
+
+Windows 회귀 확인(같은 빌드, 2026.3 샌드박스): Run client + 핫스왑 26/26, F11 흐름 12/12.
+
+예전 WSLg 화면: ![linux](snapshot-linux.png)
 
 ## 공유 인스턴스 (모드끼리 월드·설정 공유)
 패널의 **Shared worlds**를 켜면 같은 마인크래프트 버전의 모든 프로젝트가 게임 폴더 하나를 같이 씁니다(`SharedInstance.java`, 기본은 꺼짐).
