@@ -73,6 +73,32 @@ final class SharedInstance {
         log.accept("shared instance " + mc + ": " + shared);
     }
 
+    /**
+     * Minecraft's first-launch accessibility screen ("Welcome to Minecraft! ... Narrator") holds back --quickPlay*: in
+     * a run folder whose options.txt does not say onboardAccessibility:false yet, the game stayed on that screen and
+     * "restart into the same world" landed on the title screen. Set it before such a launch (the other options are
+     * left alone; a missing options.txt gets just this line and the game fills in its defaults).
+     */
+    static void skipAccessibilityOnboarding(Path run, Consumer<String> log) {
+        Path opts = run.resolve("options.txt");
+        try {
+            var lines = Files.exists(opts) ? new ArrayList<>(Files.readAllLines(opts)) : new ArrayList<String>();
+            boolean found = false;
+            for (int i = 0; i < lines.size(); i++) {
+                if (!lines.get(i).startsWith("onboardAccessibility:")) continue;
+                if (lines.get(i).equals("onboardAccessibility:false")) return;
+                lines.set(i, "onboardAccessibility:false");
+                found = true;
+            }
+            if (!found) lines.add("onboardAccessibility:false");
+            Files.createDirectories(run);
+            Files.write(opts, lines);
+            log.accept("options.txt: first-launch accessibility screen turned off (it keeps quick play from entering the world)");
+        } catch (IOException e) {
+            log.accept("options.txt not updated: " + e.getMessage());
+        }
+    }
+
     /** After the game exited: keep the files it rewrote (options, servers, hotbars) for the next project. */
     static void collect(Path run, String mc) {
         Path shared = forVersion(mc);
