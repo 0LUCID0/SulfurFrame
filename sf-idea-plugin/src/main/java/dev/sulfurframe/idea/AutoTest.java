@@ -191,6 +191,16 @@ final class AutoTest {
         if (Boolean.getBoolean("sulfurframe.autotest.worlds")) onEdt(() -> p.shareWorlds.setSelected(true));   // shared instance from the first launch
         if (Boolean.getBoolean("sulfurframe.autotest.debug")) onEdt(() -> p.debug.setSelected(true));
         String world = System.getProperty("sulfurframe.autotest.world");
+        // quick play does not create a missing world (1.21.1 stays on the title screen): make it with the test world writer
+        if (world != null) {
+            var tgt = p.selectedTarget();
+            Path saves = SharedInstance.runDir(tgt).resolve("saves");
+            String mcv = tgt.profile().minecraftVersion();
+            if (!Files.isDirectory(saves.resolve(world)) && TestWorld.supported(mcv)) {
+                try { Files.createDirectories(saves); TestWorld.create(saves, world, mcv); lines.add("world '" + world + "' created (test world writer)"); }
+                catch (Exception ex) { lines.add("world '" + world + "' could not be created: " + ex); }
+            }
+        }
         if (world != null) onEdt(() -> p.runClient(java.util.List.of("--quickPlaySingleplayer", world)));
         else onEdt(p::runClient);
         // -Dsulfurframe.autotest.decoy=<.cmd printing "pid=N">: another Minecraft started meanwhile must not be embedded
@@ -270,7 +280,7 @@ final class AutoTest {
         check("restart -> new game embedded", e.attached() && e.gamePid() != before && !ProcessHandle.of(before).isPresent(),
                 "old pid " + before + " (gone " + !ProcessHandle.of(before).isPresent() + "), new pid " + e.gamePid() + ", " + (System.currentTimeMillis() - t0) / 1000 + " s");
         if (world != null) {
-            check("restart -> back in the same world", world.equals(p.lastRestartWorld) && waitForLog(gameLog, "joined the game", 120),
+            check("restart -> back in the same world", world.equals(p.lastRestartWorld) && waitForLog(gameLog, "logged in with entity id", 120),
                     "world '" + p.lastRestartWorld + "'");
         }
     }
@@ -399,7 +409,7 @@ final class AutoTest {
         }
         if (!(e.attached() && e.gamePid() != before)) return false;
         for (int i = 0; i < seconds * 2; i++) {   // the new game writes a fresh latest.log
-            try { if (Files.exists(gameLog) && Files.readString(gameLog).contains("joined the game")) return true; } catch (Exception ignored) { }
+            try { if (Files.exists(gameLog) && Files.readString(gameLog).contains("logged in with entity id")) return true; } catch (Exception ignored) { }
             sleep(500);
         }
         return false;
@@ -526,7 +536,7 @@ final class AutoTest {
         long before = p.embedder.gamePid();
         final var desc = d;
         onEdt(() -> com.intellij.execution.runners.ExecutionUtil.restart(desc));   // the IDE's Rerun
-        boolean back = waitForNewGame(p, before, gameLog, 300) && waitForLog(gameLog, "joined the game", 120);
+        boolean back = waitForNewGame(p, before, gameLog, 300) && waitForLog(gameLog, "logged in with entity id", 120);
         check("Rerun: saved and quit, then back in the same world", back && p.logText().contains("stop: saving and quitting (world 'SFWorld')"),
                 "new game " + back + ", " + (p.logText().contains("stop: saving and quitting") ? "stopped gracefully" : "no graceful stop"));
     }

@@ -55,6 +55,15 @@
   F11 복귀, 에디터 탭, 탭 닫고 복귀). 첫 실행에서는 F11 검사가 키보드 포커스 없음으로 실패했습니다. 다른 앱이 앞에 있으면
   Windows 포커스 잠금 때문에 `toFront()`가 작업 표시줄만 깜빡이기 때문입니다. 이제 F11 검사는 IDE가 앞으로 올 때까지 최대
   1분 기다리고(그 사이 IDE 제목 표시줄을 클릭하면 됨), 기다렸다면 결과에 한 줄 남깁니다.
+- **실제 개발 루프(Run client → 임베드 → 편집 → 핫스왑 → 재시작):** 23개 모두 통과. lucid-study-mod 사본(Fabric 1.21.1)에
+  5초마다 `[SF-PROBE] <message()>`를 찍는 클래스를 넣고 `-Dsulfurframe.autotest.runclient=true
+  -Dsulfurframe.autotest.hotswap=<SfHotswapProbe.java> -Dsulfurframe.autotest.world=SFWorld`로 돌렸습니다.
+  Run client 후 27초 만에 임베드됐고, 메서드 본문 핫스왑은 컴파일 포함 523 ms(IDE 안 javac), 예열 후에는 414 ms였습니다.
+  JBR에서는 필드와 메서드를 더하거나 빼는 변경도 적용되고, 저장만 해도 스왑됩니다. 재시작과 IDE의 Rerun은 둘 다 저장 후
+  종료한 뒤 같은 월드로 돌아왔습니다.
+  - 테스트 쪽 수정 두 가지: 1.21.1의 `--quickPlaySingleplayer`는 없는 월드를 만들지 않고 타이틀 화면에 머뭅니다. 그래서
+    지정한 월드가 없으면 테스트가 먼저 테스트 월드 생성기로 만듭니다. 또 이 환경의 게임 로그에는 "joined the game" 줄이
+    없어서, 월드 진입은 서버의 `logged in with entity id` 줄로 판정합니다.
 
 결과 (IntelliJ IDEA 2026.2.3, 바닐라 1.21.1):
 ```
