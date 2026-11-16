@@ -45,7 +45,15 @@ final class GradleJava {
         return pb;
     }
 
-    private static boolean pinned(Path root) { return property(root, "org.gradle.java.home") != null; }
+    /**
+     * The build chose its Gradle JVM: org.gradle.java.home, or Gradle's daemon toolchain file
+     * (gradle/gradle-daemon-jvm.properties, toolchainVersion=25), where Gradle itself picks a matching local JDK. A
+     * Loom 1.19+ build for Minecraft 1.21.x needs a Java 25 Gradle though its game is Java 21: by the game's version
+     * alone we would hand it JDK 21.
+     */
+    private static boolean pinned(Path root) {
+        return property(root, "org.gradle.java.home") != null || Files.isRegularFile(root.resolve("gradle").resolve("gradle-daemon-jvm.properties"));
+    }
 
     /** A Gradle property from the user's ~/.gradle/gradle.properties (wins, as in Gradle) or the build's; null if unset. */
     static String property(Path root, String key) {

@@ -4,11 +4,21 @@
 # usage: ./build.sh   -> poc/agent/sf-agent.jar
 set -euo pipefail
 cd "$(dirname "$0")"
-JDK="${JDK:-$HOME/.jdks/temurin-25.0.4.1/bin}"
-# newest ASM 9.x in the Gradle cache (9.8+ reads Java 25 class files); Gradle rotates its cache, so do not pin one
-ASM_JAR="${ASM_JAR:-$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.ow2.asm/asm" -name 'asm-9*.jar' ! -name '*sources*' 2>/dev/null | sort -V | tail -1)}"
-[ -f "$ASM_JAR" ] || { echo "no ASM 9.x jar in the Gradle cache; set ASM_JAR" >&2; exit 1; }
-echo "using $(basename "$ASM_JAR")"
+# newest installed JDK 25 (an update changes the folder name)
+JDK="${JDK:-$( (ls -d "$HOME/.jdks/temurin-25."*/bin "/c/Program Files/Eclipse Adoptium/jdk-25."*/bin 2>/dev/null || true) | sort -V | tail -1)}"
+[ -x "$JDK/javac" ] || [ -x "$JDK/javac.exe" ] || { echo "no JDK 25 found; set JDK=<jdk>/bin" >&2; exit 1; }
+# ASM: one pinned release (keep it the latest: https://repo1.maven.org/maven2/org/ow2/asm/asm/), fetched once from
+# Maven Central into ~/.sulfurframe/lib. It used to be "whatever is newest in the Gradle cache", which changed under us.
+ASM_VERSION=9.11.1
+ASM_JAR="${ASM_JAR:-$HOME/.sulfurframe/lib/asm-$ASM_VERSION.jar}"
+if [ ! -f "$ASM_JAR" ]; then
+  mkdir -p "$(dirname "$ASM_JAR")"
+  url="https://repo1.maven.org/maven2/org/ow2/asm/asm/$ASM_VERSION/asm-$ASM_VERSION.jar"
+  curl -fsSL -o "$ASM_JAR.tmp" "$url"
+  [ "$(sha1sum "$ASM_JAR.tmp" | cut -c1-40)" = "$(curl -fsSL "$url.sha1" | cut -c1-40)" ] || { rm -f "$ASM_JAR.tmp"; echo "ASM download: checksum mismatch" >&2; exit 1; }
+  mv "$ASM_JAR.tmp" "$ASM_JAR"
+fi
+echo "using $(basename "$ASM_JAR"), $(basename "$(dirname "$JDK")")"
 
 rm -rf out && mkdir -p out/impl out/agent out/asm
 # --release 8 warns that it is deprecated on JDK 25; the warning is expected
