@@ -41,6 +41,21 @@
   - Gradle과 Maven 플러그인을 끄고, 동의 창은 `-Djb.consents.confirmation.enabled=false` 등으로 건너뜁니다.
   - `-Dsulfurframe.autotest.pid=<실행 중인 마인크래프트 PID>`를 주면 툴윈도우가 자동으로 열립니다. 그다음 붙이기, 플로팅, 재도킹, 숨김, 보이기를 차례로 검사해서 `%TEMP%/sulfurframe-autotest.txt`와 스크린샷으로 남깁니다.
 
+샌드박스는 `./sf-idea-plugin/sandbox.sh <프로젝트 폴더> [-Dsulfurframe.autotest.pid=<PID>] …`로 띄웁니다. IDE 빌드마다
+`%TEMP%/sf-idea-sandbox-<빌드 번호>`에 따로 만들어서, IDE를 올려도 이전 샌드박스와 섞이지 않습니다.
+
+### IntelliJ 2026.3(빌드 263) 이전 확인 (2026-11-16)
+- **컴파일:** 2026.3의 jar로 오류 없이 컴파일됩니다. 경고는 `GameTab`의 `FileEditorManager.openFile(VirtualFile, boolean)`
+  deprecation 하나입니다. 대체 API(`requestOpenFile`)는 2026.3에서 생긴 것으로 보이고, 기존 메서드는 제거 예정이 아니라서
+  2026.2 호환(`since-build="262"`)을 위해 그대로 둡니다.
+- **번들 런타임:** 2026.3도 JBR 25(25.0.4.1)라서 FFM과 에이전트 쪽 변화는 없습니다.
+- **사용자 IDE:** 설정 이전 때 `sulfurframe.jar`가 새 설정 폴더(`IntelliJIdea2026.3/plugins`)로 옮겨졌고, 2026.3에서 로드되어
+  프로젝트 인식까지 동작한 기록이 있습니다.
+- **샌드박스 자동 테스트:** 9개 중 8개 통과(프로필 인식, 임베드, 16:9, 플로팅, 재도킹, 숨김, 복원, 레터박스). F11 검사는
+  키보드 포커스가 없어서 키를 보내지 못했습니다. 테스트 동안 1초마다 기록한 맨 앞 창이 Claude 앱과 탐색기뿐이었고,
+  IDE는 한 번도 앞으로 나오지 못했습니다(Windows 포커스 잠금). 2026.2에서는 통과한 검사라서, IDE를 앞에 둘 수 있을 때 다시
+  돌리면 됩니다.
+
 결과 (IntelliJ IDEA 2026.2.3, 바닐라 1.21.1):
 ```
 PASS profile detected  [FABRIC 1.21.1 0.17.2 (Java 21)]
