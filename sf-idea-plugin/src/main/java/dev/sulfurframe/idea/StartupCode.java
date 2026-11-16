@@ -51,12 +51,13 @@ final class StartupCode {
         return Arrays.stream(n.split("\\$")).filter(s -> !s.isEmpty() && !Character.isDigit(s.charAt(0))).distinct().toList();
     }
 
-    /** name -> value of every static final field with a ConstantValue. */
+    /** name -> value of every non-private static final field with a ConstantValue (a private one has no other readers). */
     static Map<String, Object> constants(byte[] cls) {
         var out = new TreeMap<String, Object>();
         new ClassReader(cls).accept(new ClassVisitor(Opcodes.ASM9) {
             @Override public FieldVisitor visitField(int access, String name, String desc, String sig, Object value) {
-                if (value != null && (access & Opcodes.ACC_STATIC) != 0 && (access & Opcodes.ACC_FINAL) != 0) out.put(name, value);
+                if (value != null && (access & Opcodes.ACC_STATIC) != 0 && (access & Opcodes.ACC_FINAL) != 0
+                        && (access & Opcodes.ACC_PRIVATE) == 0) out.put(name, value);
                 return null;
             }
         }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
