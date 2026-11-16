@@ -1,14 +1,24 @@
 <idea-plugin>
     <id>dev.sulfurframe</id>
     <name>SulfurFrame</name>
-    <vendor>SulfurFrame</vendor>
+    <vendor url="https://github.com/0LUCID0/Sulfur_Frame">0LUCID0</vendor>
+    <!-- version and idea-version are overwritten by the Gradle build (gradle.properties); kept here for build.sh -->
     <version>0.1.0</version>
     <description><![CDATA[
-      Run your Minecraft mod's dev client inside the IDE: the game window is embedded in a tool window,
-      throttled while you edit code, and its memory is handed back while the tool window is hidden.
-      The Minecraft version and mod loader are read from the project's build files.
+      <p>Run your Minecraft mod's dev client inside the IDE.</p>
+      <ul>
+        <li>The game window is embedded in a tool window or an editor tab, throttled while you edit code, and its
+            memory is handed back while it is hidden.</li>
+        <li>Hotswap on save: changed classes (also files changed outside the IDE) are compiled and reloaded into the
+            running game; "Restart into the Same World" goes straight back to where you were.</li>
+        <li>The Minecraft version and mod loader are read from the project's build files, including multi-project
+            and Stonecutter-style layouts.</li>
+        <li>World snapshots, throwaway test worlds, and worlds shared by every project of the same Minecraft version.</li>
+      </ul>
+      <p>Currently supports Fabric 1.21.1 dev clients on Windows and Linux (X11). Not affiliated with Mojang or
+         Microsoft.</p>
     ]]></description>
-    <idea-version since-build="262"/>
+    <idea-version since-build="263"/>
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.java</depends>
     <extensions defaultExtensionNs="com.intellij">
