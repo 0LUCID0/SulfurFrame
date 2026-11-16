@@ -48,6 +48,7 @@ final class AutoTest {
         sleep(3000);
         check("profile detected", p.profile != null && p.profile.isComplete(), String.valueOf(p.profile));
         onEdt(() -> p.embedder.attach(pid));
+        p.startStats(pid);   // the agent's reports carry the game's fullscreen state, which the F11 check relies on
         sleep(4000);
         var e = p.embedder;
         long game = e.gameHwnd(), canvas = e.canvasNativeHwnd();
@@ -95,7 +96,6 @@ final class AutoTest {
         check("16:9 letterbox", Math.abs(ratio - 16.0 / 9.0) < 0.02 && g[2] <= c[2] && g[3] <= c[3],
                 "game " + g[2] + "x" + g[3] + " (" + String.format("%.3f", ratio) + ") in canvas " + c[2] + "x" + c[3]);
 
-        if (dev.sulfurframe.idea.embed.GameView.linux()) { lines.add("F11 fullscreen: not handled on Linux yet (skipped)"); editorTab(p, game); return; }
         // F11: out of the IDE, covering the monitor
         var robot = new Robot();
         var ide = javax.swing.SwingUtilities.getWindowAncestor(p);
@@ -111,19 +111,32 @@ final class AutoTest {
         while (NativeWindows.keyboardFocus() != game && System.currentTimeMillis() < until) {
             if (!waited) { waited = true; System.err.println("SulfurFrame autotest: bring the IDE window to the front for the F11 test"); }
             sleep(500);
-            if (ide.isActive()) { e.focusGame(); sleep(500); }
+            // X11 hands the keyboard to any window (XSetInputFocus), front or not; Windows needs the IDE in front
+            if (ide.isActive() || dev.sulfurframe.idea.embed.GameView.linux()) { e.focusGame(); sleep(500); }
         }
         if (waited) lines.add("F11: waited for the IDE to come to the front (Windows foreground lock)");
+        // WSLg's window manager moves the X focus to the window active on the Windows side, a moment after the
+        // activation: the focus must have stayed on the game for a second before the key goes out
+        for (int stable = 0; stable < 4 && System.currentTimeMillis() < until + 10_000; ) {
+            sleep(250);
+            if (NativeWindows.keyboardFocus() == game) stable++; else { stable = 0; e.focusGame(); }
+        }
         // never send a real key to another application
         if (NativeWindows.keyboardFocus() != game) { check("F11 -> fullscreen", false, "game does not have keyboard focus, key not sent"); return; }
         robot.keyPress(java.awt.event.KeyEvent.VK_F11); robot.keyRelease(java.awt.event.KeyEvent.VK_F11);
         sleep(3000);
         int[] fs = NativeWindows.screenRect(game);
         var mon = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
-        check("F11 -> fullscreen", e.isFullscreen() && !NativeWindows.isChild(game) && fs[2] >= mon.getWidth() && fs[3] >= mon.getHeight(),
-                "fullscreen " + e.isFullscreen() + ", child " + NativeWindows.isChild(game) + ", rect " + fs[2] + "x" + fs[3] + ", monitor " + mon.getWidth() + "x" + mon.getHeight());
+        // out of the canvas (Windows: a top-level window; X11: the window manager's, maybe inside its frame)
+        boolean inCanvas = NativeWindows.parentOf(game) == e.canvasNativeHwnd();
+        check("F11 -> fullscreen", e.isFullscreen() && !inCanvas && fs[2] >= mon.getWidth() && fs[3] >= mon.getHeight(),
+                "fullscreen " + e.isFullscreen() + ", in canvas " + inCanvas + ", rect " + fs[2] + "x" + fs[3] + ", monitor " + mon.getWidth() + "x" + mon.getHeight());
         screen("sulfurframe-autotest-4-fullscreen");
         // F11 again: back into the panel, without the caption GLFW adds when leaving fullscreen
+        for (int stable = 0, tries = 0; stable < 4 && tries < 40; tries++) {
+            sleep(250);
+            if (NativeWindows.keyboardFocus() == game) stable++; else { stable = 0; e.focusGame(); }
+        }
         if (NativeWindows.keyboardFocus() != game) { check("F11 again -> embedded, no title bar", false, "game lost keyboard focus while fullscreen, key not sent"); return; }
         robot.keyPress(java.awt.event.KeyEvent.VK_F11); robot.keyRelease(java.awt.event.KeyEvent.VK_F11);
         sleep(3000);

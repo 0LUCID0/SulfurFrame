@@ -20,7 +20,9 @@ import java.util.function.Consumer;
  *   - park before the canvas's X window is destroyed (tool window hidden/floated/moved): back to the root, unmapped
  *   - detach: clear override-redirect, back to the root, map: the WM frames it again as a normal window
  * The IDE must run on XToolkit (IntelliJ on a Wayland session defaults to its Wayland toolkit: start it with
- * -Dawt.toolkit.name=XToolkit). F11 fullscreen is not handled here yet.
+ * -Dawt.toolkit.name=XToolkit).
+ *   - F11: the game asks for fullscreen (the agent reports GLFW's own state): it goes back to the window manager as a
+ *     fullscreen window on the IDE's monitor; when it reports windowed again it is embedded again
  */
 public final class X11Embedder implements GameView {
     private final Consumer<String> log;
@@ -29,7 +31,7 @@ public final class X11Embedder implements GameView {
         @Override public void paint(Graphics g) {
             g.setColor(game == 0 ? new Color(0x2B2D30) : Color.BLACK);
             g.fillRect(0, 0, getWidth(), getHeight());
-            if (game == 0) { g.setColor(Color.GRAY); g.drawString(X11.isXToolkit() ? "no game attached" : "embedding needs the IDE on X11 (-Dawt.toolkit.name=XToolkit)", 12, 20); }
+            if (game == 0) { g.setColor(Color.GRAY); g.drawString(!X11.isXToolkit() ? "embedding needs the IDE on X11 (-Dawt.toolkit.name=XToolkit)" : fullscreen ? "game is fullscreen (F11 to come back)" : "no game attached", 12, 20); }
         }
         @Override public void removeNotify() { park(); super.removeNotify(); }
         @Override public void addNotify() { super.addNotify(); SwingUtilities.invokeLater(X11Embedder.this::unpark); }
@@ -41,6 +43,11 @@ public final class X11Embedder implements GameView {
     private volatile double aspect = 16.0 / 9.0;
     final Throttler throttler;
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> Thread.ofPlatform().daemon().name("sf-x11").unstarted(r));
+    /** The game is fullscreen (F11): out of the IDE, a normal window of the window manager covering the monitor. */
+    private volatile boolean fullscreen;
+    private volatile long fullscreenWin;
+    private volatile java.util.function.Supplier<Boolean> fullscreenHint = () -> null;
+    private final ScheduledExecutorService watch = Executors.newSingleThreadScheduledExecutor(r -> Thread.ofPlatform().daemon().name("sf-x11-watch").unstarted(r));
     private final AWTEventListener reclaim = this::onAwtMouse;
     private final X11.ClickToFocus clicks;
 
@@ -65,6 +72,9 @@ public final class X11Embedder implements GameView {
         Toolkit.getDefaultToolkit().addAWTEventListener(reclaim, AWTEvent.MOUSE_EVENT_MASK);
         clicks = new X11.ClickToFocus(throttler::onGameFocused);
         Runtime.getRuntime().addShutdownHook(new Thread(this::releaseForShutdown, "sulfurframe-release"));
+        // the poll's X calls run on the worker, like the others (one IDE crash with a corrupted malloc heap was seen
+        // while a separate thread polled during the fullscreen switch)
+        watch.scheduleWithFixedDelay(() -> { if (!disposed) worker.execute(this::watchFullscreen); }, 1000, 300, TimeUnit.MILLISECONDS);
     }
 
     @Override public Component component() { return canvas; }
@@ -77,7 +87,8 @@ public final class X11Embedder implements GameView {
     @Override public long canvasNativeHwnd() { return canvasWin(); }
     @Override public long parkedHwnd() { return parked; }
     @Override public String throttleState() { return throttler.state().name(); }
-    @Override public boolean isFullscreen() { return false; }
+    @Override public boolean isFullscreen() { return fullscreen; }
+    @Override public void setFullscreenHint(java.util.function.Supplier<Boolean> hint) { fullscreenHint = hint == null ? () -> null : hint; }
 
     // ------------------------------------------------------------------ attach / detach
 
@@ -185,7 +196,93 @@ public final class X11Embedder implements GameView {
         Toolkit.getDefaultToolkit().removeAWTEventListener(reclaim);
         try { detach(); } catch (Throwable ignored) { }
         throttler.shutdown();
+        watch.shutdownNow();
         worker.shutdownNow();
+    }
+
+    // ------------------------------------------------------------------ fullscreen (F11)
+
+    /**
+     * F11 makes GLFW put its window "on the monitor": with a window manager that supports EWMH it asks the WM for
+     * _NET_WM_STATE_FULLSCREEN (ignored: our override-redirect child is not managed) and resizes the window to the
+     * monitor, which inside the panel only shows its corner. The game's own word decides (the agent reports
+     * glfwGetWindowMonitor with its stats, once a second); without an agent, a window grown to the monitor's size
+     * counts as fullscreen.
+     */
+    private void watchFullscreen() {
+        try {
+            Boolean says = fullscreenHint.get();
+            if (fullscreen) {
+                long w = fullscreenWin;
+                if (!X11.exists(w)) { SwingUtilities.invokeLater(() -> lostWhileFullscreen(w)); return; }
+                boolean windowed = says != null ? !says : smallerThanMonitor(w);
+                if (windowed) SwingUtilities.invokeLater(() -> exitFullscreen(w));
+                return;
+            }
+            long w = game;
+            if (w == 0) return;
+            boolean fs = says != null ? says : !smallerThanMonitor(w);
+            if (fs) SwingUtilities.invokeLater(() -> enterFullscreen(w));
+        } catch (Throwable ignored) {
+            // keep polling
+        }
+    }
+
+    private boolean smallerThanMonitor(long w) {
+        int[] r = X11.screenRect(w);
+        Rectangle mon = monitorOfCanvas();
+        return r == null || mon == null || r[2] < mon.width || r[3] < mon.height;
+    }
+
+    private void enterFullscreen(long w) {
+        if (fullscreen || game != w) return;
+        Rectangle mon = monitorOfCanvas();
+        if (mon == null) return;
+        clicks.watch(0);
+        throttler.bind(0, 0);   // no frame cap while it is the only thing on the screen
+        fullscreen = true; fullscreenWin = w; game = 0; canvasWin = 0;
+        worker.execute(() -> {
+            // unmanaged child -> managed toplevel that asks to be fullscreen from the start
+            X11.unmap(w);
+            X11.reparent(w, X11.root(), mon.x, mon.y);
+            X11.setOverrideRedirect(w, false);
+            X11.setFullscreenState(w, true);
+            X11.moveResize(w, mon.x, mon.y, mon.width, mon.height);
+            X11.map(w);
+            X11.sync();
+            for (int i = 0; i < 40 && !X11.viewable(w); i++) sleep(50);   // focusing an unmapped window is an error
+            // through the WM: GLFW iconifies a fullscreen window that loses the focus, so it must keep it
+            X11.activate(w);
+            X11.raise(w);
+            X11.focus(w);
+            X11.sync();
+        });
+        log.accept("game went fullscreen (F11): out of the IDE, covering " + mon.width + "x" + mon.height);
+        canvas.repaint();
+    }
+
+    private void exitFullscreen(long w) {
+        if (!fullscreen || fullscreenWin != w) return;
+        fullscreen = false; fullscreenWin = 0;
+        boolean ok = attachWindow(w, gamePid);   // withdraws it (the WM drops its state), override-redirect, reparents
+        if (ok) { X11.setFullscreenState(w, false); syncVisibility(); focusGame(); }
+        log.accept(ok ? "game left fullscreen: embedded again" : "could not re-embed after fullscreen");
+    }
+
+    private void lostWhileFullscreen(long w) {
+        if (!fullscreen || fullscreenWin != w) return;
+        fullscreen = false; fullscreenWin = 0;
+        log.accept("game window closed while fullscreen");
+        canvas.repaint();
+    }
+
+    /** Root-window pixel bounds of the monitor showing the canvas, null before the canvas is shown. */
+    private Rectangle monitorOfCanvas() {
+        var gc = canvas.getGraphicsConfiguration();
+        if (gc == null) return null;
+        Rectangle b = gc.getBounds();
+        double sx = gc.getDefaultTransform().getScaleX(), sy = gc.getDefaultTransform().getScaleY();
+        return new Rectangle((int) Math.round(b.x * sx), (int) Math.round(b.y * sy), (int) Math.round(b.width * sx), (int) Math.round(b.height * sy));
     }
 
     // ------------------------------------------------------------------ geometry
@@ -213,9 +310,13 @@ public final class X11Embedder implements GameView {
     // ------------------------------------------------------------------ focus
 
     @Override public void focusGame() {
-        long w = game;
+        long w = game != 0 ? game : fullscreen ? fullscreenWin : 0;
         if (w == 0) return;
-        worker.execute(() -> { X11.focus(w); X11.sync(); throttler.onGameFocused(); });
+        worker.execute(() -> {
+            if (w == fullscreenWin) X11.activate(w);   // a managed window: through the WM
+            X11.focus(w); X11.sync();
+            if (game == w) throttler.onGameFocused();
+        });
     }
 
     /** A click elsewhere in the IDE window: give the keyboard back to AWT. */

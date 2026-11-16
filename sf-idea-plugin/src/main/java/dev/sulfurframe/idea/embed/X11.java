@@ -45,6 +45,9 @@ final class X11 {
     private static final MethodHandle XGetWindowProperty = fn("XGetWindowProperty", JAVA_INT, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG,
             ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
     private static final MethodHandle XSync = fn("XSync", JAVA_INT, ADDRESS, JAVA_INT);
+    private static final MethodHandle XChangeProperty = fn("XChangeProperty", JAVA_INT, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT);
+    private static final MethodHandle XRaiseWindow = fn("XRaiseWindow", JAVA_INT, ADDRESS, JAVA_LONG);
+    private static final MethodHandle XSendEvent = fn("XSendEvent", JAVA_INT, ADDRESS, JAVA_LONG, JAVA_INT, JAVA_LONG, ADDRESS);
 
     private static MemorySegment dpy;
     private static long root, netWmPid;
@@ -76,6 +79,42 @@ final class X11 {
     }
     static synchronized void focus(long w) { try { int r = (int) XSetInputFocus.invokeExact(dpy(), w, 1 /* RevertToPointerRoot */, 0L); } catch (Throwable ignored) { } }
     static synchronized void sync() { try { int r = (int) XSync.invokeExact(dpy(), 0); } catch (Throwable ignored) { } }
+    static synchronized void raise(long w) { try { int r = (int) XRaiseWindow.invokeExact(dpy(), w); } catch (Throwable ignored) { } }
+
+    /**
+     * _NET_WM_STATE = [_NET_WM_STATE_FULLSCREEN] (or empty). Set on a window that is not mapped, it tells an EWMH
+     * window manager to map it fullscreen; a mapped window's state is only changed by client messages.
+     */
+    /**
+     * Ask the window manager to activate (raise + focus) a managed window: _NET_ACTIVE_WINDOW sent to the root as a
+     * pager (source 2), which focus-stealing prevention lets through. A plain XSetInputFocus on a window the WM has
+     * just mapped is undone by such WMs (openbox gave the focus back to the IDE, and GLFW then iconified the
+     * fullscreen game). XClientMessageEvent on LP64: type 0, window 32, message_type 40, format 48, data 56.
+     */
+    static synchronized void activate(long w) {
+        try (var a = Arena.ofConfined()) {
+            var d = dpy();
+            var ev = a.allocate(192, 8);
+            ev.set(JAVA_INT, 0, 33 /* ClientMessage */);
+            ev.set(JAVA_LONG, 32, w);
+            ev.set(JAVA_LONG, 40, (long) XInternAtom.invokeExact(d, a.allocateFrom("_NET_ACTIVE_WINDOW"), 0));
+            ev.set(JAVA_INT, 48, 32);
+            ev.set(JAVA_LONG, 56, 2L);   // source: pager
+            ev.set(JAVA_LONG, 64, 0L);   // CurrentTime
+            int r = (int) XSendEvent.invokeExact(d, root, 0, (1L << 20) | (1L << 19) /* SubstructureRedirect|Notify */, ev);
+        } catch (Throwable ignored) { }
+    }
+
+    static synchronized void setFullscreenState(long w, boolean on) {
+        try (var a = Arena.ofConfined()) {
+            var d = dpy();
+            long state = (long) XInternAtom.invokeExact(d, a.allocateFrom("_NET_WM_STATE"), 0);
+            long fs = (long) XInternAtom.invokeExact(d, a.allocateFrom("_NET_WM_STATE_FULLSCREEN"), 0);
+            var data = a.allocate(JAVA_LONG);   // format 32 data is an array of C longs
+            data.set(JAVA_LONG, 0, fs);
+            int r = (int) XChangeProperty.invokeExact(d, w, state, 4L /* XA_ATOM */, 32, 0 /* PropModeReplace */, data, on ? 1 : 0);
+        } catch (Throwable ignored) { }
+    }
 
     /** XChangeWindowAttributes(CWOverrideRedirect); XSetWindowAttributes on LP64: override_redirect at 88, 112 bytes. */
     static synchronized void setOverrideRedirect(long w, boolean on) {

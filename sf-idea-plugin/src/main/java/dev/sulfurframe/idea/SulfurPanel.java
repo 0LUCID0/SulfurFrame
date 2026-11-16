@@ -631,7 +631,7 @@ final class SulfurPanel extends JPanel {
     private volatile Path statsFile;
 
     /** Ask the game's agent to write its numbers (fps, tick time, memory) every second, for the status bar. */
-    private void startStats(long pid) {
+    void startStats(long pid) {
         Thread.ofPlatform().daemon().name("sf-stats").start(() -> {
             try {
                 Path f = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "stats-" + pid + ".txt");

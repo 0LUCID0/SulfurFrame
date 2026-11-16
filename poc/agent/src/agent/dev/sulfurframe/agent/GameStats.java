@@ -28,21 +28,23 @@ final class GameStats {
     private static void loop(Instrumentation inst) {
         Object mc = null;
         Method fps = null, server = null;
+        int looks = 0;
         while (true) {
             try {
                 Thread.sleep(1000);
-                if (mc == null) {
+                // the game's numbers need its class by name (a dev run, Mojang or Yarn names); an obfuscated vanilla
+                // game has none, but heap and the fullscreen state are still reported. Looked for again every 10 s
+                if (mc == null && looks++ % 10 == 0) {
                     for (Class<?> c : inst.getAllLoadedClasses()) {
                         if (!c.getName().equals("net.minecraft.client.Minecraft") && !c.getName().equals("net.minecraft.client.MinecraftClient")) continue;
                         mc = c.getMethod("getInstance").invoke(null);
                         fps = first(c, "getFps", "getCurrentFps");
                         server = first(c, "getSingleplayerServer", "getServer");
                     }
-                    if (mc == null) continue;
                 }
                 List<String> out = new ArrayList<String>();
-                if (fps != null) out.add("fps=" + fps.invoke(mc));
-                Object s = server == null ? null : server.invoke(mc);
+                if (mc != null && fps != null) out.add("fps=" + fps.invoke(mc));
+                Object s = mc == null || server == null ? null : server.invoke(mc);
                 if (s != null) {
                     Method tick = first(s.getClass(), "getCurrentSmoothedTickTime", "getAverageTickTime", "getAverageTickTimeNanos");
                     if (tick != null) {

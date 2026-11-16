@@ -3,7 +3,7 @@ package dev.sulfurframe.agent;
 import java.lang.reflect.Method;
 
 /**
- * Mouse look in an embedded GLFW game (Windows).
+ * Mouse look in an embedded GLFW game (Windows). Also reads GLFW's fullscreen state for the IDE (every OS).
  *
  * GLFW only really disables the cursor (hide, center, clip, raw input) when glfwSetInputMode(GLFW_CURSOR_DISABLED)
  * is called while the window is "focused", and on Win32 it checks that with GetActiveWindow(): never a child window.
@@ -37,15 +37,19 @@ final class GlfwCursorFix {
     private static boolean addressFirst;
 
     static void check(long w) {
-        if (broken || SfHooks.LINUX || w == 0) return;
+        if (broken || w == 0) return;
         long now = System.nanoTime();
         if (now - checkedAt < CHECK_NS) return;
         checkedAt = now;
         try {
+            // the fullscreen state is wanted on every OS (the IDE takes the game out of the panel on F11); the
+            // cursor fix below is Win32 only
+            if (getWindowMonitor == null) getWindowMonitor = Class.forName("org.lwjgl.glfw.GLFW", false, SfHooks.lwjglClassLoader()).getMethod("glfwGetWindowMonitor", long.class);
+            fullscreen = (Long) getWindowMonitor.invoke(null, w) != 0 ? 1 : 0;
+            if (SfHooks.LINUX) return;
             if (getInputMode == null) init();
             if (w != window) { window = w; hwnd = (Long) getWin32Window.invoke(null, w); lastMode = 0; }
             int mode = (Integer) getInputMode.invoke(null, w, GLFW_CURSOR);
-            fullscreen = (Long) getWindowMonitor.invoke(null, w) != 0 ? 1 : 0;
             int was = lastMode;
             lastMode = mode;
             boolean grab = mode == GLFW_CURSOR_DISABLED && was != GLFW_CURSOR_DISABLED;
@@ -88,7 +92,6 @@ final class GlfwCursorFix {
     private static void init() throws Exception {
         ClassLoader l = SfHooks.lwjglClassLoader();
         getInputMode = Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwGetInputMode", long.class, int.class);
-        getWindowMonitor = Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwGetWindowMonitor", long.class);
         setInputMode = Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwSetInputMode", long.class, int.class, int.class);
         getWin32Window = Class.forName("org.lwjgl.glfw.GLFWNativeWin32", false, l).getMethod("glfwGetWin32Window", long.class);
         Class<?> jni = Class.forName("org.lwjgl.system.JNI", false, l);
