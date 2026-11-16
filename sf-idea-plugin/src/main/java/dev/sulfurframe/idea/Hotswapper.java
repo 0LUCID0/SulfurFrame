@@ -151,7 +151,9 @@ final class Hotswapper {
             var changed = new ArrayList<Path>();
             for (var e : now.entrySet()) {
                 Long before = snapshot.get(e.getKey());
-                if (before == null || before < e.getValue()) changed.add(e.getKey());
+                // a class file the snapshot did not have: new from this compile, or (the class roots grew once fast
+                // compile read the class path) one that was there all along, not to be sent again
+                if (before == null ? e.getValue() >= started - 1000 : before < e.getValue()) changed.add(e.getKey());
             }
             snapshot = now;
             var startup = new ArrayList<String>();
@@ -209,21 +211,47 @@ final class Hotswapper {
         return true;
     }
 
-    /** All .class files under build/classes of the target, with their modification times. */
-    static Map<Path, Long> scan(Workspace.Target t) throws IOException {
+    /**
+     * Class output folders of the game's code: every source set fast compile knows (with a run config such as
+     * runAllModsClient, other modules' too), else the target's build/classes/<lang>/<sourceSet>.
+     */
+    private List<Path> classRoots(Workspace.Target t) throws IOException {
+        var roots = new ArrayList<Path>();
+        var sets = fast.sourceSets(t);
+        if (sets != null)
+            for (var s : sets) {
+                if (s.name().equals("test") || s.name().endsWith("Test") || s.name().endsWith(":test")) continue;
+                roots.add(s.out());
+                if (s.kotlin() != null) roots.add(s.kotlin().out());
+            }
+        if (roots.isEmpty()) {
+            Path classes = t.dir().resolve("build/classes");
+            if (Files.isDirectory(classes))
+                try (Stream<Path> langs = Files.list(classes)) {
+                    for (Path lang : langs.filter(Files::isDirectory).toList())
+                        try (Stream<Path> ss = Files.list(lang)) { ss.filter(Files::isDirectory).forEach(roots::add); }
+                }
+        }
+        return roots;
+    }
+
+    /** All .class files under the class roots, with their modification times. */
+    private Map<Path, Long> scan(Workspace.Target t) throws IOException {
         var m = new HashMap<Path, Long>();
-        Path classes = t.dir().resolve("build/classes");
-        if (!Files.isDirectory(classes)) return m;
-        try (Stream<Path> s = Files.walk(classes)) {
-            for (Path p : s.filter(f -> f.toString().endsWith(".class")).toList()) m.put(p, Files.getLastModifiedTime(p).toMillis());
+        for (Path root : classRoots(t)) {
+            if (!Files.isDirectory(root)) continue;
+            try (Stream<Path> s = Files.walk(root)) {
+                for (Path p : s.filter(f -> f.toString().endsWith(".class")).toList()) m.put(p, Files.getLastModifiedTime(p).toMillis());
+            }
         }
         return m;
     }
 
-    /** build/classes/<lang>/<sourceSet>/a/b/C$D.class -> a.b.C$D */
-    static String binaryName(Workspace.Target t, Path classFile) {
-        Path rel = t.dir().resolve("build/classes").relativize(classFile);
-        String s = rel.subpath(2, rel.getNameCount()).toString().replace('\\', '/');
+    /** <class root>/a/b/C$D.class -> a.b.C$D */
+    private String binaryName(Workspace.Target t, Path classFile) throws IOException {
+        Path root = null;
+        for (Path r : classRoots(t)) if (classFile.startsWith(r) && (root == null || r.getNameCount() > root.getNameCount())) root = r;
+        String s = (root != null ? root.relativize(classFile) : classFile.getFileName()).toString().replace('\\', '/');
         return s.substring(0, s.length() - ".class".length()).replace('/', '.');
     }
 }

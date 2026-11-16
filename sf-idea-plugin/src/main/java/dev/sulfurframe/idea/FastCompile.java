@@ -44,10 +44,11 @@ final class FastCompile {
 
     FastCompile(Consumer<String> log, Path cacheDir) { this.log = log; this.cacheDir = cacheDir; }
 
-    private static String key(Workspace.Target t) { return t.buildRoot().toAbsolutePath().normalize() + "|" + t.projectPath(); }
+    /** Per build, project and run task: runAllModsClient brings other modules' source sets that runClient does not. */
+    private static String key(Workspace.Target t) { return t.buildRoot().toAbsolutePath().normalize() + "|" + t.projectPath() + "|" + t.task(); }
 
     private Path cacheFile(Workspace.Target t) {
-        return cacheDir.resolve("classpath4-" + Integer.toHexString(key(t).hashCode()) + ".txt");
+        return cacheDir.resolve("classpath5-" + Integer.toHexString(key(t).hashCode()) + ".txt");
     }
 
     /** The cached source sets, or null if there is no cache or a build file is newer than it. */
@@ -88,7 +89,7 @@ final class FastCompile {
             Files.deleteIfExists(tmp);
             String prefix = t.projectPath().equals(":") ? "" : t.projectPath() + ":";
             var p = GradleJava.apply(new ProcessBuilder(wrapper.toString(), "--init-script", init.toString(), prefix + "sfClasspath",
-                    "-PsfOut=" + tmp, "--no-configuration-cache", "--console=plain", "-q")
+                    "-PsfOut=" + tmp, "-PsfTask=" + t.task(), "--no-configuration-cache", "--console=plain", "-q")
                     .directory(t.buildRoot().toFile()).redirectErrorStream(true), t).start();
             String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             if (p.waitFor() != 0 || !Files.exists(tmp)) {
@@ -527,18 +528,39 @@ final class FastCompile {
         return Files.exists(j) ? j : null;
     }
 
-    /** Groovy init script; Gradle 7 .. 9. Writes the source-set description of the project it runs in. */
+    /**
+     * Groovy init script; Gradle 7 .. 9. Writes the source-set description of the project it runs in, plus (with
+     * -PsfTask=<run task>) every source set of other projects of the build whose output is on that task's class path:
+     * a run config like BuildPali's runAllModsClient puts the GUI, AI, ... modules' classes next to core's, and their
+     * changes must be hotswapped too. Those sets are named "<project path>:<set>" to stay distinct.
+     */
     static final String INIT_SCRIPT = """
             allprojects {
                 tasks.register('sfClasspath') {
                     def p = project
                     doLast {
                         def lines = ["javahome\\t" + System.getProperty('java.home')]
-                        def sets = p.extensions.findByName('sourceSets')
-                        if (sets != null) sets.each { ss ->
-                            def jc = p.tasks.findByName(ss.compileJavaTaskName)
+                        def onRun = new HashSet()
+                        try {
+                            def rt = p.findProperty('sfTask') ? p.tasks.findByName(p.property('sfTask').toString()) : null
+                            if (rt != null && rt.hasProperty('classpath')) rt.classpath.files.each { onRun << it.absoluteFile }
+                        } catch (Throwable ignored) { }
+                        def todo = [[p, null]]
+                        if (!onRun.isEmpty()) p.rootProject.allprojects.each { o ->
+                            if (o == p) return
+                            def os = o.extensions.findByName('sourceSets')
+                            if (os != null) os.each { s ->
+                                try { if (s.output.classesDirs.files.any { onRun.contains(it.absoluteFile) }) todo << [o, s.name] } catch (Throwable ignored) { }
+                            }
+                        }
+                        todo.each { pair ->
+                          def q = pair[0]
+                          def sets = q.extensions.findByName('sourceSets')
+                          if (sets != null) sets.each { ss ->
+                            if (pair[1] != null && ss.name != pair[1]) return
+                            def jc = q.tasks.findByName(ss.compileJavaTaskName)
                             if (jc == null) return
-                            lines << "set\\t" + ss.name
+                            lines << "set\\t" + (q == p ? ss.name : q.path + ':' + ss.name)
                             ss.java.srcDirs.each { lines << "src\\t" + it.absolutePath }
                             def out = jc.hasProperty('destinationDirectory') ? jc.destinationDirectory.get().asFile : jc.destinationDir
                             lines << "out\\t" + out.absolutePath
@@ -550,15 +572,15 @@ final class FastCompile {
                                 if (g != null) lines << "gensrc\\t" + g.asFile.absolutePath
                             } catch (Throwable ignored) { }
                             try {   // Kotlin (KGP): compileKotlin / compileClientKotlin ...
-                                def kt = p.tasks.findByName(ss.getCompileTaskName('kotlin'))
+                                def kt = q.tasks.findByName(ss.getCompileTaskName('kotlin'))
                                 def kdirs = ss.extensions.findByName('kotlin')
                                 if (kt != null && kdirs != null) {
                                     kdirs.srcDirs.each { lines << "ksrc\\t" + it.absolutePath }
                                     lines << "kout\\t" + kt.destinationDirectory.get().asFile.absolutePath
                                     kt.libraries.files.each { lines << "kcp\\t" + it.absolutePath }
                                     try { lines << "kjvm\\t" + kt.compilerOptions.jvmTarget.get().target } catch (Throwable ignored) { }
-                                    try { lines << "kmod\\t" + (kt.compilerOptions.moduleName.orNull ?: p.name) } catch (Throwable ignored) { lines << "kmod\\t" + p.name }
-                                    def kc = p.configurations.findByName('kotlinCompilerClasspath')
+                                    try { lines << "kmod\\t" + (kt.compilerOptions.moduleName.orNull ?: q.name) } catch (Throwable ignored) { lines << "kmod\\t" + q.name }
+                                    def kc = q.configurations.findByName('kotlinCompilerClasspath')
                                     if (kc != null) kc.files.each { lines << "kc\\t" + it.absolutePath }
                                 }
                             } catch (Throwable ignored) { }
@@ -572,6 +594,7 @@ final class FastCompile {
                                 if (c != null) lines << "javac\\t" + c.executablePath.asFile.absolutePath
                             } catch (Throwable ignored) { }
                             (jc.options.compilerArgs ?: []).each { lines << "arg\\t" + it }
+                          }
                         }
                         new File(p.property('sfOut').toString()).withWriter('UTF-8') { w -> lines.each { w.println(it) } }
                     }
