@@ -324,6 +324,16 @@ F11 검사는 실제 키를 보냅니다. 그래서 키보드 포커스가 게�
 - **반영되는 범위:** Run client는 게임을 **JetBrains Runtime(JBR)**과 `-XX:+AllowEnhancedClassRedefinition`으로 띄웁니다(`Jbr.java`, Gradle init script로 runClient의 실행 파일과 JVM 인자만 바꾸고 프로젝트 빌드 파일은 건드리지 않음). JBR에 들어 있는 DCEVM 덕분에 **메서드와 필드를 추가하거나 지워도** 그대로 교체됩니다.
   - JBR은 게임이 필요한 Java 버전과 같아야 합니다. `~/.jdks`(IntelliJ의 SDK 다운로드)에서 찾고, 버전이 맞으면 IDE 자신의 JBR(2026.x는 25, 마인크래프트 26.x용)도 씁니다. 1.21.x는 `jbr-21`이 필요합니다.
   - 맞는 JBR이 없으면 일반 JVM으로 띄우고, 그때는 **메서드 본문 변경**만 반영됩니다. 메서드나 필드를 추가·삭제하면 해당 클래스만 "restart needed"로 알려 주고, 나머지 클래스는 그대로 반영합니다(한 번에 실패하면 클래스별로 다시 시도).
+  - **한 번에 설치 (`JbrDownloader.java`):** 맞는 JBR이 없으면 Run client가 알림으로 다운로드를 제안합니다(Java 버전마다 IDE
+    세션당 한 번, JBR이 있는 17·21·25만). 누르면 백그라운드 작업(진행 표시, 취소 가능)으로:
+    1. IntelliJ의 JDK 다운로드가 쓰는 공개 목록(`download.jetbrains.com/jdk/feed/v1/jdks.json`)에서 이 OS·CPU의 JBR SDK(JCEF·DCEVM 제외)를 고르고
+    2. IDE의 프록시 설정으로 받아(`HttpRequests`, 약 230 MB) SHA-256을 확인한 뒤
+    3. `~/.jdks/jbr-<버전>`에 풉니다(IntelliJ 자체 다운로드와 같은 폴더·이름이라 `Jbr.find`가 그대로 찾음). `.part` 폴더에
+       풀고 마지막에 옮겨서, 중간에 취소하거나 깨진 다운로드가 설치된 JBR처럼 보이지 않습니다.
+    4. 끝나면 "Restart the game now" 알림을 띄웁니다. 다음 시작부터 JBR로 뜹니다(Gradle 없는 재시작도 JBR이 바뀐 것을 보고 Gradle로 갑니다).
+    - IntelliJ의 `JdkInstaller`/`JdkItem`은 내부 API(`@ApiStatus.Internal`)라 쓰지 않고, 공개 API(`HttpRequests`, `Decompressor`,
+      `Task.Backgroundable`)만 씁니다. 제안을 끄려면 `-Dsulfurframe.noJbrOffer=true`.
+    - 자가 테스트 `-Dsulfurframe.autotest.jbrdownload=true`: 실제로 내려받아 임시 폴더에 설치하고 JBR 21인지 확인한 뒤 지웁니다.
   - 새로 추가한 필드는 초기값 없이(0, null) 시작합니다. 클래스 초기화(static 블록)가 다시 돌지 않고, 이미 있는 객체의 생성자도 다시 돌지 않기 때문입니다.
   - 새 클래스는 교체할 필요가 없습니다. 처음 쓰일 때 build/classes에서 읽힙니다.
 - **아직 로드되지 않은 클래스:** 할 일이 없습니다. 나중에 로드될 때 새 파일을 읽습니다.

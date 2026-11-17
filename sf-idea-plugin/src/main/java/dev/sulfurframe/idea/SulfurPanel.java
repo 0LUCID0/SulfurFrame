@@ -57,6 +57,7 @@ final class SulfurPanel extends JPanel {
         agentJar = extractAgent();
         embedder.setAgentJar(agentJar);
         launcher.setAgentJar(agentJar);
+        launcher.restartAction = this::restartAsync;
 
         log.setEditable(false);
         log.setFont(consoleFont());   // same font as the Game log console next to it

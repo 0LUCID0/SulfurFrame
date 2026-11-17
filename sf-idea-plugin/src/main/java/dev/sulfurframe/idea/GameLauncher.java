@@ -59,7 +59,9 @@ final class GameLauncher {
                 }
                 log.accept("game runs on JetBrains Runtime " + jbr.getParent().getParent().getFileName() + " (enhanced hotswap: methods and fields can change)");
             } else {
-                log.accept("no JetBrains Runtime " + profile.javaMajor() + " found (~/.jdks): hotswap limited to method bodies");
+                log.accept("no JetBrains Runtime " + profile.javaMajor() + " found (~/.jdks): hotswap limited to method bodies"
+                        + (JbrDownloader.available(profile.javaMajor()) ? " (a download is offered)" : ""));
+                JbrDownloader.offer(profile.javaMajor(), log, restartAction);
             }
             if (!gameArgs.isEmpty()) {
                 Path init = tmp("sf-args.init.gradle");
@@ -126,8 +128,9 @@ final class GameLauncher {
     /**
      * Start the game straight from a cached command line ({@link QuickRelaunch}): no Gradle. The agent (with a new
      * launch marker), the debugger and dev mods arguments, and the game arguments are this launch's own.
+     *
+     * @return false if the game could not be started this way (the caller goes through Gradle; onEnd not run)
      */
-    /** @return false if the game could not be started this way (the caller goes through Gradle; onEnd not run) */
     boolean relaunch(QuickRelaunch.Spec spec, Workspace.Target target, List<String> gameArgs, BiConsumer<Long, Long> onWindow, Runnable onEnd) {
         Set<Long> before = new HashSet<>(dev.sulfurframe.idea.embed.NativeWindows.gameWindows());
         try {
@@ -208,6 +211,9 @@ final class GameLauncher {
 
     /** Milliseconds from the last launch to its game window (self-test, measurements). */
     volatile long lastWindowMillis;
+
+    /** Starts the game again (Restart into the same world), for "restart now" after a JBR download; set by the panel. */
+    volatile Runnable restartAction;
 
     /** Self-test runs are silent by default (-Dsulfurframe.mute=false to hear them); -Dsulfurframe.mute=true mutes any run. */
     static boolean muted() {

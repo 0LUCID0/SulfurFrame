@@ -594,7 +594,32 @@ final class AutoTest {
         final boolean[] ok = new boolean[1];
         onEdt(() -> ok[0] = page.createComponent() != null && !page.isModified());
         check("settings page builds, nothing modified", ok[0], "Settings | Tools | SulfurFrame");
+        if (Boolean.getBoolean("sulfurframe.autotest.jbrdownload")) jbrDownloadCheck();
         runConfigChecks(p);
+    }
+
+    /**
+     * -Dsulfurframe.autotest.jbrdownload=true: the one-click JetBrains Runtime download, for real (about 230 MB) but into
+     * a temporary folder instead of ~/.jdks, then deleted again.
+     */
+    private static void jbrDownloadCheck() {
+        Path dir = null;
+        try {
+            dir = Files.createTempDirectory("sf-jbr-test");
+            long t0 = System.currentTimeMillis();
+            var pkg = JbrDownloader.find(21);
+            check("JBR download: feed has JetBrains Runtime 21 for " + JbrDownloader.os() + "/" + JbrDownloader.arch(), pkg != null, String.valueOf(pkg));
+            if (pkg == null) return;
+            Path home = JbrDownloader.install(pkg, dir, new com.intellij.openapi.progress.EmptyProgressIndicator());
+            Path java = home.resolve("bin").resolve(dev.sulfurframe.idea.embed.GameView.linux() ? "java" : "java.exe");
+            check("JBR download: downloaded, checksum ok, unpacked as a JetBrains Runtime 21", Jbr.isJbr(home, 21) && Files.isRegularFile(java)
+                            && !Files.exists(dir.resolve(home.getFileName() + ".part")),
+                    home.getFileName() + ", " + (System.currentTimeMillis() - t0) / 1000 + " s");
+        } catch (Exception e) {
+            check("JBR download", false, e.toString());
+        } finally {
+            if (dir != null) com.intellij.openapi.util.io.FileUtil.delete(dir.toFile());
+        }
     }
 
     /** The save folder the test plays in: -Dsulfurframe.autotest.world, SFWorld when not given. */
