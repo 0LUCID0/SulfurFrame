@@ -25,9 +25,13 @@ small test mod and on a real multi-project mod (9 Gradle projects, 65 mods):
 |---|---|---|
 | Restart every time (`runClient` straight into the world) | 44 s | 83 s |
 | Stock HotSwap (Gradle compile, restart for anything structural) | 26–30 s | 50–57 s |
+| Stock HotSwap on a JetBrains Runtime (structural changes apply too) | 20–25 s | 39–49 s |
 | **SulfurFrame** | **8–17 s** | **11–30 s** |
 
-That is 63–87% less waiting than restarting and 44–78% less than stock HotSwap. The range runs from counting a commit
+That is 63–87% less waiting than restarting, 44–78% less than stock HotSwap and 35–72% less than stock HotSwap on a
+JetBrains Runtime. The JBR row differs from stock HotSwap only in that added or removed members swap live; it still
+compiles through Gradle, and a changed mixin is not re-applied to its targets without Mixin's hotswap agent (which
+SulfurFrame adds), so mixins count as restarts there. The range runs from counting a commit
 as one step (its slowest change decides) to counting each changed file as one step. 65–85% of the steps apply live:
 method bodies and new members (with a JetBrains Runtime, see Install), mixins, and assets or data.
 

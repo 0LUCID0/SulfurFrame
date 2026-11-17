@@ -1,4 +1,4 @@
-# Seconds of waiting per edit-run step, by what the change needs, under three workflows, in two measured
+# Seconds of waiting per edit-run step, by what the change needs, under several workflows, in two measured
 # environments (one machine, 2026-11-17; SulfurFrame's swap timings are from the test copy in both, see below).
 #
 #   test copy   lucid-study-mod copy: 1 Gradle project, 56 mods (measure-baseline.sh)
@@ -9,6 +9,10 @@
 #     plain restart   85.1 / 82.1 / 80.2 s
 #     stock HotSwap   19.7 / 19.8 / 19.8 s (+ < 1 s)
 #     stock assets    18.8 / 18.5 / 18.5 s (+ the reload)
+#   JBR HotSwap     stock HotSwap on a JetBrains Runtime with -XX:+AllowEnhancedClassRedefinition: the same Gradle
+#                   compile, and added/removed members apply too. Not measured separately: the redefinition itself
+#                   is under a second either way. A changed mixin is redefined but not re-applied to its targets
+#                   (that takes Mixin's hotswap agent, which SulfurFrame adds), so mixins count as a restart.
 #   SulfurFrame     swap incl. compile 0.5-1.3 s warm (no Gradle call); restart = a Gradle runClient like plain
 #                   (test copy: 38-52 s vs plain 42-49 s), so it is taken as equal to plain
 #   sulfur+relaunch the restart starts the game from its last command line, without Gradle (measure-relaunch.sh,
@@ -35,6 +39,7 @@ def costs(env):
         "plain":        {k: R for k in KEYS},
         "plain+manual": {k: R + MANUAL for k in KEYS},
         "hotswap":      {"body": C, "struct": R, "mixin": R, "assets": S + RELOAD, "data": S + RELOAD, "restart": R},
+        "jbr":          {"body": C, "struct": C, "mixin": R, "assets": S + RELOAD, "data": S + RELOAD, "restart": R},
         "sulfur":       {"body": 1.0, "struct": 1.3, "mixin": 1.0, "assets": 0.5 + RELOAD, "data": 0.5 + RELOAD, "restart": R},
         "sulfur+relaunch": {"body": 1.0, "struct": 1.3, "mixin": 1.0, "assets": 0.5 + RELOAD, "data": 0.5 + RELOAD, "restart": env["relaunch"]},
     }
@@ -68,9 +73,11 @@ for name, env in ENVS.items():
         print(f"   sulfur saves {v['plain']-v['sulfur']:.1f} s ({100*(1-v['sulfur']/v['plain']):.0f}%) vs plain, "
               f"{v['plain+manual']-v['sulfur']:.1f} s ({100*(1-v['sulfur']/v['plain+manual']):.0f}%) vs plain+manual, "
               f"{v['hotswap']-v['sulfur']:.1f} s ({100*(1-v['sulfur']/v['hotswap']):.0f}%) vs stock HotSwap")
+        print(f"   sulfur saves {v['jbr']-v['sulfur']:.1f} s ({100*(1-v['sulfur']/v['jbr']):.0f}%) vs JBR HotSwap")
         r = v['sulfur+relaunch']
         print(f"   sulfur+relaunch saves {v['plain']-r:.1f} s ({100*(1-r/v['plain']):.0f}%) vs plain, "
-              f"{v['hotswap']-r:.1f} s ({100*(1-r/v['hotswap']):.0f}%) vs stock HotSwap")
+              f"{v['hotswap']-r:.1f} s ({100*(1-r/v['hotswap']):.0f}%) vs stock HotSwap, "
+              f"{v['jbr']-r:.1f} s ({100*(1-r/v['jbr']):.0f}%) vs JBR HotSwap")
         for steps in (20, 60, 150):
             print(f"   {steps:3} steps/day: " + ", ".join(f"{wf} {steps*v[wf]/60:.0f} min" for wf in c))
     print()
