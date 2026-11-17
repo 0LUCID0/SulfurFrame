@@ -15,6 +15,10 @@
             and Stonecutter-style layouts.</li>
         <li>World snapshots, throwaway test worlds, and worlds shared by every project of the same Minecraft version.</li>
       </ul>
+      <p>To add or remove methods and fields while the game runs, install a JetBrains Runtime (JBR) of the game's
+         Java version: File | Project Structure | SDKs | + | Download JDK, vendor JetBrains Runtime, version 21 for
+         Minecraft 1.21.1. The game then starts on it with enhanced class redefinition. Without it, method body
+         changes still swap in, and SulfurFrame names the classes that need a restart.</p>
       <p>Most edits never need a restart: across 1,080 commits of nine large open-source mods, 65–85% of the changes
          could go straight into the running game, and the waiting per edit-run step dropped by 63–84%.</p>
       <p>Fabric 1.21.1 on Windows and Linux (X11) for now. It is being built alongside a much bigger mod, and more

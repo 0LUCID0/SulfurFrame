@@ -209,11 +209,9 @@ fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접
 
 ## 컨테이너 폴더와 멀티 버전 프로젝트 (`profile/Workspace.java`)
 
-열린 폴더에서 **실행할 수 있는 클라이언트를 모두 찾아** 툴윈도우 위쪽 콤보박스에 보여 줍니다(최신 MC 버전 순).
-선택은 프로젝트마다 기억합니다(`PropertiesComponent`).
+열린 폴더에서 **실행할 수 있는 클라이언트를 모두 찾아**, 클라이언트마다 "Minecraft: <위치> [태스크]" 실행 구성을 만듭니다(최신 MC 버전 순).
+메인 툴바의 실행 구성 목록에서 고르고, 선택은 프로젝트마다 기억합니다(`PropertiesComponent`).
 "Run client"는 고른 대상이 속한 빌드 루트의 wrapper로 해당 작업 경로를 실행합니다.
-
-![container](docs/container-target.png)
 
 | 구조 | 판별 방법 | 실행 작업 |
 |---|---|---|

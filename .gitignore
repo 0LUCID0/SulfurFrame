@@ -11,3 +11,6 @@ build/
 # Minecraft / JVM runtime leftovers (the PoC runs the game outside this folder, but just in case)
 logs/
 hs_err_pid*.log
+
+# private notes, not for the public repo
+sf-idea-plugin/docs/marketing/

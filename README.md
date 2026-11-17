@@ -9,7 +9,7 @@ tool window (or an editor tab), throttled while you type, and changed code is ho
 - World snapshots, throwaway test worlds, worlds shared by every project of a Minecraft version
 - F11 fullscreen leaves the IDE and comes back embedded
 
-**Status:** 0.1.0. Fabric 1.21.1 dev clients on Windows and Linux (X11), IntelliJ IDEA 2026.3 or newer.
+**Status:** 0.1.2. Fabric 1.21.1 dev clients on Windows and Linux (X11), IntelliJ IDEA 2026.3 or newer.
 It grew up next to a much bigger mod that needs every loader and many Minecraft versions, so Forge, NeoForge and the
 other versions will follow as that one gets there.
 
@@ -28,17 +28,25 @@ small test mod and on a real multi-project mod (9 Gradle projects, 65 mods):
 
 That is 63–84% less waiting than restarting and 44–73% less than stock HotSwap. The range runs from counting a commit
 as one step (its slowest change decides) to counting each changed file as one step. 65–85% of the steps apply live:
-method bodies and new members, mixins, and assets or data. What still restarts (registrations, static initializers,
+method bodies and new members (with a JetBrains Runtime, see Install), mixins, and assets or data. What still restarts (registrations, static initializers,
 mod metadata) takes as long as before, so the gain grows with how slow your project's Gradle is. Method, scripts and
 raw numbers: [`sf-idea-plugin/docs/effect-study`](sf-idea-plugin/docs/effect-study) and the plugin README.
 
 ## Install
 
-- From JetBrains Marketplace: *Settings → Plugins → Marketplace*, search for **SulfurFrame**.
+- From JetBrains Marketplace (submitted, waiting for JetBrains' review): *Settings → Plugins → Marketplace*, search
+  for **SulfurFrame**.
 - From a release zip: download `SulfurFrame-<version>.zip` from
   [Releases](https://github.com/0LUCID0/Sulfur_Frame/releases), then *Settings → Plugins → ⚙ → Install Plugin from Disk…*.
 
 Open a Fabric mod project, then use the **SulfurFrame** tool window's *Run client*.
+
+**For structural hotswap, install a JetBrains Runtime (JBR) of the game's Java version.** Run client starts the game
+on JBR with `-XX:+AllowEnhancedClassRedefinition`, so adding or removing methods and fields swaps in live too. On a
+regular JVM only method body changes apply, and SulfurFrame names the classes that need a restart. Minecraft 1.21.1
+needs JBR 21: in IntelliJ, *File → Project Structure → SDKs → + → Download JDK…*, vendor **JetBrains Runtime**,
+version 21. SulfurFrame looks for it in `~/.jdks`, and uses the IDE's own JBR 25 for Minecraft 26.x. Your build files
+stay untouched: a Gradle init script swaps the game's launcher for that run only.
 
 SulfurFrame keeps its own log of what it did (swaps, reloads, restarts) in `~/.sulfurframe/logs` for 14 days, so you
 can look back at your sessions. It stays on your machine; nothing is sent anywhere.
