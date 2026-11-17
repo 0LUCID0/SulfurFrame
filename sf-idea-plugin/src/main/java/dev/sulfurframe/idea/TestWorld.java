@@ -3,6 +3,7 @@ package dev.sulfurframe.idea;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 /**
@@ -74,6 +75,54 @@ final class TestWorld {
             out.writeByte(0);
         }
         return dir;
+    }
+
+    /**
+     * Why the single player of this world cannot play on, or null if they can: dead (health 0), or below the bottom of
+     * the overworld (fell out of the world: every join then starts in the void and dies again). Reads level.dat only.
+     */
+    static String playerLost(Path world) {
+        try (var in = new DataInputStream(new BufferedInputStream(new GZIPInputStream(Files.newInputStream(world.resolve("level.dat")))))) {
+            if (in.readByte() != 10) return null;
+            in.readUTF();
+            Object root = readPayload(in, 10);
+            if (!(root instanceof Map<?, ?> r) || !(r.get("Data") instanceof Map<?, ?> d) || !(d.get("Player") instanceof Map<?, ?> p)) return null;
+            if (p.get("Health") instanceof Float h && h <= 0) return "the player is dead";
+            if (p.get("Pos") instanceof List<?> pos && pos.size() == 3 && pos.get(1) instanceof Double y && y < -64
+                    && "minecraft:overworld".equals(p.get("Dimension")))
+                return "the player is at y " + Math.round(y) + ", below the world";
+            return null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** NBT payload of type {@code t}; arrays are skipped (null), everything else read. */
+    private static Object readPayload(DataInputStream in, int t) throws IOException {
+        switch (t) {
+            case 1: return in.readByte();
+            case 2: return in.readShort();
+            case 3: return in.readInt();
+            case 4: return in.readLong();
+            case 5: return in.readFloat();
+            case 6: return in.readDouble();
+            case 7: in.skipNBytes(in.readInt()); return null;
+            case 8: return in.readUTF();
+            case 9: {
+                int et = in.readByte(), n = in.readInt();
+                var l = new ArrayList<Object>(Math.max(n, 0));
+                for (int i = 0; i < n; i++) l.add(readPayload(in, et));
+                return l;
+            }
+            case 10: {
+                var m = new LinkedHashMap<String, Object>();
+                for (int tt; (tt = in.readByte()) != 0; ) { String k = in.readUTF(); m.put(k, readPayload(in, tt)); }
+                return m;
+            }
+            case 11: in.skipNBytes(4L * in.readInt()); return null;
+            case 12: in.skipNBytes(8L * in.readInt()); return null;
+            default: throw new IOException("bad NBT tag " + t);
+        }
     }
 
     private static Map<String, Object> map(Object... kv) {

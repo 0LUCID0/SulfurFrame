@@ -209,6 +209,14 @@ final class AutoTest {
             var tgt = p.selectedTarget();
             Path saves = SharedInstance.runDir(tgt).resolve("saves");
             String mcv = tgt.profile().minecraftVersion();
+            // a player who died or fell out of the world (a click in the game breaks blocks in creative, bedrock too)
+            // would start every later run in the void: keep that world aside and start from a new one
+            String lost = Files.isDirectory(saves.resolve(world)) ? TestWorld.playerLost(saves.resolve(world)) : null;
+            if (lost != null && TestWorld.supported(mcv)) {
+                Path aside = saves.resolve(world + "-broken-" + System.currentTimeMillis());
+                try { Files.move(saves.resolve(world), aside); lines.add("world '" + world + "': " + lost + "; moved to " + aside.getFileName() + ", making a new one"); }
+                catch (Exception ex) { lines.add("world '" + world + "': " + lost + ", could not move it aside: " + ex); }
+            }
             if (!Files.isDirectory(saves.resolve(world)) && TestWorld.supported(mcv)) {
                 try { Files.createDirectories(saves); TestWorld.create(saves, world, mcv); lines.add("world '" + world + "' created (test world writer)"); }
                 catch (Exception ex) { lines.add("world '" + world + "' could not be created: " + ex); }
