@@ -32,11 +32,24 @@
   - park 위치를 IDE 프레임으로 했을 때, 플로팅 창을 다시 도킹하면 그 프레임이 사라지면서 게임 창이 함께 없어졌습니다.
   - 그냥 감추기만(`SW_HIDE`) 하면 마인크래프트가 최소화로 보지 않아서 FPS가 그대로였습니다. 그래서 최소화한 뒤 감추고, 이 상태를 숨김으로 처리합니다.
 
-## 빌드와 테스트 (Gradle 없이, 설치된 IDE 사용)
+## 릴리스 빌드와 배포 (Gradle)
+저장소 루트의 Gradle 빌드(IntelliJ Platform Gradle Plugin 2.20.1, Gradle 9.9.1)가 배포용입니다.
+```bash
+./gradlew buildPlugin                # → sf-idea-plugin/build/distributions/SulfurFrame-<버전>.zip
+./gradlew check verifyPlugin         # fixture self-test + JetBrains Plugin Verifier
+./gradlew publishPlugin              # PUBLISH_TOKEN(서명은 CERTIFICATE_CHAIN, PRIVATE_KEY, PRIVATE_KEY_PASSWORD)
+```
+- 버전과 대상 IDE는 `gradle.properties`(`pluginVersion`, `platformVersion`, `sinceBuild`)에 있습니다. `-PideaHome=<설치 폴더>`나
+  `IDEA_HOME`을 주면 설치된 IDE에 대고 빌드해서 IDE를 내려받지 않습니다.
+- `:agent`(`poc/agent`)가 `sf-agent.jar`(안에 `sf-impl.jar` + ASM)를 만들고, 플러그인 jar에 `/sf-agent.jar`로 들어갑니다.
+- 0.1.0 확인(2026-11-17, IntelliJ 2026.3): Plugin Verifier "Compatible"(폐기 예정 API 2곳), self-test 6/6 + 5/5.
+- 아이콘은 `docs/logo/gen-icon.py`로 만듭니다(라이트/다크 테마 모두 WCAG 1.4.11 3:1 이상).
+
+## 빠른 빌드와 테스트 (Gradle 없이, 설치된 IDE 사용)
 ```bash
 ./sf-idea-plugin/build.sh          # → sf-idea-plugin/build/SulfurFrame (플러그인 폴더)
 ```
-- IntelliJ IDEA 2026.2+(JBR 25, FFM 사용 가능)의 `lib/*.jar`에 대고 컴파일합니다. 에이전트는 `poc/agent/sf-agent.jar`를 넣습니다.
+- 설치된 IntelliJ IDEA 2026.3+(JBR 25, FFM 사용 가능)의 `lib/*.jar`에 대고 컴파일합니다. 에이전트는 `poc/agent/sf-agent.jar`를 넣습니다.
 - **샌드박스 자동 테스트**: 별도의 config/system/plugins 폴더로 IDE를 띄워서 사용자 설정을 건드리지 않습니다.
   - Gradle과 Maven 플러그인을 끄고, 동의 창은 `-Djb.consents.confirmation.enabled=false` 등으로 건너뜁니다.
   - `-Dsulfurframe.autotest.pid=<실행 중인 마인크래프트 PID>`를 주면 툴윈도우가 자동으로 열립니다. 그다음 붙이기, 플로팅, 재도킹, 숨김, 보이기를 차례로 검사해서 `%TEMP%/sulfurframe-autotest.txt`와 스크린샷으로 남깁니다.
@@ -123,7 +136,7 @@ fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접
 
 ## 아직 안 된 것
 - Linux: 실제 Linux 데스크톱(GNOME/KDE, mutter/kwin)과 GPU 드라이버 확인. 지금까지는 Xvfb + openbox와 WSLg에서 확인했습니다. 26.x(SDL3)와 1.12.2(LWJGL 2)는 PoC에서 확인(`poc/embed/README.md`), 플러그인으로는 1.21.1만 시험. 아래 "Linux (X11)" 참고.
-- 모드마다 빌드와 월드가 따로인 불편(공유 인스턴스/월드), Gradle 플러그인 기반 정식 빌드, 마켓플레이스 배포 형태는 아직입니다.
+- 로더와 버전: 지금은 Fabric 1.21.1만 지원합니다. Forge와 다른 버전은 BuildPali의 멀티 버전 확장과 함께 갑니다.
 
 ## 컨테이너 폴더와 멀티 버전 프로젝트 (`profile/Workspace.java`)
 
