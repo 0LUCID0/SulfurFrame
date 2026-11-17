@@ -54,7 +54,7 @@ public final class Workspace {
         }
         // newest Minecraft first, then loader; within those a run config of the project's own (runAllModsClient: the
         // client with every module's mod) before the plain runClient of one module. The first is the default choice,
-        // and alphabetical order alone made it ":3dio" in BuildPali, a client without the GUI module.
+        // and alphabetical order alone picked another module in a multi-project mod, a client without the GUI module.
         out.sort(Comparator.comparing((Target t) -> versionKey(t.profile().minecraftVersion())).reversed()
                 .thenComparing(t -> t.profile().loader())
                 .thenComparing(t -> "runClient".equals(t.task()))

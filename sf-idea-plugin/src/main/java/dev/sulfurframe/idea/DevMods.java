@@ -45,7 +45,7 @@ final class DevMods {
     /**
      * Built-in catalog (slugs and loaders checked on Modrinth). Required = on by default; optional = listed, off.
      * NeoForge/Forge need nothing required: their mod list and config screens are built in.
-     * No WorldEdit: building tools are BuildPali's job.
+     * No WorldEdit: it is a big, opinionated mod; projects that want it add it themselves.
      */
     static final List<Known> CATALOG = List.of(
             new Known("modmenu", Tier.REQUIRED, FABRIC, "Mod list and config screens (Fabric has none built in)"),

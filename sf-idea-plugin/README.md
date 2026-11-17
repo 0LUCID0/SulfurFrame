@@ -66,7 +66,7 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 
 **2. 각 경로에 걸리는 시간 (같은 PC, 같은 날)**
 
-| 경로 | 테스트 사본 (Gradle 프로젝트 1개, 모드 56) | BuildPali (Gradle 프로젝트 9개, 모드 65) |
+| 경로 | 테스트 사본 (Gradle 프로젝트 1개, 모드 56) | 다중 프로젝트 모드 (Gradle 프로젝트 9개, 모드 65) |
 |---|---|---|
 | Gradle 구성만 (`help`) | — | 30.7초 |
 | 재시작: `runClient --quickPlaySingleplayer` → 월드 진입 | 49.4 / 41.9 / 41.8초 | 85.1 / 82.1 / 80.2초 |
@@ -75,12 +75,12 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 | SulfurFrame 교체 (컴파일 포함, Gradle 안 부름) | 0.5~1.3초 | (실사용 기록으로 확인 예정) |
 | SulfurFrame "같은 월드로 재시작" | 38~52초 (일반 재시작과 같은 수준) | 일반 재시작과 같게 계산 |
 
-BuildPali의 기존 파일은 건드리지 않았습니다. 임시 클래스와 임시 리소스를 하나씩 추가해 고친 뒤 지우고 다시 빌드했습니다.
+다중 프로젝트 모드의 기존 파일은 건드리지 않았습니다. 임시 클래스와 임시 리소스를 하나씩 추가해 고친 뒤 지우고 다시 빌드했습니다.
 임시 클래스는 아무도 의존하지 않는 클래스라 Gradle 쪽에 가장 유리한 경우입니다. 측정 중 게임은 무음으로 돌렸습니다.
 
 **3. 결과: 수정-실행 1회당 기다리는 시간**
 
-| | 테스트 사본 | BuildPali |
+| | 테스트 사본 | 다중 프로젝트 모드 |
 |---|---|---|
 | 매번 재시작 | 44.4초 | 82.5초 |
 | 매번 재시작 + 종료·메뉴 클릭(가정 +13초) | 57.4초 | 95.5초 |
@@ -89,12 +89,12 @@ BuildPali의 기존 파일은 건드리지 않았습니다. 임시 클래스와 
 | 재시작 대비 절감 | 63~82% | 64~84% |
 | 기본 HotSwap 대비 절감 | 44~69% | 48~73% |
 
-- 하루 60회 기준(가정): BuildPali에서 재시작만 하면 약 82분, 기본 HotSwap은 50~57분, SulfurFrame은 14~30분 기다립니다.
+- 하루 60회 기준(가정): 다중 프로젝트 모드에서 재시작만 하면 약 82분, 기본 HotSwap은 50~57분, SulfurFrame은 14~30분 기다립니다.
 - 불리한 쪽 끝(`sensitivity.py`)에서도 절감은 남습니다. 가장 빠른 재시작, 느린 리로드(5초), 첫 교체(2.5초)를 쓰고 Mixin을 재시작으로 쳐도 재시작 대비 40~63%, 기본 HotSwap 대비 11~40%입니다.
 - 재시작이 필요한 변경은 SulfurFrame으로도 똑같이 오래 걸립니다. 효과는 바로 반영되는 변경에서만 나옵니다. 그래서 Gradle이 느린 프로젝트일수록 효과가 커집니다.
 
 **시간에 영향을 주는 요소**
-- **Gradle 구성 시간:** 기본 경로는 Gradle을 부를 때마다 이 비용을 냅니다. BuildPali에서는 30초입니다. SulfurFrame의 교체와 리소스 반영은 Gradle을 부르지 않습니다.
+- **Gradle 구성 시간:** 기본 경로는 Gradle을 부를 때마다 이 비용을 냅니다. 다중 프로젝트 모드에서는 30초입니다. SulfurFrame의 교체와 리소스 반영은 Gradle을 부르지 않습니다.
 - **모드 수와 월드:** 게임 시작과 월드 진입 시간을 좌우합니다(56개 → 65개, 작은 평지 월드 → 실제 작업 월드).
 - **데몬 상태:** 첫 실행은 데몬이 데워지느라 느립니다(테스트 사본 49초 → 42초).
 - **고친 위치:** 다른 클래스가 많이 쓰는 클래스의 시그니처를 바꾸면 Gradle은 의존하는 클래스까지 다시 컴파일합니다. 위 측정은 Gradle에 가장 유리한 경우입니다.
@@ -150,10 +150,10 @@ BuildPali의 기존 파일은 건드리지 않았습니다. 임시 클래스와 
     상수는 프로브의 별도 메서드에서 읽습니다. 끝없이 도는 루프 안에서 읽으면, 이미 실행 중인 프레임은 스왑 뒤에도 옛 코드로
     계속 돌기 때문입니다.
 
-### 실제 프로젝트에서 쓰며 찾은 것 (BuildPali, 2026-11-16)
-BuildPali(멀티 모듈, core의 `runAllModsClient`가 gui·ai·3dio·terrain 모듈을 함께 실행)의 GUI 오버레이를 사용자 IDE에서
+### 실제 프로젝트에서 쓰며 찾은 것 (다중 프로젝트 모드, 2026-11-16)
+다중 프로젝트 모드(멀티 모듈, core의 `runAllModsClient`가 다른 모듈 네 개를 함께 실행)의 GUI 오버레이를 사용자 IDE에서
 SulfurFrame 루프로 고치면서 찾은 문제입니다. 오버레이 작업은 GUI 모듈 핫스왑 열 번 남짓(각 약 2초)으로 끝났습니다.
-- **기본 대상이 틀림:** 저장된 선택이 없으면 Run client가 알파벳순 첫 대상 `:3dio`(3dio + core, GUI 없음)를 띄웠습니다.
+- **기본 대상이 틀림:** 저장된 선택이 없으면 Run client가 알파벳순 첫 대상(다른 모듈 하나 + core, GUI 없음)을 띄웠습니다.
   이제 같은 버전·로더 안에서는 프로젝트가 직접 정의한 실행 설정(`runAllModsClient`)이 먼저입니다(fixture `runconfig`).
 - **다른 모듈은 핫스왑 안 됨:** fast compile과 클래스 비교가 선택한 프로젝트(core)만 알아서 `:gui` 수정이 "no class
   changed"였습니다. 이제 실행 작업의 class path에 출력이 올라간 다른 프로젝트의 소스셋도 컴파일·비교합니다(11개 소스셋).
@@ -205,7 +205,7 @@ fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접
 
 ## 아직 안 된 것
 - Linux: 실제 Linux 데스크톱(GNOME/KDE, mutter/kwin)과 GPU 드라이버 확인. 지금까지는 Xvfb + openbox와 WSLg에서 확인했습니다. 26.x(SDL3)와 1.12.2(LWJGL 2)는 PoC에서 확인(`poc/embed/README.md`), 플러그인으로는 1.21.1만 시험. 아래 "Linux (X11)" 참고.
-- 로더와 버전: 지금은 Fabric 1.21.1만 지원합니다. Forge와 다른 버전은 BuildPali의 멀티 버전 확장과 함께 갑니다.
+- 로더와 버전: 지금은 Fabric 1.21.1만 지원합니다. Forge와 다른 버전은 함께 개발 중인 더 큰 모드의 멀티 버전 확장과 함께 갑니다.
 
 ## 컨테이너 폴더와 멀티 버전 프로젝트 (`profile/Workspace.java`)
 
@@ -219,7 +219,7 @@ fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접
 |---|---|---|
 | 단일 프로젝트 | 폴더 자체가 모드 빌드 | `runClient` |
 | **컨테이너** (모드 여러 개를 담은 레포, 예: lucid-study-mod) | 하위 폴더마다 독립된 `settings.gradle` | 각 빌드에서 `runClient` |
-| **멀티 프로젝트** (buildpali, 버전별 모듈) | `settings`의 `include(...)` 중 모드인 서브프로젝트 | `:core:mod-fabric-1_21_1:runClient` |
+| **멀티 프로젝트** (다중 프로젝트 모드, 버전별 모듈) | `settings`의 `include(...)` 중 모드인 서브프로젝트 | `:core:mod-fabric-1_21_1:runClient` |
 | **Architectury** | 서브프로젝트의 `architectury { fabric() / neoForge() / forge() }`. `common`은 제외 | `:fabric:runClient`, `:neoforge:runClient` |
 | **Stonecutter** | `settings`의 `stonecutter { versions("1.20.1", "1.21.1") }`, 버전별 `versions/<v>/gradle.properties` | `:1.21.1:runClient` |
 
@@ -238,7 +238,7 @@ PASS stonecutter   -> [:1.21.1:runClient FABRIC 1.21.1 0.16.10, :1.20.1:runClien
 ```
 실제 폴더 결과는 다음과 같습니다.
 - **lucid-study-mod:** 대상 5개(savedeath·untitled1 1.21.7, 루트·lucid-study-mod·lucid-study-mod2 1.21.1). 루트는 "(no gradlew)"로 표시됩니다.
-- **buildpali:** Fabric 모듈 5개(`:core|gui|terrain|3dio|ai:mod-fabric-1_21_1`)와 Forge `:core:mod-forge-1_21_1`(52.1.6). worktree 중복과 Forge 스텁은 빠졌습니다.
+- **다중 프로젝트 모드:** Fabric 모듈 5개(`:core:mod-fabric-1_21_1`와 다른 모듈 4개)와 Forge `:core:mod-forge-1_21_1`(52.1.6). worktree 중복과 Forge 스텁은 빠졌습니다.
 
 샌드박스 IDE에서 lucid-study-mod 컨테이너 전체 사본을 열고 `lucid-study-mod`를 골라 Run client를 눌렀습니다.
 대상 5개가 나열됐고, 안쪽 프로젝트의 wrapper로 실행돼 82초 뒤 툴윈도우에 임베드됐습니다(테스트 4/4 PASS).
@@ -405,7 +405,7 @@ PASS restart -> back in the same world          [world 'SFWorld']
 - **구조 변경:** JBR이 있으면 됩니다(위). Java 8/17 게임용 JBR은 시험하지 않았습니다. Attach PID로 붙인 게임은 이미 떠 있는 JVM이라, 직접 JBR과 플래그로 띄운 경우에만 구조 변경이 됩니다.
 - **새로 추가한 정적 필드의 초기값, 생성자 변경:** 이미 만들어진 객체와 클래스 초기화에는 반영되지 않습니다.
 - **Fabric 환경 어노테이션:** 바뀐 바이트에는 Knot의 `@Environment` 정리가 적용되지 않습니다. 클라이언트 개발 환경에서는 대개 문제가 없습니다.
-- NeoForge/Forge와 Linux에서의 Mixin 핫스왑은 아직 시험하지 않았습니다. NeoForge/Forge는 BuildPali가 그 로더로 넓힐 때 함께 합니다. Linux의 리소스 리로드와 게임 안 알림은 아래 "Linux (X11)"에서 확인했습니다.
+- NeoForge/Forge와 Linux에서의 Mixin 핫스왑은 아직 시험하지 않았습니다. NeoForge/Forge는 함께 개발 중인 더 큰 모드가 그 로더로 넓힐 때 함께 합니다. Linux의 리소스 리로드와 게임 안 알림은 아래 "Linux (X11)"에서 확인했습니다.
 
 ## Linux (X11)
 
@@ -496,7 +496,7 @@ Windows 회귀 확인(같은 빌드, 2026.3 샌드박스): Run client + 핫스�
 - **게임의 JBR:** 실행 태스크의 `javaLauncher`를 툴체인으로 직접 정하는 빌드(예: `javaLauncher.set(javaToolchains.launcherFor { 21 })`)에서는 `executable`만 바꾸면 "Toolchain from `executable` property does not match…", 비우면 "Cannot query … javaLauncher … no value"로 실패합니다. 그래서 JBR이 완전한 JDK(javac 있음)이면 `org.gradle.java.installations.paths`로 알려 주고 `javaLauncher`를 "JetBrains <버전>" 툴체인으로 바꿉니다. init 스크립트는 `afterEvaluate`에서 등록해 빌드 스크립트의 설정보다 나중에 적용됩니다.
 - **실행 태스크:** 빌드 스크립트의 Loom 실행 설정(`runConfigs.create("allModsClient")`, `runs { x { client() } }`)을 읽어 클라이언트 설정마다 목록에 따로 띄웁니다(`[runAllModsClient]`). datagen/gametest 설정은 뺍니다. 모든 init 스크립트는 `-PsfRunTask`로 실행하는 그 태스크에만 붙습니다.
 
-검증: buildpali `runClient`/`runAllModsClient`의 launcher가 JBR 21로 잡히고 `runAllModsClient`로 게임이 실제로 뜸(JBR 21, `-XX:+AllowEnhancedClassRedefinition`). Maxwells_Chamber(26.3)는 Java 25 Gradle로 설정 통과, launcher JBR 25.
+검증: 다중 프로젝트 모드의 `runClient`/`runAllModsClient`의 launcher가 JBR 21로 잡히고 `runAllModsClient`로 게임이 실제로 뜸(JBR 21, `-XX:+AllowEnhancedClassRedefinition`). Maxwells_Chamber(26.3)는 Java 25 Gradle로 설정 통과, launcher JBR 25.
 
 ## 긴 클라이언트 이름
 목록에서 넘치는 이름은 `…`로 자르지 않고 흘러갑니다(1.5초 멈춤 → 끝까지 → 멈춤 → 처음으로). 닫힌 목록의 선택 항목과 펼친 목록의 가리킨 줄만 움직이고, 넘칠 때만 다시 그립니다(`MarqueeRenderer.java`).
@@ -528,14 +528,14 @@ Windows 회귀 확인(같은 빌드, 2026.3 샌드박스): Run client + 핫스�
 | sodium | Fabric, Quilt, NeoForge | 선택 | 흔한 렌더러 교체 모드와의 호환 확인(충돌할 수 있음) |
 
 - NeoForge/Forge는 모드 목록과 설정 화면이 기본으로 있어서 필수가 없습니다. 이 로더에서 넣는 방식은 다음 단계입니다(지금은 Fabric/Quilt만).
-- WorldEdit은 넣지 않습니다(건축 도구는 BuildPali의 몫).
+- WorldEdit은 넣지 않습니다(크고 성격이 뚜렷한 모드라, 필요한 프로젝트가 직접 넣습니다).
 - 목록 밖의 모드는 Modrinth 이름이나 링크로 추가합니다. **This project only**를 켜면 그 프로젝트만의 목록을 따로 둡니다(예: 충돌하는 모드 끄기).
 - 프로젝트가 이미 넣은 모드(빌드 스크립트에 이름이 있거나 클래스패스에 jar가 있음)는 건너뜁니다. Fabric은 같은 모드 id 두 개를 받지 않습니다.
 
-검증: lucid 사본(1.21.1)에 Mod Menu 11.0.5가 로드되고 초기화됨(업데이트 확인까지). Maxwells_Chamber(26.3)는 21.0.0을 고름. BuildPali는 Mod Menu를 직접 넣어서 건너뜀.
+검증: lucid 사본(1.21.1)에 Mod Menu 11.0.5가 로드되고 초기화됨(업데이트 확인까지). Maxwells_Chamber(26.3)는 21.0.0을 고름. 다중 프로젝트 모드는 Mod Menu를 직접 넣어서 건너뜀.
 
 ## 저절로 전체화면이 되던 문제
-임베드한 직후 "game went fullscreen (F11)"로 IDE 밖으로 나가는 일이 모드가 많은 빌드(BuildPali)에서 실행마다 있었습니다. 판정이 창 스타일 `WS_POPUP` 하나였는데, GLFW는 테두리 없는 창의 스타일을 다시 계산할 때도 이 값을 줍니다. 진짜 F11은 창을 모니터 크기로 키우므로(`glfwSetWindowMonitor`), 이제 `WS_POPUP`이면서 모니터를 덮을 때만 전체화면으로 보고, 패널 크기 그대로인 `WS_POPUP`은 자식 창 스타일로 되돌려 IDE 안에 둡니다. 원인 모드는 플러그인 밖(같은 Gradle 명령, PoC 호스트 임베드)에서 재현되지 않아 아직 모릅니다.
+임베드한 직후 "game went fullscreen (F11)"로 IDE 밖으로 나가는 일이 모드가 많은 빌드(다중 프로젝트 모드)에서 실행마다 있었습니다. 판정이 창 스타일 `WS_POPUP` 하나였는데, GLFW는 테두리 없는 창의 스타일을 다시 계산할 때도 이 값을 줍니다. 진짜 F11은 창을 모니터 크기로 키우므로(`glfwSetWindowMonitor`), 이제 `WS_POPUP`이면서 모니터를 덮을 때만 전체화면으로 보고, 패널 크기 그대로인 `WS_POPUP`은 자식 창 스타일로 되돌려 IDE 안에 둡니다. 원인 모드는 플러그인 밖(같은 Gradle 명령, PoC 호스트 임베드)에서 재현되지 않아 아직 모릅니다.
 
 ## 화면 배치 (UI 1단계)
 기능을 Swing 버튼 대신 IDE 액션으로 바꾸고(`SfActions.java`, `plugin.xml`), 기능마다 IntelliJ의 제자리에 둡니다.

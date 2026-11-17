@@ -10,7 +10,7 @@ rows = json.load(open(os.path.join(sys.argv[1], "mix.json")))
 K = ["body", "struct", "mixin", "assets", "data", "restart"]
 ENVS = {  # restart min/mid/max, classes min/mid/max, resources min/mid/max (seconds, measured)
     "test copy": ((41.8, 44.4, 49.4), (7.0, 8.5, 10.9), (6.5, 6.8, 7.1)),
-    "BuildPali": ((80.2, 82.5, 85.1), (19.7, 19.8, 19.8), (18.5, 18.6, 18.8)),
+    "Multi-project": ((80.2, 82.5, 85.1), (19.7, 19.8, 19.8), (18.5, 18.6, 18.8)),
 }
 def agg(basis, skip=("Mojang/brigadier",)):
     m = {k: 0 for k in K}

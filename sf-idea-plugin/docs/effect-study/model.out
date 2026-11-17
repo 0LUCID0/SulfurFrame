@@ -33,7 +33,7 @@ ALL 9 mods (file) mix body=22% struct=17% mixin=16% assets=18% data=13% restart=
     60 steps/day: plain 44 min, plain+manual 57 min, hotswap 26 min, sulfur 8 min
    150 steps/day: plain 111 min, plain+manual 144 min, hotswap 64 min, sulfur 20 min
 
-#### BuildPali
+#### Multi-project
 repo                                       basis   plain  hotswap  sulfur  vs plain  vs hotswap  live
 AppliedEnergistics/Applied-Energistics-2   commit   82.5     56.1    30.9       63%         45%   64%
 AppliedEnergistics/Applied-Energistics-2   file     82.5     45.4    14.8       82%         67%   84%

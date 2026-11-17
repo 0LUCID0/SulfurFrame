@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Baseline timings on a real multi-project mod (BuildPali: 9 Gradle projects, Fabric 1.21.1), without touching its
+# Baseline timings on a real multi-project mod (9 Gradle projects, Fabric 1.21.1), without touching its
 # files: the edits go to two temporary files that are removed (and rebuilt away) at the end.
 #   plain     ./gradlew <run task> straight into the world (--quickPlaySingleplayer)
 #   hotswap   ./gradlew <classes task> after a method-body edit of a temporary leaf class (the best case for Gradle:
 #             nothing depends on it)
 #   assets    ./gradlew <processResources task> after editing a temporary resource file
-# usage: measure-buildpali.sh <root> <run task> <classes task> <resources task> <java dir> <resources dir> <run dir> <world> [runs]
+# usage: measure-multiproject.sh <root> <run task> <classes task> <resources task> <java dir> <resources dir> <run dir> <world> [runs]
 set -uo pipefail
 [ "${SF_SOUND:-}" = 1 ] || export ALSOFT_DRIVERS=null   # silent test games, options.txt untouched
 ROOT="$1"; RUN="$2"; CLASSES="$3"; RES="$4"; JDIR="$5"; RDIR="$6"; RUNDIR="$7"; WORLD="$8"; RUNS="${9:-3}"
 cd "$ROOT"
+ROOTNAME=$(basename "$(pwd)")
 LOG="$RUNDIR/logs/latest.log"
 PROBE="$JDIR/SfTimingProbe.java"; PKG=$(echo "$JDIR" | sed 's|.*src/main/java/||; s|/|.|g')
 TMPRES="$RDIR/sf-timing-probe.txt"
@@ -17,7 +18,7 @@ TMPRES="$RDIR/sf-timing-probe.txt"
 now() { date +%s.%N; }
 el() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.1f", b-a}'; }
 kill_game() {
-  powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.Name -like 'java*' -and \$_.CommandLine -match 'fabric.dli.config' -and \$_.CommandLine -match 'buildpali' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" >/dev/null 2>&1
+  powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.Name -like 'java*' -and \$_.CommandLine -match 'fabric.dli.config' -and \$_.CommandLine -match '$ROOTNAME' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" >/dev/null 2>&1
 }
 cleanup() { rm -f "$PROBE" "$TMPRES"; ./gradlew -q "$CLASSES" "$RES" >/dev/null 2>&1; }
 trap cleanup EXIT

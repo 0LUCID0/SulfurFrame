@@ -560,7 +560,7 @@ final class FastCompile {
     /**
      * Groovy init script; Gradle 7 .. 9. Writes the source-set description of the project it runs in, plus (with
      * -PsfTask=<run task>) every source set of other projects of the build whose output is on that task's class path:
-     * a run config like BuildPali's runAllModsClient puts the GUI, AI, ... modules' classes next to core's, and their
+     * a run config like a multi-project mod's runAllModsClient puts the other modules' classes next to core's, and their
      * changes must be hotswapped too. Those sets are named "<project path>:<set>" to stay distinct.
      */
     static final String INIT_SCRIPT = """

@@ -16,9 +16,9 @@ processResources run 3: 6.9 s
 done
 
 
-## BuildPali (9 Gradle projects, 65 mods): measure-buildpali.sh ... '새로운 세계' 3
-/c/Users/kjm28/아무거나/Workspace/projects/buildpali/core/mod-fabric-1_21_1/src/main/java/dev/buildpali/core/platform/fabric/v1_21_1
-/c/Users/kjm28/아무거나/Workspace/projects/buildpali/gui/mod-fabric-1_21_1/src/main/resources/assets/buildpali
+## Multi-project mod (9 Gradle projects, 65 mods): measure-multiproject.sh ... '새로운 세계' 3
+<root>/core/mod-fabric-1_21_1/src/main/java/<package>/core/platform/fabric/v1_21_1
+<root>/<module>/mod-fabric-1_21_1/src/main/resources/assets/<modid>
 == gradle configuration: help
 help: 30.7 s
 == plain: :core:mod-fabric-1_21_1:runClient -> logged in to '새로운 세계'

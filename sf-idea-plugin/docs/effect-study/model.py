@@ -5,7 +5,7 @@
 #     plain restart   runClient --quickPlaySingleplayer -> in the world: 49.4 / 41.9 / 41.8 s
 #     stock HotSwap   gradlew classes after a body edit: 10.9 / 7.0 / 7.5 s (+ JDWP redefinition, < 1 s)
 #     stock assets    gradlew processResources: 7.1 / 6.5 / 6.9 s (+ the reload)
-#   BuildPali   9 Gradle projects, 65 mods (measure-buildpali.sh); Gradle configuration alone 30.7 s per call
+#   Multi-project   9 Gradle projects, 65 mods (measure-multiproject.sh); Gradle configuration alone 30.7 s per call
 #     plain restart   85.1 / 82.1 / 80.2 s
 #     stock HotSwap   19.7 / 19.8 / 19.8 s (+ < 1 s)
 #     stock assets    18.8 / 18.5 / 18.5 s (+ the reload)
@@ -19,7 +19,7 @@ import json, sys, os
 RELOAD, MANUAL = 2, 13
 ENVS = {
     "test copy": {"restart": 44.4, "classes": 8.5, "resources": 6.8},
-    "BuildPali": {"restart": 82.5, "classes": 20.3, "resources": 18.6},
+    "Multi-project": {"restart": 82.5, "classes": 20.3, "resources": 18.6},
 }
 KEYS = ["body", "struct", "mixin", "assets", "data", "restart"]
 SKIP = ("Mojang/brigadier",)   # a library, not a mod: shown but kept out of the totals
