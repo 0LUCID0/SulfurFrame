@@ -204,17 +204,25 @@ final class SulfurPanel extends JPanel {
                 if (debugPort > 0) jvm.add(DebugAttach.jdwpArg(debugPort));
                 jvm.addAll(DevMods.jvmArgs(project, t, this::log));
                 launcher.setExtraJvmArgs(jvm);
-                launcher.runClient(t, gameArgs, (pid, hwnd) -> SwingUtilities.invokeLater(() -> {
-                            embedder.attach(pid); hotswapper.snapshot(t);
-                            startStats(pid);
-                            TempWorlds.unpinAll();
-                            if (debugPort > 0) DebugAttach.attach(project, debugPort, this::log);
-                        }),
-                        () -> {
-                            if (share) SharedInstance.collect(run, mc);
-                            TempWorlds.sweep(this::log);
-                            if (session != null) session.ended(launcher.exitCode());
-                        });
+                java.util.function.BiConsumer<Long, Long> onWindow = (pid, hwnd) -> SwingUtilities.invokeLater(() -> {
+                    embedder.attach(pid); hotswapper.snapshot(t);
+                    startStats(pid);
+                    TempWorlds.unpinAll();
+                    if (debugPort > 0) DebugAttach.attach(project, debugPort, this::log);
+                });
+                Runnable onEnd = () -> {
+                    if (share) SharedInstance.collect(run, mc);
+                    TempWorlds.sweep(this::log);
+                    if (session != null) session.ended(launcher.exitCode());
+                };
+                // the same game again (Restart, Rerun, Run client): straight from its last command line if nothing
+                // Gradle would redo has changed, else through Gradle as the first time
+                var spec = launcher.cached(t);
+                String why = spec == null ? "" : QuickRelaunch.whyNot(spec, t);
+                if (why == null) why = hotswapper.prepareRelaunch(t, spec.capturedAt());
+                if (spec != null && why == null && launcher.relaunch(spec, t, gameArgs, onWindow, onEnd)) return;
+                if (spec != null) { log("starting through Gradle: " + (why != null ? why : "the direct start failed")); launcher.forget(t); }
+                launcher.runClient(t, gameArgs, onWindow, onEnd);
             } finally {
                 launching.set(false);
             }
@@ -222,6 +230,9 @@ final class SulfurPanel extends JPanel {
     }
 
     private final java.util.concurrent.atomic.AtomicBoolean launching = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** Milliseconds from the last launch to its game window (self-test). */
+    long launcherWindowMillis() { return launcher.lastWindowMillis; }
 
     /** The SulfurFrame log, a tab of the bottom "Minecraft Log" tool window. */
     final JPanel logTab = new JPanel(new BorderLayout());

@@ -17,10 +17,11 @@ import java.util.function.Consumer;
  */
 final class GameLauncher {
     private final Consumer<String> log;
-    private volatile Process gradle;
+    /** The running launch: Gradle (which runs the game) or, without Gradle, the game itself. */
+    private volatile Process proc;
 
     /** A Run client build (and so its game) is still going. */
-    boolean running() { Process g = gradle; return g != null && g.isAlive(); }
+    boolean running() { Process g = proc; return g != null && g.isAlive(); }
 
     GameLauncher(Consumer<String> log) { this.log = log; }
 
@@ -75,21 +76,12 @@ final class GameLauncher {
                 Files.writeString(init, JVM_ARGS_SCRIPT, StandardCharsets.UTF_8);
                 cmd.addAll(List.of("--init-script", init.toString(), "-PsfJvmArgs=" + Base64.getEncoder().encodeToString(String.join("\n", extraJvmArgs).getBytes(StandardCharsets.UTF_8))));
             }
-            if (agentJar != null) {
-                marker = tmp("launch-" + UUID.randomUUID() + ".pid");
+            String agentSpec = agentSpec(target);
+            if (agentSpec != null) {
                 Path init = tmp("sf-agent.init.gradle");
                 Files.writeString(init, AGENT_SCRIPT, StandardCharsets.UTF_8);
-                // options sync: the IDE knows the run folder and the mods this project builds (their key bindings
-                // are left to the code's defaults), and starts the master profile on the first dev run
-                Path runDir = SharedInstance.runDir(target);
-                String ownMods = String.join("+", dev.sulfurframe.idea.profile.ModIds.of(target.dir()));
-                String spec = agentJar + "=codingFps=" + Settings.codingFps() + ",launch=" + marker
-                        + ",gameDir=" + runDir + ",ownMods=" + ownMods + ",createMaster=true";
-                log.accept("options sync: run folder " + runDir + (ownMods.isEmpty() ? "" : ", own mod keys left to the code: " + ownMods.replace('+', ' ')));
                 cmd.addAll(List.of("--init-script", init.toString(),
-                        "-PsfAgent=" + Base64.getEncoder().encodeToString(spec.getBytes(StandardCharsets.UTF_8))));
-            } else {
-                marker = null;
+                        "-PsfAgent=" + Base64.getEncoder().encodeToString(agentSpec.getBytes(StandardCharsets.UTF_8))));
             }
             var pb = new ProcessBuilder(cmd).directory(dir.toFile()).redirectErrorStream(true);
             Path gradleJdk = GradleJava.pick(dir, profile.javaMajor(), jbr);
@@ -104,20 +96,97 @@ final class GameLauncher {
                 pb.environment().put("ALSOFT_DRIVERS", "null");
                 log.accept("test run: game sound off (ALSOFT_DRIVERS=null; options.txt untouched)");
             }
-            gradle = pb.start();
-            gradle.onExit().thenRun(onEnd);
-            log.accept("started " + wrapper + " " + target.runTask() + " for " + profile);
-            Thread.ofPlatform().daemon().name("sf-gradle-out").start(() -> pump(gradle));
+            long started = System.currentTimeMillis();
+            start(pb, onEnd, "started " + wrapper + " " + target.runTask() + " for " + profile);
+            final List<String> extra = extraJvmArgs, args = List.copyOf(gameArgs);
+            final Path mine = marker, agent = agentJar;
+            watch(before, mine, started, (pid, h) -> {
+                // remember how the game was started, for the next launch without Gradle
+                if (mine != null && QuickRelaunch.enabled()) {
+                    var spec = QuickRelaunch.capture(SulfurPanel.key(target), pid, mine, agent, extra, args, jbr, started, log);
+                    if (spec != null) cache.put(spec.key(), spec);
+                }
+                onWindow.accept(pid, h);
+            });
         } catch (IOException e) {
             log.accept("could not start Gradle: " + e);
             onEnd.run();
-            return;
         }
-        final Path mine = marker;
+    }
+
+    /** How the game of each target (SulfurPanel.key) was last started by Gradle. */
+    private final Map<String, QuickRelaunch.Spec> cache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The cached start of this target, or null (never run through Gradle in this IDE session). */
+    QuickRelaunch.Spec cached(Workspace.Target target) { return cache.get(SulfurPanel.key(target)); }
+
+    /** Forget the cached start (the next launch goes through Gradle). */
+    void forget(Workspace.Target target) { cache.remove(SulfurPanel.key(target)); }
+
+    /**
+     * Start the game straight from a cached command line ({@link QuickRelaunch}): no Gradle. The agent (with a new
+     * launch marker), the debugger and dev mods arguments, and the game arguments are this launch's own.
+     */
+    /** @return false if the game could not be started this way (the caller goes through Gradle; onEnd not run) */
+    boolean relaunch(QuickRelaunch.Spec spec, Workspace.Target target, List<String> gameArgs, BiConsumer<Long, Long> onWindow, Runnable onEnd) {
+        Set<Long> before = new HashSet<>(dev.sulfurframe.idea.embed.NativeWindows.gameWindows());
+        try {
+            String agentSpec = agentSpec(target);
+            if (!gameArgs.isEmpty()) {
+                log.accept("game arguments: " + String.join(" ", gameArgs));
+                if (gameArgs.stream().anyMatch(a -> a.startsWith("--quickPlay"))) SharedInstance.skipAccessibilityOnboarding(SharedInstance.runDir(target), log);
+            }
+            var cmd = QuickRelaunch.command(spec, extraJvmArgs, agentSpec, gameArgs);
+            String classpath = QuickRelaunch.moveLongClasspath(cmd);
+            var pb = new ProcessBuilder(cmd).directory(spec.cwd().toFile()).redirectErrorStream(true);
+            pb.environment().clear();
+            pb.environment().putAll(spec.env());
+            if (classpath != null) {
+                pb.environment().put("CLASSPATH", classpath);
+                log.accept("command line too long for Windows: class path (" + classpath.length() + " characters) passed in CLASSPATH");
+            }
+            if (muted()) pb.environment().put("ALSOFT_DRIVERS", "null");
+            else if ("null".equals(pb.environment().get("ALSOFT_DRIVERS"))) pb.environment().remove("ALSOFT_DRIVERS");   // captured from a test run
+            Files.createDirectories(spec.cwd());
+            long started = System.currentTimeMillis();
+            start(pb, onEnd, "started the game without Gradle (command line of the run at "
+                    + new java.text.SimpleDateFormat("HH:mm:ss").format(new Date(spec.capturedAt())) + ") for " + target.profile());
+            watch(before, marker, started, onWindow);
+            return true;
+        } catch (IOException e) {
+            log.accept("could not start the game without Gradle: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** The -javaagent value for a launch, with a new launch marker; null without an agent. */
+    private String agentSpec(Workspace.Target target) throws IOException {
+        if (agentJar == null) { marker = null; return null; }
+        marker = tmp("launch-" + UUID.randomUUID() + ".pid");
+        // options sync: the IDE knows the run folder and the mods this project builds (their key bindings
+        // are left to the code's defaults), and starts the master profile on the first dev run
+        Path runDir = SharedInstance.runDir(target);
+        String ownMods = String.join("+", dev.sulfurframe.idea.profile.ModIds.of(target.dir()));
+        log.accept("options sync: run folder " + runDir + (ownMods.isEmpty() ? "" : ", own mod keys left to the code: " + ownMods.replace('+', ' ')));
+        return agentJar + "=codingFps=" + Settings.codingFps() + ",launch=" + marker
+                + ",gameDir=" + runDir + ",ownMods=" + ownMods + ",createMaster=true";
+    }
+
+    private void start(ProcessBuilder pb, Runnable onEnd, String what) throws IOException {
+        Process p = pb.start();
+        proc = p;
+        p.onExit().thenRun(onEnd);
+        log.accept(what);
+        Thread.ofPlatform().daemon().name("sf-game-out").start(() -> pump(p));
+    }
+
+    /** Wait for the new Minecraft window of this launch (the marker's pid), then hand it over. */
+    private void watch(Set<Long> before, Path mine, long started, BiConsumer<Long, Long> onWindow) {
+        final Process p = proc;
         Thread.ofPlatform().daemon().name("sf-wait-window").start(() -> {
             long deadline = System.currentTimeMillis() + 10 * 60_000;
             long pid = 0;
-            while (System.currentTimeMillis() < deadline && gradle.isAlive()) {
+            while (System.currentTimeMillis() < deadline && p.isAlive()) {
                 if (mine != null && pid == 0) pid = readPid(mine);
                 for (long h : dev.sulfurframe.idea.embed.NativeWindows.gameWindows()) {
                     if (before.contains(h)) continue;
@@ -126,15 +195,19 @@ final class GameLauncher {
                         if (pid != 0 && warned.add(h)) log.accept("ignoring a Minecraft window of another process (pid " + owner + ")");
                         continue;
                     }
-                    log.accept("game window appeared (pid " + owner + ")");
+                    lastWindowMillis = System.currentTimeMillis() - started;
+                    log.accept("game window appeared (pid " + owner + ", " + String.format(Locale.ROOT, "%.1f", lastWindowMillis / 1000.0) + " s after start)");
                     onWindow.accept(owner, h);
                     return;
                 }
                 try { Thread.sleep(500); } catch (InterruptedException e) { return; }
             }
-            log.accept(gradle.isAlive() ? "no game window after 10 minutes" : "Gradle exited with " + gradle.exitValue());
+            log.accept(p.isAlive() ? "no game window after 10 minutes" : "the run exited with " + p.exitValue());
         });
     }
+
+    /** Milliseconds from the last launch to its game window (self-test, measurements). */
+    volatile long lastWindowMillis;
 
     /** Self-test runs are silent by default (-Dsulfurframe.mute=false to hear them); -Dsulfurframe.mute=true mutes any run. */
     static boolean muted() {
@@ -191,10 +264,10 @@ final class GameLauncher {
     volatile java.util.function.Consumer<String> output;
 
     /** Exit code of the last Gradle run, -1 while it runs or before any. */
-    int exitCode() { Process g = gradle; return g == null || g.isAlive() ? -1 : g.exitValue(); }
+    int exitCode() { Process g = proc; return g == null || g.isAlive() ? -1 : g.exitValue(); }
 
     /** Stop the Gradle run (and with it the game, if Gradle still holds it). */
-    void stopGradle() { Process g = gradle; if (g != null && g.isAlive()) { g.descendants().forEach(ProcessHandle::destroy); g.destroy(); } }
+    void stopGradle() { Process g = proc; if (g != null && g.isAlive()) { g.descendants().forEach(ProcessHandle::destroy); g.destroy(); } }
 
     private void pump(Process p) {
         try (var r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {

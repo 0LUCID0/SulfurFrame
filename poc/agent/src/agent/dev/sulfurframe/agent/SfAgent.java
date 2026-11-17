@@ -121,11 +121,33 @@ public final class SfAgent {
         try {
             String name = java.lang.management.ManagementFactory.getRuntimeMXBean().getName();   // "pid@host" (Java 8)
             String pid = name.substring(0, name.indexOf('@'));
+            writeContext(file + ".ctx");   // before the pid: the IDE reads it once the pid is there
             File tmp = new File(file + ".part");
             Files.write(tmp.toPath(), pid.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             Files.move(tmp.toPath(), new File(file).toPath(), StandardCopyOption.REPLACE_EXISTING);
         } catch (Throwable t) {
             SfHooks.log("could not mark the launch: " + t);
+        }
+    }
+
+    /**
+     * Working folder and environment of this game, for the IDE's relaunch without Gradle (the command line it reads
+     * from the OS; these two it cannot). One line each, values Base64 so any character survives:
+     * "cwd\t&lt;dir&gt;" and "env\t&lt;name&gt;\t&lt;value&gt;".
+     */
+    private static void writeContext(String file) {
+        try {
+            java.util.Base64.Encoder b64 = java.util.Base64.getEncoder();
+            java.nio.charset.Charset utf8 = java.nio.charset.StandardCharsets.UTF_8;
+            StringBuilder sb = new StringBuilder("cwd\t").append(b64.encodeToString(System.getProperty("user.dir").getBytes(utf8))).append('\n');
+            for (java.util.Map.Entry<String, String> e : System.getenv().entrySet())
+                sb.append("env\t").append(b64.encodeToString(e.getKey().getBytes(utf8))).append('\t')
+                        .append(b64.encodeToString(e.getValue().getBytes(utf8))).append('\n');
+            File tmp = new File(file + ".part");
+            Files.write(tmp.toPath(), sb.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            Files.move(tmp.toPath(), new File(file).toPath(), StandardCopyOption.REPLACE_EXISTING);
+        } catch (Throwable t) {
+            SfHooks.log("could not write the launch context: " + t);
         }
     }
 

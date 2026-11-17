@@ -64,7 +64,7 @@ final class Hotswapper {
             for (Path f : files) {
                 Path abs = f.toAbsolutePath().normalize();
                 String name = abs.getFileName().toString();
-                if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json") || name.endsWith("mods.toml")) {
+                if (needsGradle(name)) {
                     log.accept("resources: " + name + " changed: restart the game to apply"); continue;
                 }
                 for (var s : sets) {
@@ -190,6 +190,59 @@ final class Hotswapper {
         } catch (Exception e) {
             log.accept("hotswap failed: " + e);
             return false;
+        } finally {
+            busy.set(false);
+        }
+    }
+
+    /** Files processResources expands or Loom remaps the game for: only a Gradle build applies them. */
+    static boolean needsGradle(String fileName) {
+        return fileName.equals("fabric.mod.json") || fileName.equals("quilt.mod.json") || fileName.endsWith("mods.toml")
+                || fileName.endsWith(".accesswidener") || fileName.endsWith(".classtweaker") || fileName.equals("accesstransformer.cfg");
+    }
+
+    /**
+     * Before the game starts again without Gradle ({@link QuickRelaunch}): what Gradle's runClient would have built,
+     * done the hotswap way. Sources saved since the last compile are compiled into the output folders, resources
+     * changed since {@code since} are copied where the game reads them. Null when the outputs are up to date, else why
+     * Gradle has to build (compile errors, mod metadata, no fast compile for this build). Blocking.
+     */
+    String prepareRelaunch(Workspace.Target t, long since) {
+        var sets = fast.sourceSets(t);
+        if (sets == null) return "the build's class path is not read yet";
+        if (!busy.compareAndSet(false, true)) return "a hotswap is running";
+        try {
+            int copied = 0;
+            for (var s : sets) {
+                if (s.name().equals("test") || s.name().endsWith("Test") || s.name().endsWith(":test")) continue;
+                if (s.resOut() == null) continue;
+                for (Path srcDir : s.resSrcDirs()) {
+                    if (!Files.isDirectory(srcDir)) continue;
+                    try (Stream<Path> files = Files.walk(srcDir)) {
+                        for (Path f : files.filter(Files::isRegularFile).toList()) {
+                            long m = Files.getLastModifiedTime(f).toMillis();
+                            if (m <= since) continue;
+                            if (needsGradle(f.getFileName().toString())) return f.getFileName() + " changed";
+                            Path to = s.resOut().resolve(srcDir.relativize(f));
+                            if (Files.exists(to) && Files.getLastModifiedTime(to).toMillis() >= m) continue;
+                            Files.createDirectories(to.getParent());
+                            Files.copy(f, to, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+                            copied++;
+                        }
+                    }
+                }
+            }
+            if (copied > 0) log.accept("relaunch: " + copied + " resource file(s) copied");
+            long started = System.currentTimeMillis();
+            int[] n = {0};
+            var r = fast.compile(t, sourcesSince - 1000, n);
+            if (r == FastCompile.Result.FAILED) return "compile errors";
+            if (r == FastCompile.Result.UNAVAILABLE) return "these sources need Gradle to compile";
+            if (n[0] > 0) log.accept("relaunch: compiled " + n[0] + " source file(s) (" + fast.lastMode + ")");
+            sourcesSince = started;
+            return null;
+        } catch (Exception e) {
+            return "could not bring the build output up to date: " + e;
         } finally {
             busy.set(false);
         }

@@ -282,20 +282,44 @@ final class AutoTest {
             for (int i = 0; i < 20 && !p.logText().contains("fabric.mod.json changed"); i++) sleep(250);   // the log is appended on the EDT
             check("fabric.mod.json change -> restart offered", p.logText().contains("fabric.mod.json changed"), "panel log");
         }
-        // the restart itself
-        long before = p.embedder.gamePid();
+        // the restart itself: the build is unchanged and the edited source was compiled, so no Gradle
         Path gameLog = t.dir().resolve("run/logs/latest.log");
+        int mark = p.logText().length();
+        restartOnce(p, world, gameLog, "restart");
+        String log = p.logText().substring(Math.min(mark, p.logText().length()));
+        check("restart -> started without Gradle", log.contains("started the game without Gradle"),
+                firstLine(log, "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
+        // mod metadata changed on disk: processResources has to run, so this one goes through Gradle again
+        if (Files.exists(meta) && QuickRelaunch.enabled()) {
+            Files.setLastModifiedTime(meta, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis()));
+            mark = p.logText().length();
+            restartOnce(p, world, gameLog, "restart after fabric.mod.json changed");
+            log = p.logText().substring(Math.min(mark, p.logText().length()));
+            check("restart after fabric.mod.json changed -> through Gradle", log.contains("starting through Gradle: fabric.mod.json changed") && log.contains("gradlew"),
+                    firstLine(log, "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
+        }
+    }
+
+    private static void restartOnce(SulfurPanel p, String world, Path gameLog, String name) throws Exception {
+        long before = p.embedder.gamePid();
         long t0 = System.currentTimeMillis();
         p.restart();
         var e = p.embedder;
         while (!(e.attached() && e.gamePid() != before && NativeWindows.parentOf(e.gameHwnd()) == e.canvasNativeHwnd())
                 && System.currentTimeMillis() - t0 < 5 * 60_000) sleep(500);
-        check("restart -> new game embedded", e.attached() && e.gamePid() != before && !ProcessHandle.of(before).isPresent(),
+        check(name + " -> new game embedded", e.attached() && e.gamePid() != before && !ProcessHandle.of(before).isPresent(),
                 "old pid " + before + " (gone " + !ProcessHandle.of(before).isPresent() + "), new pid " + e.gamePid() + ", " + (System.currentTimeMillis() - t0) / 1000 + " s");
         if (world != null) {
-            check("restart -> back in the same world", world.equals(p.lastRestartWorld) && waitForLog(gameLog, "logged in with entity id", 120),
-                    "world '" + p.lastRestartWorld + "'");
+            boolean in = waitForLog(gameLog, "logged in with entity id", 120);
+            check(name + " -> back in the same world", world.equals(p.lastRestartWorld) && in,
+                    "world '" + p.lastRestartWorld + "', " + (System.currentTimeMillis() - t0) / 1000 + " s from restart to world");
         }
+    }
+
+    /** The first panel log line containing one of the needles (for a check's detail). */
+    private static String firstLine(String log, String... needles) {
+        for (String l : log.split("\n")) for (String n : needles) if (l.contains(n)) return l.strip();
+        return "(no such line)";
     }
 
     /**
