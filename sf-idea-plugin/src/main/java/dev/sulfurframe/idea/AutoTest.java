@@ -469,7 +469,7 @@ final class AutoTest {
         // shared instance (enabled before Run client by runClientFlow)
         Path shared = SharedInstance.forVersion(mc).resolve("saves");
         check("shared instance: run/saves linked into " + SharedInstance.root(), SharedInstance.linksTo(run.resolve("saves"), shared)
-                && Files.isDirectory(shared.resolve("SFWorld")), shared.toString());
+                && Files.isDirectory(shared.resolve(testWorld())), shared.toString());
 
         // problems the game reported (the lucid mod has a block without models) and translations
         var g = p.gameLogPanel;
@@ -486,9 +486,9 @@ final class AutoTest {
         check("snapshot of the open world (after save-all flush)", snap != null && Files.exists(snap.resolve("level.dat")), String.valueOf(snap));
         long before = p.embedder.gamePid();
         if (snap != null) {
-            p.restoreSnapshot("SFWorld", snap);
+            p.restoreSnapshot(testWorld(), snap);
             boolean back = waitForNewGame(p, before, gameLog, 300);
-            boolean kept = WorldSnapshots.list(mc, "SFWorld").stream().anyMatch(s -> s.getFileName().toString().endsWith("before-restore"));
+            boolean kept = WorldSnapshots.list(mc, testWorld()).stream().anyMatch(s -> s.getFileName().toString().endsWith("before-restore"));
             check("restore: game restarted into the restored world, replaced world kept as a snapshot", back && kept, "back " + back + ", kept " + kept);
         }
 
@@ -499,7 +499,7 @@ final class AutoTest {
         boolean inTemp = temp != null && waitForNewGame(p, before, gameLog, 300);
         check("temporary test world created and joined", inTemp, String.valueOf(temp));
         before = p.embedder.gamePid();
-        p.restart("SFWorld", null);
+        p.restart(testWorld(), null);
         boolean out = waitForNewGame(p, before, gameLog, 300);
         Path tempDir = shared.resolve(String.valueOf(temp));
         for (int i = 0; i < 20 && Files.exists(tempDir); i++) sleep(500);
@@ -544,7 +544,7 @@ final class AutoTest {
                 String.valueOf(g.lastCrash));
         Files.writeString(probe, src);
         before = p.embedder.gamePid();
-        p.restart("SFWorld", null);
+        p.restart(testWorld(), null);
         waitForNewGame(p, before, gameLog, 300);
     }
 
@@ -565,6 +565,9 @@ final class AutoTest {
         runConfigChecks(p);
     }
 
+    /** The save folder the test plays in: -Dsulfurframe.autotest.world, SFWorld when not given. */
+    private static String testWorld() { return System.getProperty("sulfurframe.autotest.world", "SFWorld"); }
+
     /** UI phase 2: run configurations, the Run window, Rerun = save, quit and back into the same world. */
     private static void runConfigChecks(SulfurPanel p) {
         var rm = com.intellij.execution.RunManager.getInstance(project);
@@ -580,7 +583,7 @@ final class AutoTest {
         final var desc = d;
         onEdt(() -> com.intellij.execution.runners.ExecutionUtil.restart(desc));   // the IDE's Rerun
         boolean back = waitForNewGame(p, before, gameLog, 300) && waitForLog(gameLog, "logged in with entity id", 120);
-        check("Rerun: saved and quit, then back in the same world", back && p.logText().contains("stop: saving and quitting (world 'SFWorld')"),
+        check("Rerun: saved and quit, then back in the same world", back && p.logText().contains("stop: saving and quitting (world '" + testWorld() + "')"),
                 "new game " + back + ", " + (p.logText().contains("stop: saving and quitting") ? "stopped gracefully" : "no graceful stop"));
     }
 

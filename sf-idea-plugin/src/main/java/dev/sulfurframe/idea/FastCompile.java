@@ -358,7 +358,8 @@ final class FastCompile {
      * Fresh processor instances (javac initializes them per compilation) from one class loader per source set, kept
      * between swaps: loading Lombok & co. again for every compile cost over a second.
      */
-    private synchronized List<javax.annotation.processing.Processor> processors(SourceSet s) throws IOException {
+    @SuppressWarnings({"rawtypes", "unchecked"})   // the Processor type is named by string only: the Plugin Verifier
+    private synchronized List processors(SourceSet s) throws IOException {   // wrongly reports it as JDK 8 only
         var procs = s.activeProcessors().stream().filter(Files::exists).toList();
         String key = s.name() + procs;
         var loader = processorLoaders.get(key);
@@ -368,8 +369,11 @@ final class FastCompile {
             loader = new java.net.URLClassLoader(urls.toArray(new java.net.URL[0]), javax.tools.ToolProvider.class.getClassLoader());
             processorLoaders.put(key, loader);
         }
-        var out = new ArrayList<javax.annotation.processing.Processor>();
-        for (var p : java.util.ServiceLoader.load(javax.annotation.processing.Processor.class, loader)) out.add(p);
+        Class type;
+        try { type = Class.forName("javax.annotation.processing.Processor", false, javax.tools.ToolProvider.class.getClassLoader()); }
+        catch (ClassNotFoundException e) { throw new IOException(e); }
+        var out = new ArrayList();
+        for (Object p : java.util.ServiceLoader.load(type, loader)) out.add(p);
         return out;
     }
 

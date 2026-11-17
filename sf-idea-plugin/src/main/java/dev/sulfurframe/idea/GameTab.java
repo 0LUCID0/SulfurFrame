@@ -19,7 +19,8 @@ final class GameTab {
     }
 
     static void open(Project project) {
-        FileEditorManager.getInstance(project).openFile(new GameFile(), true);
+        // opens and focuses the tab; every FileEditorManager.openFile is deprecated in 2026.3 and requestOpenFile is experimental
+        new com.intellij.openapi.fileEditor.OpenFileDescriptor(project, new GameFile()).navigate(true);
     }
 
     public static final class Provider implements FileEditorProvider, DumbAware {
