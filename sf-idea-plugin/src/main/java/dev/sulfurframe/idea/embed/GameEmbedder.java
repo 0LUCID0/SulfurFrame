@@ -193,7 +193,6 @@ public final class GameEmbedder implements GameView {
         canvas.repaint();
     }
 
-    /** Canvas native window is about to be destroyed (tool window moved/floated): take the game out first. */
     /**
      * IntelliJ removes a tool window's component when it is hidden, moved or floated, which destroys the canvas'
      * native window, and a child window dies with its parent. Before that happens, turn the game back into an

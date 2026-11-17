@@ -216,6 +216,7 @@ final class FastCompile {
      * project. One file manager per source set, kept between swaps, so jar indexes of the (large) Minecraft class path
      * are read once. Returns null if this runtime has no compiler.
      */
+    @SuppressWarnings("unchecked")   // setProcessors gets the raw list from processors(), see there
     private Boolean inProcess(SourceSet s, List<SourceSet> all, List<Path> files) throws IOException {
         var jc = compiler();
         if (jc == null) return null;

@@ -32,7 +32,6 @@ final class Hotswapper {
     /** "javac" or "gradle": how the last swap compiled (self-test). */
     volatile String lastCompiler = "";
 
-    /** Wait (up to {@code seconds}) until the fast path has its class path; false if it never got one. */
     /** Attach the SulfurFrame agent with these arguments (each request is a fresh attach). */
     static void loadAgent(long pid, Path agentJar, String args) throws Exception {
         try {
@@ -101,6 +100,7 @@ final class Hotswapper {
         }
     }
 
+    /** Wait (up to {@code seconds}) until the fast path has its class path; false if it never got one. */
     boolean awaitFastCompile(Workspace.Target t, int seconds) throws InterruptedException {
         fast.prepareAsync(t);
         for (int i = 0; i < seconds * 4 && !fast.ready(t); i++) {

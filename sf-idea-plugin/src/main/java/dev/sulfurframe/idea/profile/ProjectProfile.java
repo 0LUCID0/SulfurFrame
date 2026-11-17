@@ -315,7 +315,6 @@ public record ProjectProfile(Path dir, String minecraftVersion, Loader loader, S
         return v.contains("$") ? null : new String[]{v, where + (raw.equals(v) ? "" : " (" + raw + ")")};
     }
 
-    @SafeVarargs
     static String first(List<String> ev, String what, String[]... candidates) {
         for (String[] c : candidates) if (c != null) { ev.add(what + " " + c[0] + " from " + c[1]); return c[0]; }
         return null;

@@ -82,10 +82,6 @@ final class X11 {
     static synchronized void raise(long w) { try { int r = (int) XRaiseWindow.invokeExact(dpy(), w); } catch (Throwable ignored) { } }
 
     /**
-     * _NET_WM_STATE = [_NET_WM_STATE_FULLSCREEN] (or empty). Set on a window that is not mapped, it tells an EWMH
-     * window manager to map it fullscreen; a mapped window's state is only changed by client messages.
-     */
-    /**
      * Ask the window manager to activate (raise + focus) a managed window: _NET_ACTIVE_WINDOW sent to the root as a
      * pager (source 2), which focus-stealing prevention lets through. A plain XSetInputFocus on a window the WM has
      * just mapped is undone by such WMs (openbox gave the focus back to the IDE, and GLFW then iconified the
@@ -105,6 +101,10 @@ final class X11 {
         } catch (Throwable ignored) { }
     }
 
+    /**
+     * _NET_WM_STATE = [_NET_WM_STATE_FULLSCREEN] (or empty). Set on a window that is not mapped, it tells an EWMH
+     * window manager to map it fullscreen; a mapped window's state is only changed by client messages.
+     */
     static synchronized void setFullscreenState(long w, boolean on) {
         try (var a = Arena.ofConfined()) {
             var d = dpy();

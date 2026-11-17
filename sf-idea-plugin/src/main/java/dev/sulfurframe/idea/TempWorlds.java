@@ -20,10 +20,10 @@ final class TempWorlds {
 
     private static final Set<String> pinned = Collections.synchronizedSet(new HashSet<>());
 
-    /** A world about to be reopened (restart): skipped by sweeps until the new game has it. */
     /** The new game has started: the old one's exit sweep is over, let sweeps see the world again. */
     static void unpinAll() { pinned.clear(); }
 
+    /** A world about to be reopened (restart): skipped by sweeps until the new game has it. */
     static void pin(String worldName) { if (worldName != null && !worldName.isEmpty()) { pinned.add(worldName); new Timer(true).schedule(new TimerTask() { public void run() { pinned.remove(worldName); } }, 180_000); } }
 
     static synchronized void register(Path worldDir) throws IOException {

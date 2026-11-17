@@ -23,8 +23,10 @@ import java.util.stream.Stream;
  * Nothing is executed; only build files are read.
  */
 public final class Workspace {
-    /** @param where location shown to the user: build folder relative to the opened folder, plus the project path */
-    /** @param task the Gradle task that starts this client: runClient, or a Loom run config of its own (runAllModsClient) */
+    /**
+     * @param where location shown to the user: build folder relative to the opened folder, plus the project path
+     * @param task  the Gradle task that starts this client: runClient, or a Loom run config of its own (runAllModsClient)
+     */
     public record Target(Path buildRoot, String projectPath, Path dir, ProjectProfile profile, String where, String task) {
         public Target(Path buildRoot, String projectPath, Path dir, ProjectProfile profile, String where) { this(buildRoot, projectPath, dir, profile, where, "runClient"); }
         public String runTask() { return projectPath.equals(":") ? task : projectPath + ":" + task; }
