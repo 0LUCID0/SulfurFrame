@@ -402,6 +402,7 @@ PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (게임 로�
    - Gradle 경로: init script가 월드 이름을 Base64로 받아 인자에 붙여서 공백이나 한글도 됩니다.
    - 한계: 지운 소스·리소스의 출력은 다음 Gradle 실행 때까지 남습니다. Loom의 Microsoft 로그인을 쓰면 하루 넘게 이어진
      세션에서 저장된 토큰이 만료될 수 있습니다.
+   - 남은 재시작 가운데 무엇이 JVM 몫이고 무엇이 Minecraft나 우리 구현의 몫인지, 그리고 줄일 목표는 [`docs/roadmap.md`](docs/roadmap.md)에 있습니다.
 
 재시작이 필요한 변경을 감지하면 로그와 IDE 알림에 **"Restart into the same world"** 버튼을 띄웁니다.
 - 저장한 파일: `fabric.mod.json`, `quilt.mod.json`, `mods.toml`, `*.accesswidener`, `accesstransformer.cfg`, `*mixins.json`, `build.gradle*`, `settings.gradle*`, `gradle.properties`, `libs.versions.toml`
