@@ -50,3 +50,35 @@ PASS hotswap (JBR): removed field + method applied  [[redefined 1, not loaded 0,
 PASS hotswap compiled in the IDE (warm), whole swap fast  [javac in the IDE, 979 ms]
 PASS restart -> new game embedded  [old pid 34260 (gone true), new pid 11884, 52 s]
 PASS restart -> back in the same world  [world 'SFWorld']
+
+
+## Restart with and without Gradle, multi-project mod: measure-relaunch.sh ... ':core:mod-fabric-1_21_1:runClient' <run dir> '새로운 세계' 3
+== gradle: :core:mod-fabric-1_21_1:runClient -> logged in to '새로운 세계' (command line captured)
+gradle run 1: 98.5 s
+gradle run 2: 81.3 s
+gradle run 3: 81.0 s
+  command line: 32223 chars, argument files: 0
+== direct: same command line, no Gradle
+direct run 1: 64.0 s
+  mods: Loading 65 mods:
+direct run 2: 64.4 s
+  mods: Loading 65 mods:
+direct run 3: 63.6 s
+  mods: Loading 65 mods:
+done
+(same command line with the class path moved to CLASSPATH: 63.9 s, 65 mods; the line drops to 511 characters)
+
+## Restart with and without Gradle, test copy: measure-relaunch.sh <copy> runClient <copy>/run SFWorld 3
+== gradle: runClient -> logged in to 'SFWorld' (command line captured)
+gradle run 1: 33.4 s
+gradle run 2: 29.7 s
+gradle run 3: 32.4 s
+  command line: 468 chars, argument files: 1
+== direct: same command line, no Gradle
+direct run 1: 27.7 s
+  mods: Loading 56 mods:
+direct run 2: 31.9 s
+  mods: Loading 56 mods:
+direct run 3: 30.0 s
+  mods: Loading 56 mods:
+done

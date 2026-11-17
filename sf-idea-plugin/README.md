@@ -46,7 +46,7 @@
 - 아이콘은 `docs/logo/gen-icon.py`로 만듭니다(라이트/다크 테마 모두 WCAG 1.4.11 3:1 이상).
 
 ## 기대 효과 (측정, 2026-11-17)
-스크립트와 원자료는 `docs/effect-study/`에 있습니다(`fetch.py` → `classify.py` → `model.py`, `sensitivity.py`, 측정 스크립트 2개, `measured-2026-11-17.txt`).
+스크립트와 원자료는 `docs/effect-study/`에 있습니다(`fetch.py` → `classify.py` → `model.py`, `sensitivity.py`, 측정 스크립트 3개, `measured-2026-11-17.txt`).
 
 **1. 변경이 실행 중인 게임에 어떻게 반영되는지 (대형 모드 9개, 커밋 1,080개)**
 Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farmer's Delight, Mod Menu의 최근 커밋 120개씩(머지 제외)을 GitHub API로 받아
@@ -73,8 +73,10 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 | 기본 HotSwap: 본문 수정 후 `gradlew classes` | 10.9 / 7.0 / 7.5초 | 19.7 / 19.8 / 19.8초 |
 | 리소스: `gradlew processResources` | 7.1 / 6.5 / 6.9초 | 18.8 / 18.5 / 18.5초 |
 | SulfurFrame 교체 (컴파일 포함, Gradle 안 부름) | 0.5~1.3초 | (실사용 기록으로 확인 예정) |
-| SulfurFrame "같은 월드로 재시작" | 38~52초 (일반 재시작과 같은 수준) | 일반 재시작과 같게 계산 |
+| SulfurFrame "같은 월드로 재시작" (Gradle 경유) | 38~52초 (일반 재시작과 같은 수준) | 일반 재시작과 같게 계산 |
+| 재시작, Gradle 경유 → Gradle 없이 (같은 명령줄, `measure-relaunch.sh`, 데운 뒤) | 31.8 → 29.9초 | 81.2 → 64.0초 |
 
+마지막 줄은 다른 줄과 측정한 시각이 달라서(테스트 사본의 재시작이 이날 더 빨랐음) 절대값이 아니라 차이(1.9초, 17.2초)만 모델에 씁니다.
 다중 프로젝트 모드의 기존 파일은 건드리지 않았습니다. 임시 클래스와 임시 리소스를 하나씩 추가해 고친 뒤 지우고 다시 빌드했습니다.
 임시 클래스는 아무도 의존하지 않는 클래스라 Gradle 쪽에 가장 유리한 경우입니다. 측정 중 게임은 무음으로 돌렸습니다.
 
@@ -85,13 +87,14 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 | 매번 재시작 | 44.4초 | 82.5초 |
 | 매번 재시작 + 종료·메뉴 클릭(가정 +13초) | 57.4초 | 95.5초 |
 | 기본 HotSwap | 25.6~29.6초 | 49.9~56.8초 |
-| **SulfurFrame** | **7.9~16.5초** | **13.6~29.8초** |
-| 재시작 대비 절감 | 63~82% | 64~84% |
-| 기본 HotSwap 대비 절감 | 44~69% | 48~73% |
+| **SulfurFrame** | **7.6~16.5초** | **11.0~29.8초** |
+| 재시작 대비 절감 | 63~83% | 64~87% |
+| 기본 HotSwap 대비 절감 | 44~70% | 48~78% |
 
-- 하루 60회 기준(가정): 다중 프로젝트 모드에서 재시작만 하면 약 82분, 기본 HotSwap은 50~57분, SulfurFrame은 14~30분 기다립니다.
+- 하루 60회 기준(가정): 다중 프로젝트 모드에서 재시작만 하면 약 82분, 기본 HotSwap은 50~57분, SulfurFrame은 11~30분 기다립니다.
 - 불리한 쪽 끝(`sensitivity.py`)에서도 절감은 남습니다. 가장 빠른 재시작, 느린 리로드(5초), 첫 교체(2.5초)를 쓰고 Mixin을 재시작으로 쳐도 재시작 대비 40~63%, 기본 HotSwap 대비 11~40%입니다.
-- 재시작이 필요한 변경은 SulfurFrame으로도 똑같이 오래 걸립니다. 효과는 바로 반영되는 변경에서만 나옵니다. 그래서 Gradle이 느린 프로젝트일수록 효과가 커집니다.
+- 재시작은 빌드 파일, 모드 메타데이터, 액세스 와이드너가 그대로면 Gradle을 건너뜁니다(아래 "빠른 재시작"). 커밋 표본으로는 어떤 재시작이 여기에 해당하는지 나눌 수 없어서, 범위의 큰 쪽 끝은 커밋 단위에 모든 재시작을 Gradle 경유로, 작은 쪽 끝은 파일 단위에 모든 재시작을 Gradle 없이로 계산했습니다(`model.py`의 `sulfur`와 `sulfur+relaunch`).
+- 그래도 재시작에서 줄어드는 것은 Gradle 몫뿐입니다. 게임 자체의 시작과 월드 진입(다중 프로젝트 모드 64초)은 그대로라, 효과는 대부분 바로 반영되는 변경에서 나옵니다. Gradle이 느린 프로젝트일수록 효과가 커집니다.
 
 **시간에 영향을 주는 요소**
 - **Gradle 구성 시간:** 기본 경로는 Gradle을 부를 때마다 이 비용을 냅니다. 다중 프로젝트 모드에서는 30초입니다. SulfurFrame의 교체와 리소스 반영은 Gradle을 부르지 않습니다.
@@ -379,7 +382,23 @@ PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (게임 로�
 ### 빠른 재시작 (핫스왑이 못 하는 변경)
 새 블록·아이템 등록, 모드 메타데이터, 액세스 와이드너, 빌드 변경처럼 게임이 시작할 때만 읽는 것은 실행 중에 바꿀 수 없습니다. 그래서 **Restart** 버튼이 그 부분을 맡습니다.
 1. 에이전트에게 열린 월드의 폴더 이름을 묻고(Mojang `storageSource.getLevelId()` / Yarn `session.getDirectoryName()`, 서버 필드에서 찾음), 정상 종료를 요청합니다. 게임이 월드를 저장하고 꺼질 때까지 기다립니다(90초가 넘으면 강제 종료).
-2. runClient를 `--quickPlaySingleplayer <월드>`(1.20+)로 다시 띄웁니다. 월드 이름에 공백이나 한글이 있어도 되게 init script가 Base64로 받아 인자에 붙입니다. 새 게임은 툴윈도우에 다시 붙고 같은 월드로 바로 들어갑니다.
+2. 게임을 `--quickPlaySingleplayer <월드>`(1.20+)로 다시 띄웁니다. 새 게임은 툴윈도우에 다시 붙고 같은 월드로 바로 들어갑니다.
+   - **Gradle 없이 (`QuickRelaunch.java`):** Gradle로 실행한 게임의 명령줄을 실행 중인 프로세스에서 읽어 둡니다
+     (Windows `NtQueryInformationProcess` + `CommandLineToArgvW`, Linux `/proc/<pid>/cmdline`, 인자 파일은 복사).
+     작업 폴더와 환경 변수는 에이전트가 시작할 때 기록합니다. Loom이 클래스패스와 환경을 `exec()` 안에서 정해서
+     Gradle 쪽(init script의 `doFirst`)에서는 최종 명령을 볼 수 없기 때문입니다. 다음 실행(Restart, Rerun, Run client)은
+     이 명령줄로 게임을 바로 띄우고, 그 실행에만 해당하는 것만 새로 넣습니다: 에이전트와 실행 표식, 디버그 포트, 개발 모드, quick play 월드.
+   - 띄우기 전에 그사이 저장한 소스는 빠른 컴파일로, 바뀐 리소스는 출력 폴더로 복사해 둡니다(`Hotswapper.prepareRelaunch`).
+   - **Gradle로 가는 경우:** 빌드 파일(`*.gradle(.kts)`, `gradle.properties`, 버전 카탈로그, wrapper·데몬 JVM 파일,
+     `buildSrc`/`build-logic`), 게임용 JBR, 모드 메타데이터나 액세스 와이드너(`fabric.mod.json`, `mods.toml`, `*.accesswidener`,
+     `*.classtweaker`, `accesstransformer.cfg`)가 바뀌었거나, 컴파일 오류가 있거나, 바로 실행이 실패했을 때. 이유는
+     `starting through Gradle: …`로 로그에 남습니다. `-Dsulfurframe.quickRelaunch=false`로 끕니다.
+   - **Windows 명령줄 길이:** 경로에 ASCII가 아닌 글자가 있으면 Loom이 인자 파일을 쓰지 않아 클래스패스가 통째로
+     명령줄에 들어갑니다(다중 프로젝트 모드 32,223자, 한계 32,767자). 넘칠 것 같으면 클래스패스를 `CLASSPATH` 환경 변수로
+     넘깁니다(실측: 명령줄 511자, 같은 시간에 모드 65개 로드).
+   - Gradle 경로: init script가 월드 이름을 Base64로 받아 인자에 붙여서 공백이나 한글도 됩니다.
+   - 한계: 지운 소스·리소스의 출력은 다음 Gradle 실행 때까지 남습니다. Loom의 Microsoft 로그인을 쓰면 하루 넘게 이어진
+     세션에서 저장된 토큰이 만료될 수 있습니다.
 
 재시작이 필요한 변경을 감지하면 로그와 IDE 알림에 **"Restart into the same world"** 버튼을 띄웁니다.
 - 저장한 파일: `fabric.mod.json`, `quilt.mod.json`, `mods.toml`, `*.accesswidener`, `accesstransformer.cfg`, `*mixins.json`, `build.gradle*`, `settings.gradle*`, `gradle.properties`, `libs.versions.toml`

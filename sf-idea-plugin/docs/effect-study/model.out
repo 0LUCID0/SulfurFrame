@@ -21,17 +21,19 @@ VazkiiMods/Botania                         file     44.4     18.7     8.5       
 vectorwing/FarmersDelight                  commit   44.4     23.0    10.4       77%         55%   80%
 vectorwing/FarmersDelight                  file     44.4     18.9     8.1       82%         57%   86%
 ALL 9 mods (commit) mix body=24% struct=12% mixin=12% assets=15% data=3% restart=35%
-   s/step plain 44.4  plain+manual 57.4  hotswap 29.6  sulfur 16.5
+   s/step plain 44.4  plain+manual 57.4  hotswap 29.6  sulfur 16.5  sulfur+relaunch 15.8
    sulfur saves 27.9 s (63%) vs plain, 40.9 s (71%) vs plain+manual, 13.1 s (44%) vs stock HotSwap
-    20 steps/day: plain 15 min, plain+manual 19 min, hotswap 10 min, sulfur 5 min
-    60 steps/day: plain 44 min, plain+manual 57 min, hotswap 30 min, sulfur 16 min
-   150 steps/day: plain 111 min, plain+manual 144 min, hotswap 74 min, sulfur 41 min
+   sulfur+relaunch saves 28.6 s (64%) vs plain, 13.8 s (47%) vs stock HotSwap
+    20 steps/day: plain 15 min, plain+manual 19 min, hotswap 10 min, sulfur 5 min, sulfur+relaunch 5 min
+    60 steps/day: plain 44 min, plain+manual 57 min, hotswap 30 min, sulfur 16 min, sulfur+relaunch 16 min
+   150 steps/day: plain 111 min, plain+manual 144 min, hotswap 74 min, sulfur 41 min, sulfur+relaunch 39 min
 ALL 9 mods (file) mix body=22% struct=17% mixin=16% assets=18% data=13% restart=15%
-   s/step plain 44.4  plain+manual 57.4  hotswap 25.6  sulfur 7.9
+   s/step plain 44.4  plain+manual 57.4  hotswap 25.6  sulfur 7.9  sulfur+relaunch 7.6
    sulfur saves 36.5 s (82%) vs plain, 49.5 s (86%) vs plain+manual, 17.7 s (69%) vs stock HotSwap
-    20 steps/day: plain 15 min, plain+manual 19 min, hotswap 9 min, sulfur 3 min
-    60 steps/day: plain 44 min, plain+manual 57 min, hotswap 26 min, sulfur 8 min
-   150 steps/day: plain 111 min, plain+manual 144 min, hotswap 64 min, sulfur 20 min
+   sulfur+relaunch saves 36.8 s (83%) vs plain, 18.0 s (70%) vs stock HotSwap
+    20 steps/day: plain 15 min, plain+manual 19 min, hotswap 9 min, sulfur 3 min, sulfur+relaunch 3 min
+    60 steps/day: plain 44 min, plain+manual 57 min, hotswap 26 min, sulfur 8 min, sulfur+relaunch 8 min
+   150 steps/day: plain 111 min, plain+manual 144 min, hotswap 64 min, sulfur 20 min, sulfur+relaunch 19 min
 
 #### Multi-project
 repo                                       basis   plain  hotswap  sulfur  vs plain  vs hotswap  live
@@ -56,15 +58,17 @@ VazkiiMods/Botania                         file     82.5     38.0    14.8       
 vectorwing/FarmersDelight                  commit   82.5     45.3    18.0       78%         60%   80%
 vectorwing/FarmersDelight                  file     82.5     38.1    13.6       84%         64%   86%
 ALL 9 mods (commit) mix body=24% struct=12% mixin=12% assets=15% data=3% restart=35%
-   s/step plain 82.5  plain+manual 95.5  hotswap 56.8  sulfur 29.8
+   s/step plain 82.5  plain+manual 95.5  hotswap 56.8  sulfur 29.8  sulfur+relaunch 23.8
    sulfur saves 52.7 s (64%) vs plain, 65.7 s (69%) vs plain+manual, 27.0 s (48%) vs stock HotSwap
-    20 steps/day: plain 28 min, plain+manual 32 min, hotswap 19 min, sulfur 10 min
-    60 steps/day: plain 82 min, plain+manual 96 min, hotswap 57 min, sulfur 30 min
-   150 steps/day: plain 206 min, plain+manual 239 min, hotswap 142 min, sulfur 74 min
+   sulfur+relaunch saves 58.7 s (71%) vs plain, 33.0 s (58%) vs stock HotSwap
+    20 steps/day: plain 28 min, plain+manual 32 min, hotswap 19 min, sulfur 10 min, sulfur+relaunch 8 min
+    60 steps/day: plain 82 min, plain+manual 96 min, hotswap 57 min, sulfur 30 min, sulfur+relaunch 24 min
+   150 steps/day: plain 206 min, plain+manual 239 min, hotswap 142 min, sulfur 74 min, sulfur+relaunch 59 min
 ALL 9 mods (file) mix body=22% struct=17% mixin=16% assets=18% data=13% restart=15%
-   s/step plain 82.5  plain+manual 95.5  hotswap 49.9  sulfur 13.6
+   s/step plain 82.5  plain+manual 95.5  hotswap 49.9  sulfur 13.6  sulfur+relaunch 11.0
    sulfur saves 68.9 s (84%) vs plain, 81.9 s (86%) vs plain+manual, 36.4 s (73%) vs stock HotSwap
-    20 steps/day: plain 28 min, plain+manual 32 min, hotswap 17 min, sulfur 5 min
-    60 steps/day: plain 83 min, plain+manual 96 min, hotswap 50 min, sulfur 14 min
-   150 steps/day: plain 206 min, plain+manual 239 min, hotswap 125 min, sulfur 34 min
+   sulfur+relaunch saves 71.5 s (87%) vs plain, 38.9 s (78%) vs stock HotSwap
+    20 steps/day: plain 28 min, plain+manual 32 min, hotswap 17 min, sulfur 5 min, sulfur+relaunch 4 min
+    60 steps/day: plain 83 min, plain+manual 96 min, hotswap 50 min, sulfur 14 min, sulfur+relaunch 11 min
+   150 steps/day: plain 206 min, plain+manual 239 min, hotswap 125 min, sulfur 34 min, sulfur+relaunch 28 min
 

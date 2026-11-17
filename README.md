@@ -5,6 +5,7 @@ tool window (or an editor tab), throttled while you type, and changed code is ho
 
 - Embedded game window, throttled to a low frame rate while you edit and parked while hidden
 - Hotswap on save (also for files changed outside the IDE), "Restart into the Same World"
+- Restarts skip Gradle while the build is unchanged: the game starts again from its last command line
 - Minecraft version and loader detected from the build files (multi-project and Stonecutter-style layouts too)
 - World snapshots, throwaway test worlds, worlds shared by every project of a Minecraft version
 - F11 fullscreen leaves the IDE and comes back embedded
@@ -24,13 +25,19 @@ small test mod and on a real multi-project mod (9 Gradle projects, 65 mods):
 |---|---|---|
 | Restart every time (`runClient` straight into the world) | 44 s | 83 s |
 | Stock HotSwap (Gradle compile, restart for anything structural) | 26–30 s | 50–57 s |
-| **SulfurFrame** | **8–17 s** | **14–30 s** |
+| **SulfurFrame** | **8–17 s** | **11–30 s** |
 
-That is 63–84% less waiting than restarting and 44–73% less than stock HotSwap. The range runs from counting a commit
+That is 63–87% less waiting than restarting and 44–78% less than stock HotSwap. The range runs from counting a commit
 as one step (its slowest change decides) to counting each changed file as one step. 65–85% of the steps apply live:
-method bodies and new members (with a JetBrains Runtime, see Install), mixins, and assets or data. What still restarts (registrations, static initializers,
-mod metadata) takes as long as before, so the gain grows with how slow your project's Gradle is. Method, scripts and
-raw numbers: [`sf-idea-plugin/docs/effect-study`](sf-idea-plugin/docs/effect-study) and the plugin README.
+method bodies and new members (with a JetBrains Runtime, see Install), mixins, and assets or data.
+
+The rest needs a restart (registrations, static initializers, mod metadata). A restart skips Gradle and starts the game
+from the command line it was last started with, unless build files, mod metadata or access wideners changed since.
+Code and resources saved in the meantime are compiled and copied first. On the multi-project mod that brought a restart
+from 81 s to 64 s; on the small mod it made almost no difference (32 s to 30 s), because its Gradle is quick. The commit
+sample cannot tell which restarts would skip Gradle, so each range's high end counts commits with every restart
+through Gradle, and its low end counts files with every restart skipping it. The gain grows with how slow your project's Gradle is. Method, scripts and raw numbers:
+[`sf-idea-plugin/docs/effect-study`](sf-idea-plugin/docs/effect-study) and the plugin README.
 
 ## Install
 

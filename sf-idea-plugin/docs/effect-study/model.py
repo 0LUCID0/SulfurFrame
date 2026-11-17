@@ -11,6 +11,11 @@
 #     stock assets    18.8 / 18.5 / 18.5 s (+ the reload)
 #   SulfurFrame     swap incl. compile 0.5-1.3 s warm (no Gradle call); restart = a Gradle runClient like plain
 #                   (test copy: 38-52 s vs plain 42-49 s), so it is taken as equal to plain
+#   sulfur+relaunch the restart starts the game from its last command line, without Gradle (measure-relaunch.sh,
+#                   same day, warm runs): test copy 31.8 -> 29.9 s, Multi-project 81.2 -> 64.0 s; that saving is
+#                   taken off the plain restart above. Only restarts that leave build files, mod metadata and access
+#                   wideners alone go this way; the commit sample does not tell those apart, so "sulfur" (every
+#                   restart through Gradle) and "sulfur+relaunch" (none) are the two ends.
 # Assumptions, not measured: the reload after copying resources (2 s, same with or without SulfurFrame), and for
 # "plain+manual" quitting the game and clicking into the world by hand (+13 s).
 #   usage: python model.py <dir with mix.json>
@@ -18,8 +23,8 @@ import json, sys, os
 
 RELOAD, MANUAL = 2, 13
 ENVS = {
-    "test copy": {"restart": 44.4, "classes": 8.5, "resources": 6.8},
-    "Multi-project": {"restart": 82.5, "classes": 20.3, "resources": 18.6},
+    "test copy": {"restart": 44.4, "classes": 8.5, "resources": 6.8, "relaunch": 44.4 - (31.8 - 29.9)},
+    "Multi-project": {"restart": 82.5, "classes": 20.3, "resources": 18.6, "relaunch": 82.5 - (81.2 - 64.0)},
 }
 KEYS = ["body", "struct", "mixin", "assets", "data", "restart"]
 SKIP = ("Mojang/brigadier",)   # a library, not a mod: shown but kept out of the totals
@@ -31,6 +36,7 @@ def costs(env):
         "plain+manual": {k: R + MANUAL for k in KEYS},
         "hotswap":      {"body": C, "struct": R, "mixin": R, "assets": S + RELOAD, "data": S + RELOAD, "restart": R},
         "sulfur":       {"body": 1.0, "struct": 1.3, "mixin": 1.0, "assets": 0.5 + RELOAD, "data": 0.5 + RELOAD, "restart": R},
+        "sulfur+relaunch": {"body": 1.0, "struct": 1.3, "mixin": 1.0, "assets": 0.5 + RELOAD, "data": 0.5 + RELOAD, "restart": env["relaunch"]},
     }
 
 def per_step(mix, cost):
@@ -62,6 +68,9 @@ for name, env in ENVS.items():
         print(f"   sulfur saves {v['plain']-v['sulfur']:.1f} s ({100*(1-v['sulfur']/v['plain']):.0f}%) vs plain, "
               f"{v['plain+manual']-v['sulfur']:.1f} s ({100*(1-v['sulfur']/v['plain+manual']):.0f}%) vs plain+manual, "
               f"{v['hotswap']-v['sulfur']:.1f} s ({100*(1-v['sulfur']/v['hotswap']):.0f}%) vs stock HotSwap")
+        r = v['sulfur+relaunch']
+        print(f"   sulfur+relaunch saves {v['plain']-r:.1f} s ({100*(1-r/v['plain']):.0f}%) vs plain, "
+              f"{v['hotswap']-r:.1f} s ({100*(1-r/v['hotswap']):.0f}%) vs stock HotSwap")
         for steps in (20, 60, 150):
             print(f"   {steps:3} steps/day: " + ", ".join(f"{wf} {steps*v[wf]/60:.0f} min" for wf in c))
     print()
