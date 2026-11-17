@@ -3,7 +3,7 @@
 마인크래프트 모드 프로젝트를 열면, 빌드 파일에서 **마인크래프트 버전, 모드 로더, 로더 버전, 필요한 Java**를 읽어 툴윈도우에 보여 줍니다.
 그리고 게임 창을 툴윈도우 안에 넣습니다.
 
-![in-ide](docs/in-ide.png)
+![in-ide](docs/marketplace/01-game-in-tool-window.png)
 
 ## 기능
 - **버전 자동 결정** (`profile/ProjectProfile.java`): 아무것도 실행하지 않고(Gradle 동기화 없이) 파일만 읽습니다.
@@ -252,7 +252,7 @@ java -cp out dev.sulfurframe.idea.profile.WorkspaceSelfTest sf-idea-plugin/src/t
   "16:9" 체크를 끄면 패널을 꽉 채웁니다.
 - **"Open as tab"**: 게임을 가로로 넓은 에디터 영역의 "Minecraft" 탭으로 옮깁니다(`GameTab`, `FileEditorProvider`).
   탭을 닫으면 툴윈도우로 돌아옵니다. 옮길 때 캔버스가 새로 만들어지는데, 게임은 park 후 다시 붙습니다.
-  ![tab](docs/editor-tab.png)
+  ![tab](docs/marketplace/02-game-as-editor-tab.png)
 - **F11 (게임 안의 전체화면 키)**: 임베드 상태에서 F11을 누르면 GLFW와 SDL은 창에 `WS_POPUP`만 추가합니다. 자식 창이라 패널 안에 그대로 남습니다.
   다시 누르면 `WS_POPUP`이 빠지고 **제목 표시줄이 생겨서** 패널 안에 창 테두리가 붙습니다(1.21.1에서 실측).
   → 와치독이 스타일 변화를 감지합니다.
