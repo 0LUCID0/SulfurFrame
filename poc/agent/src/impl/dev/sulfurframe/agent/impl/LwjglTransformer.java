@@ -47,7 +47,7 @@ public final class LwjglTransformer implements ClassFileTransformer {
 
     /** Registry slots, in the order SfAgent fills the array. */
     public static final int SLOT_SDL_WINDOW_FROM_EVENT = 0, SLOT_SDL_POLL_EVENT = 1, SLOT_GLFW_SWAP = 2,
-            SLOT_SDL_SWAP = 3, SLOT_VK_PRESENT = 4, SLOT_LWJGL2_UPDATE = 5, SLOTS = 6;
+            SLOT_SDL_SWAP = 3, SLOT_VK_PRESENT = 4, SLOT_LWJGL2_UPDATE = 5, SLOT_GLFW_CREATE = 6, SLOTS = 7;
 
     static final List<Patch> PATCHES = Arrays.asList(
             // SDL3 (Minecraft 26.x): key events of a child window carry windowID 0
@@ -58,6 +58,9 @@ public final class LwjglTransformer implements ClassFileTransformer {
                     Kind.BOOL_FILTER_WITH_ARG0_BEFORE_IRETURN, SLOT_SDL_POLL_EVENT),
             // frame presentation, every backend: cap the frame rate while the editor has focus
             new Patch("org/lwjgl/glfw/GLFW", "glfwSwapBuffers", "(J)V", Kind.LONG_SKIP_IF_AT_ENTRY, SLOT_GLFW_SWAP),
+            // window creation (both glfwCreateWindow overloads go through it): a game the IDE launched is created
+            // without taking the foreground
+            new Patch("org/lwjgl/glfw/GLFW", "nglfwCreateWindow", "(IIJJJ)J", Kind.RUN_AT_ENTRY, SLOT_GLFW_CREATE),
             new Patch("org/lwjgl/sdl/SDLVideo", "SDL_GL_SwapWindow", "(J)Z", Kind.LONG_SKIP_IF_AT_ENTRY, SLOT_SDL_SWAP),
             new Patch("org/lwjgl/vulkan/KHRSwapchain", "vkQueuePresentKHR",
                     "(Lorg/lwjgl/vulkan/VkQueue;Lorg/lwjgl/vulkan/VkPresentInfoKHR;)I", Kind.RUN_AT_ENTRY, SLOT_VK_PRESENT),

@@ -409,6 +409,36 @@ PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (게임 로�
 - 핫스왑 결과의 "restart needed"(JBR이 없을 때의 구조 변경)
 - **시작할 때 한 번만 도는 코드가 바뀐 경우**(`StartupCode.java`): 교체 전후 클래스에서 `<clinit>`, `onInitialize*`, `register*`, `initialize*`의 명령어를 비교합니다(줄 번호 제외, IntelliJ 내장 ASM). 교체 자체는 성공하지만 이미 실행된 코드라 게임에 반영되지 않는 경우입니다(새 블록 등록 등).
 
+### 조용한 시작 (포커스와 마우스를 뺏지 않기)
+새 게임 창은 처음에 일반 창으로 떠서 포커스를 가져갑니다. quick play로 월드에 들어가면 Minecraft가 마우스를 잡고,
+GLFW는 `ClipCursor`로 커서를 그 창 영역에 가둡니다(시스템 전체). 원래는 포커스를 잃을 때(WM_KILLFOCUS) 풀리지만, 창이
+IDE의 자식 창이 되면 그 메시지가 오지 않습니다. 그래서 세 가지 문제가 있었습니다.
+- Run client를 누르면 쓰던 앱(브라우저, 다른 창)에서 포커스가 빠져나갔습니다.
+- 커서가 옛 게임 창 크기의 사각형에 갇혔습니다. 다른 앱 위에서도 마찬가지였습니다.
+- Minecraft가 계속 "활성, 마우스 잡힘"으로 남아 일시정지 메뉴가 뜨지 않았습니다. 게임에 포커스를 주려는 첫 클릭이
+  공격이 되어, 크리에이티브에서는 발밑 블록이 기반암까지 부서졌습니다(자가 테스트 플레이어가 공허로 떨어짐).
+
+고친 방법:
+- **창을 만들 때부터 포커스를 주지 않음 (에이전트, `SfHooks.beforeGlfwCreateWindow`):** IDE가 띄운 게임(`launch=`로
+  시작한 premain, Gradle 없는 재시작 포함)에서 `nglfwCreateWindow` 직전에 `GLFW_FOCUSED`와 `GLFW_FOCUS_ON_SHOW`를 끕니다.
+  게임이 정한 창 옵션(`glfwDefaultWindowHints` 뒤)이 다 정해진 다음이라 덮어써지지 않습니다. 창이 활성이 아니면 Minecraft는
+  마우스를 잡지 않으므로(`grabMouse`가 창 활성 여부를 먼저 봄) 커서도 갇히지 않고, 월드에 들어가면 일시정지 메뉴로 기다립니다.
+- **안전망 (`GameEmbedder.releaseStaleClip`):** 임베드 뒤 약 20초 동안, 게임에 키보드가 없으면 WM_KILLFOCUS를 한 번 보내고
+  남은 커서 가둠을 풉니다. `GLFW_FOCUS_ON_SHOW`가 없는 GLFW 3.2 이하나, 다른 경로로 창이 포커스를 받은 경우를 위한 것입니다.
+- **테스트 월드 복구 (`TestWorld.playerLost`):** 자가 테스트는 실행 전에 `level.dat`을 읽어서, 플레이어가 죽었거나 오버월드
+  바닥(-64) 아래에 있으면 그 월드를 `<이름>-broken-<시각>`으로 옮기고 새 테스트 월드를 만듭니다.
+
+검증(Windows 샌드박스, quick play로 Run client, 100 ms마다 확인): 실행하는 동안 앞 창이 한 번도 게임이 아니었고,
+`GetClipCursor`는 화면 전체(0,0,1920,1200) 그대로였고, 게임 로그에 "mouse grabbed"가 없었습니다. 월드에 들어간 뒤 에이전트에
+화면을 물으면 `screen=GameMenuScreen`(일시정지 메뉴)입니다. 창은 임베드되기 전에 잠깐 화면에 보일 수 있습니다(포커스는
+가져가지 않음).
+
+Linux(WSL2, Xvfb + openbox, `xvfb-test.sh runclient` + 0.2초마다 `xdotool getactivewindow`): 개발 루프 자가 테스트 30개
+모두 통과, 에이전트가 창 옵션을 끈 기록이 남고, 게임의 첫 포커스 보고는 "editor has the keyboard"이며 "game has the keyboard"는
+한 번도 없었습니다(월드 진입은 그 뒤라 마우스를 잡지 않음). 다만 실행할 때마다(4번) 새 창이 뜨고 임베드되는 순간
+`_NET_ACTIVE_WINDOW`가 0.2~0.8초 게임 창을 가리켰습니다. openbox가 새로 매핑된 창에 포커스를 주는 정책 때문인지 임베드 과정
+때문인지는 아직 가리지 않았습니다.
+
 ### 엉뚱한 게임을 붙이지 않기
 예전에는 Run client 뒤 새로 뜬 마인크래프트 창을 아무거나 붙였습니다. 그사이 런처로 다른 마인크래프트를 켜면 그게 붙을 수 있었습니다.
 이제 Run client가 init script로 게임 JVM에 에이전트를 시작 시점부터 붙이고(`-javaagent:...=launch=<실행마다 고유한 파일>`), 에이전트가 그 파일에 자기 PID를 씁니다. 플러그인은 **그 PID의 창만** 붙이고 다른 창은 무시합니다. Linux에서 PID를 모르는 창을 고르던 대체 경로도 없앴습니다. FPS 제한도 게임 시작부터 걸립니다.

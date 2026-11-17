@@ -81,6 +81,29 @@ public final class SfHooks {
         }
     }
 
+    /** Started by the IDE's Run client (premain with launch=): the window must not take the foreground. */
+    public static volatile boolean quietStart;
+
+    /**
+     * nglfwCreateWindow entry (after the game's own glfwDefaultWindowHints and hints, which would reset ours). A new
+     * window normally takes the foreground; then quick play joins the world, the mouse grab clips the cursor to the
+     * window (system-wide), and the user is pulled out of whatever app they were in while the IDE has not embedded it
+     * yet. Not focused and not focused on show: the app in front stays in front, the game stays inactive (Minecraft
+     * does not grab the mouse while its window is inactive, and pauses), and the IDE embeds it. GLFW 3.3+ for
+     * FOCUS_ON_SHOW; an older GLFW rejects that hint with an error callback and only FOCUSED applies.
+     */
+    public static void beforeGlfwCreateWindow() {
+        if (!quietStart) return;
+        try {
+            Method hint = Class.forName("org.lwjgl.glfw.GLFW", false, loader()).getMethod("glfwWindowHint", int.class, int.class);
+            hint.invoke(null, 0x00020001, 0);   // GLFW_FOCUSED
+            hint.invoke(null, 0x0002000C, 0);   // GLFW_FOCUS_ON_SHOW
+            log("window created without taking the foreground (launched by the IDE)");
+        } catch (Throwable t) {
+            log("could not keep the new window in the background: " + t);
+        }
+    }
+
     /** glfwSwapBuffers entry. True = skip the swap: the window is gone (X11 host died), presenting into it crashes Mesa. */
     public static boolean beforeGlfwSwap(long window) {
         glfwWindow = window;

@@ -165,6 +165,13 @@ final class Win32 {
         } catch (Throwable t) { throw rethrow(t); }
     }
 
+    private static final MethodHandle ClipCursorFn = fn("ClipCursor", JAVA_INT, ADDRESS);
+
+    /** Lift any cursor clip (ClipCursor(NULL)): the mouse may go anywhere on the screen again. */
+    static void releaseClip() {
+        try { int ignored = (int) ClipCursorFn.invokeExact(MemorySegment.NULL); } catch (Throwable t) { throw rethrow(t); }
+    }
+
     static final int WM_APP = 0x8000;
     private static final MethodHandle PostMessageW = fn("PostMessageW", JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG);
 

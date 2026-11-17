@@ -4,6 +4,7 @@ An IntelliJ IDEA plugin that runs your Minecraft mod's dev client **inside the I
 tool window (or an editor tab), throttled while you type, and changed code is hotswapped into it on save.
 
 - Embedded game window, throttled to a low frame rate while you edit and parked while hidden
+- Starts in the background: the game does not take the focus or the mouse from the app you are in
 - Hotswap on save (also for files changed outside the IDE), "Restart into the Same World"
 - Restarts skip Gradle while the build is unchanged: the game starts again from its last command line
 - Minecraft version and loader detected from the build files (multi-project and Stonecutter-style layouts too)

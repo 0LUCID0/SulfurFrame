@@ -45,13 +45,14 @@ public final class SfAgent {
      * objects in a system property, which the patched code reads and calls through the JDK interface.
      */
     private static void registerHooks() {
-        Object[] hooks = new Object[6];
+        Object[] hooks = new Object[7];
         hooks[0] = (LongUnaryOperator) SfHooks::sdlWindowFromEvent;
         hooks[1] = (BiFunction<Object, Object, Object>) (got, event) -> SfHooks.sdlPollEvent((Boolean) got, event);
         hooks[2] = (LongPredicate) SfHooks::beforeGlfwSwap;
         hooks[3] = (LongPredicate) SfHooks::beforeSdlSwap;
         hooks[4] = (Runnable) SfHooks::beforeVkPresent;
         hooks[5] = (java.util.function.BooleanSupplier) SfHooks::beforeLwjgl2Update;
+        hooks[6] = (Runnable) SfHooks::beforeGlfwCreateWindow;
         System.getProperties().put(REGISTRY_KEY, hooks);
     }
 
@@ -85,7 +86,7 @@ public final class SfAgent {
             return;
         }
         // "launch=<file>": started by the IDE's Run client; tell it which process is ours (pid into the file)
-        if (args != null) for (String kv : args.split(",")) if (kv.startsWith("launch=")) markLaunch(kv.substring("launch=".length()));
+        if (args != null) for (String kv : args.split(",")) if (kv.startsWith("launch=")) { markLaunch(kv.substring("launch=".length())); SfHooks.quietStart = true; }
         SfHooks.configure(args);
         if (installed) { SfHooks.log("already installed; settings updated (coding fps cap " + SfHooks.codingFps + ")"); return; }
         installed = true;

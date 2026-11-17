@@ -127,7 +127,51 @@ public final class GameEmbedder implements GameView {
         syncBounds(Win32.SWP_FRAMECHANGED | Win32.SWP_SHOWWINDOW);
         log.accept("embedded " + Win32.className(hwnd) + " \"" + Win32.windowText(hwnd) + "\" (pid " + pid + ")");
         canvas.repaint();
+        releaseStaleClip(hwnd);
         return true;
+    }
+
+    /**
+     * A new game window starts top-level and takes the foreground; quick play then joins the world and the mouse grab
+     * clips the cursor (ClipCursor, system-wide) to that window. GLFW lifts the clip on WM_KILLFOCUS, which never comes
+     * once the window is a child of the canvas, so the mouse stayed boxed into the old window rectangle, over every
+     * other app too. For the first seconds after embedding (the world may still be joining), lift any clip while the
+     * game does not have the keyboard; a later grab inside the IDE is handled by the agent (GlfwCursorFix).
+     */
+    private void releaseStaleClip(long hwnd) {
+        Thread.ofPlatform().daemon().name("sf-unclip").start(() -> {
+            boolean said = false, unfocused = false;
+            for (int i = 0; i < 100 && game == hwnd; i++) {   // ~20 s
+                try {
+                    if (!unfocused && Win32.foregroundFocus() != hwnd) {
+                        // the same missing WM_KILLFOCUS also leaves Minecraft "active" with the mouse grabbed: no pause
+                        // menu, and the first click into the game attacks (in creative it broke bedrock under the
+                        // test player). GLFW's handler releases the cursor and reports focus false, so the game pauses.
+                        Win32.postMessage(hwnd, 0x0008 /* WM_KILLFOCUS */, 0, 0);
+                        unfocused = true;
+                    }
+                    if (Win32.foregroundFocus() != hwnd && clipped()) {
+                        Win32.releaseClip();
+                        if (!said) { log.accept("released the cursor clip the game set before it was embedded"); said = true; }
+                    }
+                    Thread.sleep(200);
+                } catch (Throwable t) { return; }
+            }
+        });
+    }
+
+    /** Is the cursor clipped to less than the whole virtual screen? */
+    private static boolean clipped() {
+        var c = Win32.clipCursor();
+        if (c == null) return false;
+        var vs = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment();
+        java.awt.Rectangle all = new java.awt.Rectangle();
+        for (var d : vs.getScreenDevices()) {
+            var b = d.getDefaultConfiguration().getBounds();
+            double s = d.getDefaultConfiguration().getDefaultTransform().getScaleX();
+            all = all.union(new java.awt.Rectangle((int) (b.x * s), (int) (b.y * s), (int) Math.ceil(b.width * s), (int) Math.ceil(b.height * s)));
+        }
+        return c.width() < all.width || c.height() < all.height;
     }
 
     /** Give the window back as a normal top-level window. */
