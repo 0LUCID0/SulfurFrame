@@ -194,7 +194,9 @@ public class McFetch {
         cmd.addAll(extra);
 
         Path log = TMP.resolve("sf-mc-" + version + ".log");
-        var p = new ProcessBuilder(cmd).directory(TMP.toFile()).redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        var pb = new ProcessBuilder(cmd).directory(TMP.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        mute(pb);
+        var p = pb.start();
         System.out.println("[launch] " + version + " pid=" + p.pid() + " java " + major + " log=" + log);
     }
 
@@ -325,7 +327,9 @@ public class McFetch {
         cmd.addAll(extra);
 
         Path log = TMP.resolve("sf-mc-" + id + ".log");
-        var p = new ProcessBuilder(cmd).directory(TMP.toFile()).redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        var pb = new ProcessBuilder(cmd).directory(TMP.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        mute(pb);
+        var p = pb.start();
         System.out.println("[launch] " + id + " pid=" + p.pid() + " java " + major + (legacyJar ? " (LaunchWrapper)" : "") + " log=" + log);
     }
 
@@ -463,5 +467,10 @@ public class McFetch {
                 else b.append(c);
             }
         }
+    }
+
+    /** Test launches are silent: OpenAL Soft's null output (options.txt keeps its volumes). SF_SOUND=1 to hear them. */
+    static void mute(ProcessBuilder pb) {
+        if (!"1".equals(System.getenv("SF_SOUND"))) pb.environment().put("ALSOFT_DRIVERS", "null");
     }
 }

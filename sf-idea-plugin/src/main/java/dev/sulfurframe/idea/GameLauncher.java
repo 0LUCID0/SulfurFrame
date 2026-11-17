@@ -97,6 +97,13 @@ final class GameLauncher {
                 pb.environment().put("JAVA_HOME", gradleJdk.toString());
                 log.accept("Gradle runs on " + gradleJdk + " (JAVA_HOME " + System.getenv("JAVA_HOME") + " is older than Java " + profile.javaMajor() + ")");
             }
+            if (muted()) {
+                // OpenAL Soft's null output: silent, and options.txt keeps its volumes (the options sync shares
+                // soundCategory_*, so muting there would mute the user's other games too). Gradle hands the client's
+                // environment to the daemon, and the daemon to the game it forks.
+                pb.environment().put("ALSOFT_DRIVERS", "null");
+                log.accept("test run: game sound off (ALSOFT_DRIVERS=null; options.txt untouched)");
+            }
             gradle = pb.start();
             gradle.onExit().thenRun(onEnd);
             log.accept("started " + wrapper + " " + target.runTask() + " for " + profile);
@@ -127,6 +134,12 @@ final class GameLauncher {
             }
             log.accept(gradle.isAlive() ? "no game window after 10 minutes" : "Gradle exited with " + gradle.exitValue());
         });
+    }
+
+    /** Self-test runs are silent by default (-Dsulfurframe.mute=false to hear them); -Dsulfurframe.mute=true mutes any run. */
+    static boolean muted() {
+        String m = System.getProperty("sulfurframe.mute");
+        return m != null ? Boolean.parseBoolean(m) : AutoTest.enabled();
     }
 
     private volatile Path agentJar, marker;
