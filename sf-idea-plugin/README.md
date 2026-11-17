@@ -423,6 +423,12 @@ IDE의 자식 창이 되면 그 메시지가 오지 않습니다. 그래서 세 
   시작한 premain, Gradle 없는 재시작 포함)에서 `nglfwCreateWindow` 직전에 `GLFW_FOCUSED`와 `GLFW_FOCUS_ON_SHOW`를 끕니다.
   게임이 정한 창 옵션(`glfwDefaultWindowHints` 뒤)이 다 정해진 다음이라 덮어써지지 않습니다. 창이 활성이 아니면 Minecraft는
   마우스를 잡지 않으므로(`grabMouse`가 창 활성 여부를 먼저 봄) 커서도 갇히지 않고, 월드에 들어가면 일시정지 메뉴로 기다립니다.
+- **X11: 창 관리자에게도 "포커스 주지 말 것" (`SfHooks.afterGlfwCreateWindow`, `X11Lifeboat.markNoFocusOnMap`):** GLFW 옵션은
+  GLFW 자신의 포커스 요청만 막고, 창 관리자는 새로 매핑된 최상위 창에 스스로 포커스를 줍니다(openbox에서 0.2~0.8초). 그래서
+  Linux에서는 창을 숨긴 채(`GLFW_VISIBLE` 끔) 만들고, `glfwCreateWindow`가 돌아오는 순간 EWMH `_NET_WM_USER_TIME = 0`("매핑될 때
+  포커스를 주지 말 것")을 붙인 뒤 GLFW로 바로 보이게 합니다. 속성은 GLFW의 X 연결로 쓰므로 매핑 요청보다 먼저 서버에 닿습니다.
+  Xlib 호출은 LWJGL JNI 호출기(모든 인자가 long인 것: x86-64에서는 int 인자도 64비트 칸으로 전달됨)로 합니다. 표시를 못 붙여도
+  창은 항상 보이게 합니다.
 - **안전망 (`GameEmbedder.releaseStaleClip`):** 임베드 뒤 약 20초 동안, 게임에 키보드가 없으면 WM_KILLFOCUS를 한 번 보내고
   남은 커서 가둠을 풉니다. `GLFW_FOCUS_ON_SHOW`가 없는 GLFW 3.2 이하나, 다른 경로로 창이 포커스를 받은 경우를 위한 것입니다.
 - **테스트 월드 복구 (`TestWorld.playerLost`):** 자가 테스트는 실행 전에 `level.dat`을 읽어서, 플레이어가 죽었거나 오버월드
@@ -433,11 +439,12 @@ IDE의 자식 창이 되면 그 메시지가 오지 않습니다. 그래서 세 
 화면을 물으면 `screen=GameMenuScreen`(일시정지 메뉴)입니다. 창은 임베드되기 전에 잠깐 화면에 보일 수 있습니다(포커스는
 가져가지 않음).
 
-Linux(WSL2, Xvfb + openbox, `xvfb-test.sh runclient` + 0.2초마다 `xdotool getactivewindow`): 개발 루프 자가 테스트 30개
-모두 통과, 에이전트가 창 옵션을 끈 기록이 남고, 게임의 첫 포커스 보고는 "editor has the keyboard"이며 "game has the keyboard"는
-한 번도 없었습니다(월드 진입은 그 뒤라 마우스를 잡지 않음). 다만 실행할 때마다(4번) 새 창이 뜨고 임베드되는 순간
-`_NET_ACTIVE_WINDOW`가 0.2~0.8초 게임 창을 가리켰습니다. openbox가 새로 매핑된 창에 포커스를 주는 정책 때문인지 임베드 과정
-때문인지는 아직 가리지 않았습니다.
+Linux(WSL2, Xvfb + openbox, `xvfb-test.sh runclient` + 0.2초마다 `xdotool getactivewindow`): 개발 루프 자가 테스트(핫스왑,
+Gradle 없는 재시작, Rerun 포함) 모두 통과, 게임 로그에 `_NET_WM_USER_TIME 0` 표시가 남고, 실행 4번 동안 활성 창이 한 번도 게임이
+아니었습니다. 이 표시 전에는 실행할 때마다 새 창이 뜨는 순간 0.2~0.8초 게임 창이 활성으로 잡혔습니다.
+- 테스트 쪽 수정: `xvfb-test.sh`가 이전 실행의 게임을 `net.minecraft.client.main.Main`으로만 찾아서 Fabric 개발 클라이언트
+  (`fabric.dli.config`)가 남았고, 그 게임이 테스트 월드의 `session.lock`을 잡고 있어 quick play가 월드를 열지 못했습니다
+  (`AlreadyLockedException`). 이제 개발 클라이언트도 끕니다.
 
 ### 엉뚱한 게임을 붙이지 않기
 예전에는 Run client 뒤 새로 뜬 마인크래프트 창을 아무거나 붙였습니다. 그사이 런처로 다른 마인크래프트를 켜면 그게 붙을 수 있었습니다.

@@ -334,6 +334,55 @@ final class X11Lifeboat {
             if (jna) return (Integer) fnInvokeInt.invoke(jfn(fn), (Object) args(a, b, c, d, e, f));
             return (Integer) (addressFirst ? invPPPPPPI.invoke(null, fn, a, b, c, d, e, f) : invPPPPPPI.invoke(null, a, b, c, d, e, f, fn));
         }
+
+        // LWJGL 3 only (a GLFW window): invokers whose parameters are all long, three and eight arguments. LWJGL's
+        // eight-pointer "...I" invoker mixes ints into its parameters (long, int, int, long...), which does not fit
+        // XChangeProperty; an int slot would leave the upper half of a 64-bit argument undefined. On x86-64 every
+        // int argument travels in a 64-bit register or stack slot, so passing ints as longs is safe; a returned int
+        // is read as a long and ignored.
+        private static Method invPPPP, invP8I, memPutByte;
+
+        private static synchronized void initMore() throws Exception {
+            if (invPPPP != null) return;
+            if (jna) throw new IllegalStateException("needs LWJGL 3");
+            ClassLoader l = SfHooks.lwjglClassLoader();
+            Class<?> jni = Class.forName("org.lwjgl.system.JNI", false, l);
+            invPPPP = SfHooks.jniMethod(jni, "PPPP", long.class, long.class, long.class, long.class);
+            invP8I = SfHooks.jniMethod(jni, "PPPPPPPPP", long.class, long.class, long.class, long.class, long.class, long.class, long.class, long.class, long.class);
+            memPutByte = Class.forName("org.lwjgl.system.MemoryUtil", false, l).getMethod("memPutByte", long.class, byte.class);
+        }
+
+        static long ppp(long a, long b, long c, long fn) throws Exception {
+            initMore();
+            return (Long) (addressFirst ? invPPPP.invoke(null, fn, a, b, c) : invPPPP.invoke(null, a, b, c, fn));
+        }
+
+        static long p8(long a, long b, long c, long d, long e, long f, long g, long h, long fn) throws Exception {
+            initMore();
+            return (Long) (addressFirst ? invP8I.invoke(null, fn, a, b, c, d, e, f, g, h) : invP8I.invoke(null, a, b, c, d, e, f, g, h, fn));
+        }
+
+        /** A NUL-terminated ASCII copy of {@code s} in native memory (never freed: a few bytes, once). */
+        static long cstring(String s) throws Exception {
+            initMore();
+            long p = calloc(s.length() + 1);
+            for (int i = 0; i < s.length(); i++) memPutByte.invoke(null, p + i, (byte) s.charAt(i));
+            return p;
+        }
+    }
+
+    /**
+     * EWMH "do not focus this window when it is mapped": _NET_WM_USER_TIME = 0 (CARDINAL, format 32). Set on a new game
+     * window before it is first shown, so the window manager leaves the focus where it is (openbox focused every new
+     * top-level window otherwise, whatever GLFW asked). {@code dpy} is GLFW's own connection, so the property reaches
+     * the server before GLFW's map request.
+     */
+    static void markNoFocusOnMap(long dpy, long win) throws Exception {
+        N.init();
+        long atom = N.ppp(dpy, N.cstring("_NET_WM_USER_TIME"), 0, N.addr("X11", "XInternAtom"));
+        if (atom == 0) throw new IllegalStateException("no _NET_WM_USER_TIME atom");
+        long zero = N.calloc(8);   // format 32 data is an array of C long in Xlib: one 0
+        N.p8(dpy, win, atom, 6 /* XA_CARDINAL */, 32, 0 /* PropModeReplace */, zero, 1, N.addr("X11", "XChangeProperty"));
     }
 
     private X11Lifeboat() {}

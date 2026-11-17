@@ -11,8 +11,11 @@ J25=/usr/lib/jvm/java-25-openjdk-amd64/bin/java
 export DISPLAY=:99
 unset WAYLAND_DISPLAY
 ulimit -c 0
-pkill -f "$HOME/idea/bin/idea" 2>/dev/null; pkill -f net.minecraft.client.main.Main 2>/dev/null
+# games of earlier runs: vanilla (McFetch) and Fabric dev clients (devlaunchinjector, no net.minecraft... on their
+# command line). A dev client left running keeps the test world's session.lock, and quick play then cannot open it.
+pkill -f "$HOME/idea/bin/idea" 2>/dev/null; pkill -f net.minecraft.client.main.Main 2>/dev/null; pkill -f fabric.dli.config 2>/dev/null
 for i in $(seq 1 30); do pgrep -f "$HOME/idea/bin/idea" >/dev/null || break; sleep 1; done; pkill -9 -f "$HOME/idea/bin/idea" 2>/dev/null
+for i in $(seq 1 15); do pgrep -f fabric.dli.config >/dev/null || break; sleep 1; done; pkill -9 -f fabric.dli.config 2>/dev/null
 if ! pgrep -x Xvfb >/dev/null; then
   setsid nohup Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/tmp/sf-xvfb.log 2>&1 < /dev/null &
   sleep 2

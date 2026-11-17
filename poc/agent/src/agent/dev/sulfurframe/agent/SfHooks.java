@@ -91,6 +91,11 @@ public final class SfHooks {
      * yet. Not focused and not focused on show: the app in front stays in front, the game stays inactive (Minecraft
      * does not grab the mouse while its window is inactive, and pauses), and the IDE embeds it. GLFW 3.3+ for
      * FOCUS_ON_SHOW; an older GLFW rejects that hint with an error callback and only FOCUSED applies.
+     *
+     * X11: the window manager focuses a newly mapped top-level window by itself (openbox did, for 0.2-0.8 s, whatever
+     * GLFW asked). So there the window is created hidden, marked "do not focus on map" and then shown right away by
+     * {@link #afterGlfwCreateWindow}. Shown through GLFW as usual: a window left for the IDE to map never let quick play
+     * join the world.
      */
     public static void beforeGlfwCreateWindow() {
         if (!quietStart) return;
@@ -98,10 +103,33 @@ public final class SfHooks {
             Method hint = Class.forName("org.lwjgl.glfw.GLFW", false, loader()).getMethod("glfwWindowHint", int.class, int.class);
             hint.invoke(null, 0x00020001, 0);   // GLFW_FOCUSED
             hint.invoke(null, 0x0002000C, 0);   // GLFW_FOCUS_ON_SHOW
+            if (LINUX) { hint.invoke(null, 0x00020004, 0); hiddenCreate = true; }   // GLFW_VISIBLE, shown after the mark
             log("window created without taking the foreground (launched by the IDE)");
         } catch (Throwable t) {
             log("could not keep the new window in the background: " + t);
         }
+    }
+
+    private static volatile boolean hiddenCreate;
+
+    /** glfwCreateWindow return (both overloads): on X11, mark the hidden new window "do not focus on map", then show it. */
+    public static long afterGlfwCreateWindow(long window) {
+        if (!hiddenCreate || window == 0) return window;
+        hiddenCreate = false;
+        ClassLoader l = loader();
+        try {
+            Class<?> nx = Class.forName("org.lwjgl.glfw.GLFWNativeX11", false, l);
+            long dpy = (Long) nx.getMethod("glfwGetX11Display").invoke(null);
+            long win = (Long) nx.getMethod("glfwGetX11Window", long.class).invoke(null, window);
+            X11Lifeboat.markNoFocusOnMap(dpy, win);
+            log("X11: window marked not to be focused when it is mapped (_NET_WM_USER_TIME 0)");
+        } catch (Throwable t) {
+            log("X11: could not mark the window (the window manager may focus it): " + t);
+        } finally {
+            try { Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwShowWindow", long.class).invoke(null, window); }   // never leave it hidden
+            catch (Throwable t) { log("X11: could not show the window: " + t); }
+        }
+        return window;
     }
 
     /** glfwSwapBuffers entry. True = skip the swap: the window is gone (X11 host died), presenting into it crashes Mesa. */

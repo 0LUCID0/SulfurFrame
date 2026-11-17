@@ -45,7 +45,7 @@ public final class SfAgent {
      * objects in a system property, which the patched code reads and calls through the JDK interface.
      */
     private static void registerHooks() {
-        Object[] hooks = new Object[7];
+        Object[] hooks = new Object[8];
         hooks[0] = (LongUnaryOperator) SfHooks::sdlWindowFromEvent;
         hooks[1] = (BiFunction<Object, Object, Object>) (got, event) -> SfHooks.sdlPollEvent((Boolean) got, event);
         hooks[2] = (LongPredicate) SfHooks::beforeGlfwSwap;
@@ -53,6 +53,7 @@ public final class SfAgent {
         hooks[4] = (Runnable) SfHooks::beforeVkPresent;
         hooks[5] = (java.util.function.BooleanSupplier) SfHooks::beforeLwjgl2Update;
         hooks[6] = (Runnable) SfHooks::beforeGlfwCreateWindow;
+        hooks[7] = (LongUnaryOperator) SfHooks::afterGlfwCreateWindow;
         System.getProperties().put(REGISTRY_KEY, hooks);
     }
 
