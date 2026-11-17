@@ -210,7 +210,12 @@ final class Hotswapper {
     String prepareRelaunch(Workspace.Target t, long since) {
         var sets = fast.sourceSets(t);
         if (sets == null) return "the build's class path is not read yet";
-        if (!busy.compareAndSet(false, true)) return "a hotswap is running";
+        // a save right before the restart starts a hotswap of its own: let it finish (it writes the same outputs)
+        boolean got = false;
+        for (int i = 0; i < 150 && !(got = busy.compareAndSet(false, true)); i++) {
+            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+        if (!got) return "a hotswap is still running after 15 s";
         try {
             int copied = 0;
             for (var s : sets) {
