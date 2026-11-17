@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in SulfurFrame doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Windows 11 / Ubuntu 24.04 (X11) / ...
+    validations:
+      required: true
+  - type: input
+    id: ide
+    attributes:
+      label: IDE version
+      description: Help | About, e.g. "IntelliJ IDEA 2026.3 (build IU-263.xxxx)"
+    validations:
+      required: true
+  - type: input
+    id: plugin
+    attributes:
+      label: SulfurFrame version
+      placeholder: 0.1.2
+    validations:
+      required: true
+  - type: input
+    id: project
+    attributes:
+      label: Loader and Minecraft version
+      description: As shown in the SulfurFrame tool window, e.g. "Fabric 0.16.x, Minecraft 1.21.1". Mention multi-project / Stonecutter / Architectury layouts.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: SulfurFrame log
+      description: >
+        The day's file from `~/.sulfurframe/logs` (sulfurframe-<date>.log) helps a lot. It lists swaps, reloads and
+        restarts with project names and paths; look it over and remove anything you'd rather not share.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, the game's latest.log, steps to reproduce.

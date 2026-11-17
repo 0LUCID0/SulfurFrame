@@ -85,4 +85,5 @@ then `./gradlew publishPlugin`.
 
 ## License
 
-[MIT](LICENSE). Not affiliated with Mojang or Microsoft. Minecraft is a trademark of Mojang Synergies AB.
+[MIT](LICENSE). Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.
+Minecraft is a trademark of Mojang Synergies AB.

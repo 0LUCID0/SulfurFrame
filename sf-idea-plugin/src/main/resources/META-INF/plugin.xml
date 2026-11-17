@@ -5,7 +5,8 @@
     <!-- version and idea-version are overwritten by the Gradle build (gradle.properties); kept here for build.sh -->
     <version>0.1.2</version>
     <description><![CDATA[
-      <p>Run your Minecraft mod's dev client inside the IDE.</p>
+      <p>Your mod's Minecraft client, in the IDE. Run the dev client inside IntelliJ IDEA and see your changes in the
+         running game as soon as you save.</p>
       <ul>
         <li>The game window is embedded in a tool window or an editor tab, throttled while you edit code, and its
             memory is handed back while it is hidden.</li>
@@ -20,9 +21,14 @@
          Minecraft 1.21.1. The game then starts on it with enhanced class redefinition. Without it, method body
          changes still swap in, and SulfurFrame names the classes that need a restart.</p>
       <p>Most edits never need a restart: across 1,080 commits of nine large open-source mods, 65–85% of the changes
-         could go straight into the running game, and the waiting per edit-run step dropped by 63–84%.</p>
+         could go straight into the running game, and the waiting per edit-run step dropped by 63–84% (measured on
+         one machine; <a href="https://github.com/0LUCID0/Sulfur_Frame/tree/main/sf-idea-plugin/docs/effect-study">method
+         and raw data</a>).</p>
       <p>Fabric 1.21.1 on Windows and Linux (X11) for now. It is being built alongside a much bigger mod, and more
-         loaders and Minecraft versions are on their way with it. Not affiliated with Mojang or Microsoft.</p>
+         loaders and Minecraft versions are on their way with it.</p>
+      <p><a href="https://github.com/0LUCID0/Sulfur_Frame/issues">Issues</a> ·
+         <a href="https://github.com/0LUCID0/Sulfur_Frame">Source (MIT)</a></p>
+      <p>Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.</p>
     ]]></description>
     <idea-version since-build="263"/>
     <depends>com.intellij.modules.platform</depends>
