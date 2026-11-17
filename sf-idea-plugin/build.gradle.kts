@@ -56,6 +56,11 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <p><b>0.1.2</b></p>
+            <ul>
+              <li>No deprecated or experimental IntelliJ API use: the editor tab opens through the stable navigation API.</li>
+              <li>Self-test checks the world you point it at.</li>
+            </ul>
             <p><b>0.1.1</b></p>
             <ul>
               <li>SulfurFrame keeps its own log of swaps, reloads and restarts in ~/.sulfurframe/logs (14 days, local
