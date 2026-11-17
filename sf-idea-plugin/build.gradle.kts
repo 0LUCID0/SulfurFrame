@@ -56,7 +56,14 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
-            <p>First public release.</p>
+            <p><b>0.1.1</b></p>
+            <ul>
+              <li>SulfurFrame keeps its own log of swaps, reloads and restarts in ~/.sulfurframe/logs (14 days, local
+                  only, nothing is sent), so you can look back at your sessions.</li>
+              <li>Self-test game runs are silent, and your options.txt volumes are left alone.</li>
+              <li>The description now shows how much waiting it saves, measured on real projects.</li>
+            </ul>
+            <p><b>0.1.0</b>: first public release.</p>
             <ul>
               <li>Runs a Fabric 1.21.1 dev client inside the IDE (Windows and Linux/X11), throttled while you type.</li>
               <li>Hotswap on save, including files changed outside the IDE; restart into the same world.</li>
