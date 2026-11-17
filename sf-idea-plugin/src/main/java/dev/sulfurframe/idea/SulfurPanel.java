@@ -720,6 +720,7 @@ final class SulfurPanel extends JPanel {
     void log(String s) {
         String line = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + " " + s;
         System.out.println("[SulfurFrame] " + line);
+        UsageLog.append((AutoTest.enabled() ? "autotest:" : "") + (project == null ? "-" : project.getName()), s);
         SwingUtilities.invokeLater(() -> { log.append(line + "\n"); log.setCaretPosition(log.getDocument().getLength()); });
     }
 

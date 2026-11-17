@@ -1,0 +1,23 @@
+repo                                          n    none tooling    body  struct   mixin  assets    data restart  period
+AppliedEnergistics/Applied-Energistics-2    120     12%      6%     25%     18%      0%      8%      2%     30%  2025-03-04..2026-11-17
+CaffeineMC/lithium                          120     15%     18%      8%      7%     32%      0%      0%     22%  2026-05-13..2026-11-12
+CaffeineMC/sodium                           120      1%      3%     29%     12%     10%      8%      0%     36%  2026-05-14..2026-11-14
+Creators-of-Create/Create                   120      6%     12%     37%     12%      3%      5%     12%     12%  2026-01-04..2026-11-15
+FabricMC/fabric                             120      5%     22%      8%      3%     11%      1%      1%     50%  2026-08-05..2026-11-11
+IrisShaders/Iris                            120      0%      4%     24%      7%     24%      7%      0%     34%  2025-09-11..2026-09-15
+Mojang/brigadier                            120     22%      8%     17%     40%      0%      0%      0%     14%  2017-07-25..2024-12-08
+TerraformersMC/ModMenu                      120      9%      8%     14%      3%      2%     38%      0%     24%  2025-04-15..2026-11-15
+VazkiiMods/Botania                          120     39%     10%     13%      7%      0%      8%      2%     21%  2025-03-25..2026-11-05
+vectorwing/FarmersDelight                   120      5%      3%     18%     18%      0%     34%      3%     18%  2026-03-28..2026-08-29
+
+per changed runtime file
+AppliedEnergistics/Applied-Energistics-2    2423     18%     23%      1%     16%     26%     16%
+CaffeineMC/lithium                           230     18%     20%     47%      0%      0%     16%
+CaffeineMC/sodium                            848     29%     30%     26%      6%      0%      9%
+Creators-of-Create/Create                    796     16%      5%      1%     15%     62%      2%
+FabricMC/fabric                              425     15%     20%     18%      1%      7%     39%
+IrisShaders/Iris                             777     25%     17%     43%      5%      0%     11%
+Mojang/brigadier                             333     24%     67%      0%      0%      0%     10%
+TerraformersMC/ModMenu                       708     11%     14%      4%     61%      0%     10%
+VazkiiMods/Botania                           212     48%     10%      2%     15%      9%     17%
+vectorwing/FarmersDelight                    285     16%     13%      1%     42%     13%     14%

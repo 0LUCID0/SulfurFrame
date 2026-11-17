@@ -1,0 +1,294 @@
+{
+ "AppliedEnergistics/Applied-Energistics-2": {
+  "n": 120,
+  "need": {
+   "body": 30,
+   "none": 14,
+   "restart": 36,
+   "data": 2,
+   "struct": 21,
+   "assets": 10,
+   "tooling": 7
+  },
+  "any": {
+   "body": 93,
+   "restart": 36,
+   "struct": 54,
+   "data": 9,
+   "assets": 14,
+   "tooling": 28,
+   "mixin": 9
+  },
+  "files": {
+   "body": 433,
+   "restart": 389,
+   "struct": 562,
+   "data": 627,
+   "assets": 390,
+   "mixin": 22
+  },
+  "from": "2025-03-04",
+  "to": "2026-11-17"
+ },
+ "CaffeineMC/lithium": {
+  "n": 120,
+  "need": {
+   "restart": 26,
+   "mixin": 38,
+   "none": 18,
+   "tooling": 21,
+   "body": 9,
+   "struct": 8
+  },
+  "any": {
+   "restart": 26,
+   "struct": 29,
+   "body": 38,
+   "mixin": 52,
+   "tooling": 27
+  },
+  "files": {
+   "restart": 36,
+   "struct": 45,
+   "mixin": 108,
+   "body": 41
+  },
+  "from": "2026-05-13",
+  "to": "2026-11-12"
+ },
+ "CaffeineMC/sodium": {
+  "n": 120,
+  "need": {
+   "restart": 43,
+   "assets": 10,
+   "struct": 15,
+   "body": 35,
+   "mixin": 12,
+   "tooling": 4,
+   "none": 1
+  },
+  "any": {
+   "restart": 43,
+   "struct": 45,
+   "body": 87,
+   "assets": 14,
+   "mixin": 32,
+   "tooling": 8
+  },
+  "files": {
+   "restart": 74,
+   "struct": 253,
+   "body": 249,
+   "assets": 49,
+   "mixin": 223
+  },
+  "from": "2026-05-14",
+  "to": "2026-11-14"
+ },
+ "Creators-of-Create/Create": {
+  "n": 120,
+  "need": {
+   "data": 15,
+   "body": 44,
+   "tooling": 15,
+   "none": 7,
+   "struct": 15,
+   "assets": 6,
+   "restart": 14,
+   "mixin": 4
+  },
+  "any": {
+   "body": 87,
+   "data": 15,
+   "struct": 28,
+   "tooling": 19,
+   "assets": 17,
+   "restart": 14,
+   "mixin": 4
+  },
+  "files": {
+   "struct": 37,
+   "data": 490,
+   "body": 127,
+   "assets": 120,
+   "restart": 18,
+   "mixin": 4
+  },
+  "from": "2026-01-04",
+  "to": "2026-11-15"
+ },
+ "FabricMC/fabric": {
+  "n": 120,
+  "need": {
+   "tooling": 26,
+   "struct": 4,
+   "body": 9,
+   "none": 6,
+   "mixin": 13,
+   "restart": 60,
+   "data": 1,
+   "assets": 1
+  },
+  "any": {
+   "tooling": 44,
+   "body": 58,
+   "struct": 39,
+   "mixin": 45,
+   "restart": 60,
+   "data": 4,
+   "assets": 5
+  },
+  "files": {
+   "struct": 87,
+   "body": 62,
+   "mixin": 78,
+   "restart": 164,
+   "assets": 5,
+   "data": 29
+  },
+  "from": "2026-08-05",
+  "to": "2026-11-11"
+ },
+ "IrisShaders/Iris": {
+  "n": 120,
+  "need": {
+   "body": 29,
+   "restart": 41,
+   "struct": 8,
+   "mixin": 29,
+   "assets": 8,
+   "tooling": 5
+  },
+  "any": {
+   "body": 86,
+   "restart": 41,
+   "struct": 45,
+   "mixin": 63,
+   "tooling": 45,
+   "assets": 22
+  },
+  "files": {
+   "body": 192,
+   "restart": 85,
+   "struct": 132,
+   "mixin": 333,
+   "assets": 35
+  },
+  "from": "2025-09-11",
+  "to": "2026-09-15"
+ },
+ "Mojang/brigadier": {
+  "n": 120,
+  "need": {
+   "none": 26,
+   "struct": 48,
+   "body": 20,
+   "tooling": 9,
+   "restart": 17
+  },
+  "any": {
+   "body": 81,
+   "struct": 64,
+   "tooling": 34,
+   "restart": 17
+  },
+  "files": {
+   "body": 79,
+   "struct": 222,
+   "restart": 32
+  },
+  "from": "2017-07-25",
+  "to": "2024-12-08"
+ },
+ "TerraformersMC/ModMenu": {
+  "n": 120,
+  "need": {
+   "none": 11,
+   "restart": 29,
+   "tooling": 10,
+   "struct": 4,
+   "assets": 46,
+   "body": 17,
+   "mixin": 3
+  },
+  "any": {
+   "restart": 29,
+   "body": 50,
+   "tooling": 31,
+   "struct": 15,
+   "mixin": 12,
+   "assets": 51
+  },
+  "files": {
+   "restart": 70,
+   "struct": 100,
+   "body": 81,
+   "mixin": 25,
+   "assets": 432
+  },
+  "from": "2025-04-15",
+  "to": "2026-11-15"
+ },
+ "VazkiiMods/Botania": {
+  "n": 120,
+  "need": {
+   "none": 47,
+   "body": 16,
+   "data": 2,
+   "tooling": 12,
+   "struct": 8,
+   "restart": 25,
+   "assets": 10
+  },
+  "any": {
+   "body": 39,
+   "data": 7,
+   "tooling": 14,
+   "struct": 16,
+   "restart": 25,
+   "assets": 17,
+   "mixin": 4
+  },
+  "files": {
+   "body": 102,
+   "data": 19,
+   "struct": 21,
+   "restart": 35,
+   "assets": 31,
+   "mixin": 4
+  },
+  "from": "2025-03-25",
+  "to": "2026-11-05"
+ },
+ "vectorwing/FarmersDelight": {
+  "n": 120,
+  "need": {
+   "tooling": 4,
+   "restart": 22,
+   "struct": 22,
+   "body": 21,
+   "none": 6,
+   "assets": 41,
+   "data": 4
+  },
+  "any": {
+   "tooling": 7,
+   "restart": 22,
+   "data": 10,
+   "struct": 38,
+   "assets": 52,
+   "body": 58,
+   "mixin": 1
+  },
+  "files": {
+   "assets": 120,
+   "data": 37,
+   "restart": 41,
+   "body": 47,
+   "struct": 37,
+   "mixin": 3
+  },
+  "from": "2026-03-28",
+  "to": "2026-08-29"
+ }
+}

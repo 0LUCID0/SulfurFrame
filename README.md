@@ -9,8 +9,28 @@ tool window (or an editor tab), throttled while you type, and changed code is ho
 - World snapshots, throwaway test worlds, worlds shared by every project of a Minecraft version
 - F11 fullscreen leaves the IDE and comes back embedded
 
-**Status:** 0.1.0. Fabric 1.21.1 dev clients on Windows and Linux (X11). Other loaders and versions come later.
-Requires IntelliJ IDEA 2026.3 or newer.
+**Status:** 0.1.0. Fabric 1.21.1 dev clients on Windows and Linux (X11), IntelliJ IDEA 2026.3 or newer.
+It grew up next to a much bigger mod that needs every loader and many Minecraft versions, so Forge, NeoForge and the
+other versions will follow as that one gets there.
+
+## What it saves
+
+Most edits never need the game to restart. To see how many, 1,080 recent commits of nine large open-source mods
+(Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farmer's Delight, Mod Menu) were sorted by
+what a running client needs to pick each change up. Then the time each path takes was measured on one machine, on a
+small test mod and on a real multi-project mod (9 Gradle projects, 65 mods):
+
+| Waiting per edit-run step | Small mod | Multi-project mod |
+|---|---|---|
+| Restart every time (`runClient` straight into the world) | 44 s | 83 s |
+| Stock HotSwap (Gradle compile, restart for anything structural) | 26–30 s | 50–57 s |
+| **SulfurFrame** | **8–17 s** | **14–30 s** |
+
+That is 63–84% less waiting than restarting and 44–73% less than stock HotSwap. The range runs from counting a commit
+as one step (its slowest change decides) to counting each changed file as one step. 65–85% of the steps apply live:
+method bodies and new members, mixins, and assets or data. What still restarts (registrations, static initializers,
+mod metadata) takes as long as before, so the gain grows with how slow your project's Gradle is. Method, scripts and
+raw numbers: [`sf-idea-plugin/docs/effect-study`](sf-idea-plugin/docs/effect-study) and the plugin README.
 
 ## Install
 
@@ -19,6 +39,9 @@ Requires IntelliJ IDEA 2026.3 or newer.
   [Releases](https://github.com/0LUCID0/Sulfur_Frame/releases), then *Settings → Plugins → ⚙ → Install Plugin from Disk…*.
 
 Open a Fabric mod project, then use the **SulfurFrame** tool window's *Run client*.
+
+SulfurFrame keeps its own log of what it did (swaps, reloads, restarts) in `~/.sulfurframe/logs` for 14 days, so you
+can look back at your sessions. It stays on your machine; nothing is sent anywhere.
 
 ## Build
 

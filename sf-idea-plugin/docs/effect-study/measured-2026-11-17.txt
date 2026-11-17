@@ -1,0 +1,52 @@
+# measured 2026-11-17, Windows 11, one machine (C: nearly full: 2.4 GB free), IDE closed, Gradle daemons warm after run 1
+
+## test copy (lucid-study-mod, Fabric 1.21.1, 56 mods): measure-baseline.sh <copy> SFWorld 3
+== plain: runClient -> joined 'SFWorld'
+plain run 1: 49.4 s
+plain run 2: 41.9 s
+plain run 3: 41.8 s
+== hotswap (stock): gradlew classes after a body edit
+classes run 1: 10.9 s
+classes run 2: 7.0 s
+classes run 3: 7.5 s
+== assets (stock): gradlew processResources after a lang edit
+processResources run 1: 7.1 s
+processResources run 2: 6.5 s
+processResources run 3: 6.9 s
+done
+
+
+## BuildPali (9 Gradle projects, 65 mods): measure-buildpali.sh ... '새로운 세계' 3
+/c/Users/kjm28/아무거나/Workspace/projects/buildpali/core/mod-fabric-1_21_1/src/main/java/dev/buildpali/core/platform/fabric/v1_21_1
+/c/Users/kjm28/아무거나/Workspace/projects/buildpali/gui/mod-fabric-1_21_1/src/main/resources/assets/buildpali
+== gradle configuration: help
+help: 30.7 s
+== plain: :core:mod-fabric-1_21_1:runClient -> logged in to '새로운 세계'
+plain run 1: 85.1 s
+  mods: Loading 65 mods:
+plain run 2: 82.1 s
+  mods: Loading 65 mods:
+plain run 3: 80.2 s
+  mods: Loading 65 mods:
+== hotswap (stock): :core:mod-fabric-1_21_1:classes after a body edit
+classes run 1: 19.7 s
+classes run 2: 19.8 s
+classes run 3: 19.8 s
+== assets (stock): :gui:mod-fabric-1_21_1:processResources after a resource edit
+processResources run 1: 18.8 s
+processResources run 2: 18.5 s
+processResources run 3: 18.5 s
+done (temporary files removed on exit)
+
+
+## SulfurFrame (test copy, release zip in a sandbox IDE, autotest 2026-11-17)
+PASS Run client -> game embedded  [after 73 s, game pid 34260, parent 0x160ff4, canvas 0x160ff4]
+PASS hotswap: method body change applied  [result [redefined 1, not loaded 0, ms 1879], 2568 ms incl. compile (javac in the IDE)]
+PASS hotswap compiled with javac, not Gradle  [javac in the IDE, 2568 ms]
+PASS hotswap on save (VFS change -> swap)  [game log shows v3]
+PASS hotswap on an outside edit (file watcher, no IDE refresh)  [game log shows v3x]
+PASS hotswap (JBR): added field + method applied and running  [[redefined 1, not loaded 0, ms 343]]
+PASS hotswap (JBR): removed field + method applied  [[redefined 1, not loaded 0, ms 355]]
+PASS hotswap compiled in the IDE (warm), whole swap fast  [javac in the IDE, 979 ms]
+PASS restart -> new game embedded  [old pid 34260 (gone true), new pid 11884, 52 s]
+PASS restart -> back in the same world  [world 'SFWorld']

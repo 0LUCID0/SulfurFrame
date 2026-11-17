@@ -45,6 +45,74 @@
 - 0.1.0 확인(2026-11-17, IntelliJ 2026.3): Plugin Verifier "Compatible"(폐기 예정 API 2곳), self-test 6/6 + 5/5.
 - 아이콘은 `docs/logo/gen-icon.py`로 만듭니다(라이트/다크 테마 모두 WCAG 1.4.11 3:1 이상).
 
+## 기대 효과 (측정, 2026-11-17)
+스크립트와 원자료는 `docs/effect-study/`에 있습니다(`fetch.py` → `classify.py` → `model.py`, `sensitivity.py`, 측정 스크립트 2개, `measured-2026-11-17.txt`).
+
+**1. 변경이 실행 중인 게임에 어떻게 반영되는지 (대형 모드 9개, 커밋 1,080개)**
+Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farmer's Delight, Mod Menu의 최근 커밋 120개씩(머지 제외)을 GitHub API로 받아
+변경을 나눴습니다. Mojang 공식 GitHub에는 게임 코드가 없어서 라이브러리 brigadier는 참고로만 돌리고 합계에서 뺐습니다. 다른 저장소의 diff 원문은 저장소에 두지 않고 집계(`mix.json`)만 둡니다.
+- 바로 반영: 메서드 본문, 멤버 추가·삭제(JBR), Mixin, `assets/`(리소스 리로드), `data/`(`/reload`)
+- 재시작: 등록 코드, static 초기화, `fabric.mod.json`/`mods.toml`, 액세스 와이드너, `*mixins.json`, 상속 구조 변경
+- 빌드 파일만 바뀐 커밋(버전 올림 등)은 개발 루프가 아니라서 뺐고, 코드와 함께 바뀐 빌드 파일은 재시작으로 치지 않았습니다.
+- 분류는 정규식입니다. 표본 12건을 직접 보고, 메서드 안 지역 변수 선언까지 "구조 변경"으로 잡던 것을 고쳤습니다.
+
+| 집계 | 본문 | 구조 | Mixin | assets | data | 재시작 |
+|---|---|---|---|---|---|---|
+| 커밋 단위 (가장 느린 변경이 커밋 전체를 결정) | 24% | 12% | 12% | 15% | 3% | 35% |
+| 파일 단위 (파일 하나 = 한 번의 수정) | 22% | 17% | 16% | 18% | 13% | 15% |
+
+커밋 사이의 기록되지 않은 수정은 알 수 없습니다. 그래서 이 두 집계를 범위의 양 끝으로 둡니다. 값 조정이나 로그 추가 같은 중간 수정은 대부분 본문 변경이라 실제는 파일 단위 쪽에 가까울 것으로 보지만, 검증할 수는 없습니다.
+그 빈칸은 실사용 기록(아래 4)으로 채웁니다.
+
+**2. 각 경로에 걸리는 시간 (같은 PC, 같은 날)**
+
+| 경로 | 테스트 사본 (Gradle 프로젝트 1개, 모드 56) | BuildPali (Gradle 프로젝트 9개, 모드 65) |
+|---|---|---|
+| Gradle 구성만 (`help`) | — | 30.7초 |
+| 재시작: `runClient --quickPlaySingleplayer` → 월드 진입 | 49.4 / 41.9 / 41.8초 | 85.1 / 82.1 / 80.2초 |
+| 기본 HotSwap: 본문 수정 후 `gradlew classes` | 10.9 / 7.0 / 7.5초 | 19.7 / 19.8 / 19.8초 |
+| 리소스: `gradlew processResources` | 7.1 / 6.5 / 6.9초 | 18.8 / 18.5 / 18.5초 |
+| SulfurFrame 교체 (컴파일 포함, Gradle 안 부름) | 0.5~1.3초 | (실사용 기록으로 확인 예정) |
+| SulfurFrame "같은 월드로 재시작" | 38~52초 (일반 재시작과 같은 수준) | 일반 재시작과 같게 계산 |
+
+BuildPali의 기존 파일은 건드리지 않았습니다. 임시 클래스와 임시 리소스를 하나씩 추가해 고친 뒤 지우고 다시 빌드했습니다.
+임시 클래스는 아무도 의존하지 않는 클래스라 Gradle 쪽에 가장 유리한 경우입니다. 측정 중 게임은 무음으로 돌렸습니다.
+
+**3. 결과: 수정-실행 1회당 기다리는 시간**
+
+| | 테스트 사본 | BuildPali |
+|---|---|---|
+| 매번 재시작 | 44.4초 | 82.5초 |
+| 매번 재시작 + 종료·메뉴 클릭(가정 +13초) | 57.4초 | 95.5초 |
+| 기본 HotSwap | 25.6~29.6초 | 49.9~56.8초 |
+| **SulfurFrame** | **7.9~16.5초** | **13.6~29.8초** |
+| 재시작 대비 절감 | 63~82% | 64~84% |
+| 기본 HotSwap 대비 절감 | 44~69% | 48~73% |
+
+- 하루 60회 기준(가정): BuildPali에서 재시작만 하면 약 82분, 기본 HotSwap은 50~57분, SulfurFrame은 14~30분 기다립니다.
+- 불리한 쪽 끝(`sensitivity.py`)에서도 절감은 남습니다. 가장 빠른 재시작, 느린 리로드(5초), 첫 교체(2.5초)를 쓰고 Mixin을 재시작으로 쳐도 재시작 대비 40~63%, 기본 HotSwap 대비 11~40%입니다.
+- 재시작이 필요한 변경은 SulfurFrame으로도 똑같이 오래 걸립니다. 효과는 바로 반영되는 변경에서만 나옵니다. 그래서 Gradle이 느린 프로젝트일수록 효과가 커집니다.
+
+**시간에 영향을 주는 요소**
+- **Gradle 구성 시간:** 기본 경로는 Gradle을 부를 때마다 이 비용을 냅니다. BuildPali에서는 30초입니다. SulfurFrame의 교체와 리소스 반영은 Gradle을 부르지 않습니다.
+- **모드 수와 월드:** 게임 시작과 월드 진입 시간을 좌우합니다(56개 → 65개, 작은 평지 월드 → 실제 작업 월드).
+- **데몬 상태:** 첫 실행은 데몬이 데워지느라 느립니다(테스트 사본 49초 → 42초).
+- **고친 위치:** 다른 클래스가 많이 쓰는 클래스의 시그니처를 바꾸면 Gradle은 의존하는 클래스까지 다시 컴파일합니다. 위 측정은 Gradle에 가장 유리한 경우입니다.
+- **어노테이션 프로세서와 Kotlin:** 컴파일 시간이 늘어납니다(위 "어노테이션 프로세서와 Kotlin" 참고).
+- **리소스 양:** 리로드 시간은 리소스팩 크기에 따라 달라지고, SulfurFrame을 쓰든 안 쓰든 똑같이 듭니다.
+- **PC 상태:** 측정 당시 C: 드라이브 남은 공간은 2.4GB였고, IDE는 꺼져 있었습니다. 백신 검사와 다른 작업 부하도 영향을 줍니다.
+
+**한계**
+- SulfurFrame은 지금 Fabric 1.21.1만 지원합니다. Create, AE2, Farmer's Delight는 NeoForge 모드라 그 행은 지원이 넓어졌을 때의 효과입니다.
+- NeoForge/Forge에서 Mixin 핫스왑은 아직 시험하지 않았습니다.
+- datagen 출력은 한 번에 많은 파일을 바꿔서 파일 단위 data 비율(Create 62%)이 부풀려져 있습니다.
+- 측정은 PC 한 대에서 한 것입니다.
+
+**4. 실사용 기록 (`UsageLog`, `usage.py`)**
+패널 로그를 `~/.sulfurframe/logs/sulfurframe-<날짜>.log`에도 날짜·시각·프로젝트와 함께 남깁니다(14일 보관, 내 PC에만 쓰고 어디로도 보내지 않음, 자가 테스트 줄은 `autotest:` 표시).
+`idea.log`는 다른 플러그인 경고로 몇 분 만에 넘어가 쓸 수 없었습니다. `python docs/effect-study/usage.py`는 실제로 있었던 교체, 리소스 반영, 재시작의 수와 시간을 셉니다.
+커밋되지 않은 수정까지 포함되므로, 위 1의 범위가 실제로 어디쯤인지 이 기록으로 확인합니다.
+
 ## 빠른 빌드와 테스트 (Gradle 없이, 설치된 IDE 사용)
 ```bash
 ./sf-idea-plugin/build.sh          # → sf-idea-plugin/build/SulfurFrame (플러그인 폴더)
@@ -52,6 +120,7 @@
 - 설치된 IntelliJ IDEA 2026.3+(JBR 25, FFM 사용 가능)의 `lib/*.jar`에 대고 컴파일합니다. 에이전트는 `poc/agent/sf-agent.jar`를 넣습니다.
 - **샌드박스 자동 테스트**: 별도의 config/system/plugins 폴더로 IDE를 띄워서 사용자 설정을 건드리지 않습니다.
   - Gradle과 Maven 플러그인을 끄고, 동의 창은 `-Djb.consents.confirmation.enabled=false` 등으로 건너뜁니다.
+  - 자가 테스트의 게임은 소리가 나지 않습니다(`ALSOFT_DRIVERS=null`, OpenAL 무음 출력). `options.txt`의 음량은 건드리지 않습니다. 옵션 동기화가 `soundCategory_*`를 공유해서, 그걸 바꾸면 평소 게임까지 음소거되기 때문입니다. 들으려면 `-Dsulfurframe.mute=false`(McFetch는 `SF_SOUND=1`).
   - `-Dsulfurframe.autotest.pid=<실행 중인 마인크래프트 PID>`를 주면 툴윈도우가 자동으로 열립니다. 그다음 붙이기, 플로팅, 재도킹, 숨김, 보이기를 차례로 검사해서 `%TEMP%/sulfurframe-autotest.txt`와 스크린샷으로 남깁니다.
 
 샌드박스는 `./sf-idea-plugin/sandbox.sh <프로젝트 폴더> [-Dsulfurframe.autotest.pid=<PID>] …`로 띄웁니다. IDE 빌드마다

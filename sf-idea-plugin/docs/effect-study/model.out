@@ -1,0 +1,70 @@
+#### test copy
+repo                                       basis   plain  hotswap  sulfur  vs plain  vs hotswap  live
+AppliedEnergistics/Applied-Energistics-2   commit   44.4     29.2    17.0       62%         42%   64%
+AppliedEnergistics/Applied-Energistics-2   file     44.4     23.0     8.7       80%         62%   84%
+CaffeineMC/lithium                         commit   44.4     40.4    15.0       66%         63%   68%
+CaffeineMC/lithium                         file     44.4     38.0     7.9       82%         79%   84%
+CaffeineMC/sodium                          commit   44.4     30.4    17.4       61%         43%   63%
+CaffeineMC/sodium                          file     44.4     31.8     5.0       89%         84%   91%
+Creators-of-Create/Create                  commit   44.4     20.7     7.6       83%         63%   86%
+Creators-of-Create/Create                  file     44.4     11.4     3.1       93%         72%   98%
+FabricMC/fabric                            commit   44.4     39.9    30.6       31%         23%   32%
+FabricMC/fabric                            file     44.4     36.3    17.9       60%         51%   61%
+IrisShaders/Iris                           commit   44.4     32.9    16.6       63%         50%   64%
+IrisShaders/Iris                           file     44.4     33.9     5.9       87%         83%   89%
+Mojang/brigadier                           commit   44.4     36.0     9.8       78%         73%   80%
+Mojang/brigadier                           file     44.4     35.9     5.4       88%         85%   90%
+TerraformersMC/ModMenu                     commit   44.4     21.7    14.4       68%         34%   71%
+TerraformersMC/ModMenu                     file     44.4     18.6     6.2       86%         66%   90%
+VazkiiMods/Botania                         commit   44.4     28.0    19.1       57%         32%   59%
+VazkiiMods/Botania                         file     44.4     18.7     8.5       81%         54%   83%
+vectorwing/FarmersDelight                  commit   44.4     23.0    10.4       77%         55%   80%
+vectorwing/FarmersDelight                  file     44.4     18.9     8.1       82%         57%   86%
+ALL 9 mods (commit) mix body=24% struct=12% mixin=12% assets=15% data=3% restart=35%
+   s/step plain 44.4  plain+manual 57.4  hotswap 29.6  sulfur 16.5
+   sulfur saves 27.9 s (63%) vs plain, 40.9 s (71%) vs plain+manual, 13.1 s (44%) vs stock HotSwap
+    20 steps/day: plain 15 min, plain+manual 19 min, hotswap 10 min, sulfur 5 min
+    60 steps/day: plain 44 min, plain+manual 57 min, hotswap 30 min, sulfur 16 min
+   150 steps/day: plain 111 min, plain+manual 144 min, hotswap 74 min, sulfur 41 min
+ALL 9 mods (file) mix body=22% struct=17% mixin=16% assets=18% data=13% restart=15%
+   s/step plain 44.4  plain+manual 57.4  hotswap 25.6  sulfur 7.9
+   sulfur saves 36.5 s (82%) vs plain, 49.5 s (86%) vs plain+manual, 17.7 s (69%) vs stock HotSwap
+    20 steps/day: plain 15 min, plain+manual 19 min, hotswap 9 min, sulfur 3 min
+    60 steps/day: plain 44 min, plain+manual 57 min, hotswap 26 min, sulfur 8 min
+   150 steps/day: plain 111 min, plain+manual 144 min, hotswap 64 min, sulfur 20 min
+
+#### BuildPali
+repo                                       basis   plain  hotswap  sulfur  vs plain  vs hotswap  live
+AppliedEnergistics/Applied-Energistics-2   commit   82.5     56.1    30.9       63%         45%   64%
+AppliedEnergistics/Applied-Energistics-2   file     82.5     45.4    14.8       82%         67%   84%
+CaffeineMC/lithium                         commit   82.5     75.6    27.2       67%         64%   68%
+CaffeineMC/lithium                         file     82.5     71.4    13.8       83%         81%   84%
+CaffeineMC/sodium                          commit   82.5     58.2    31.6       62%         46%   63%
+CaffeineMC/sodium                          file     82.5     60.7     8.3       90%         86%   91%
+Creators-of-Create/Create                  commit   82.5     41.3    13.0       84%         69%   86%
+Creators-of-Create/Create                  file     82.5     25.1     4.0       95%         84%   98%
+FabricMC/fabric                            commit   82.5     74.7    56.6       31%         24%   32%
+FabricMC/fabric                            file     82.5     68.5    32.6       60%         52%   61%
+IrisShaders/Iris                           commit   82.5     62.5    30.2       63%         52%   64%
+IrisShaders/Iris                           file     82.5     64.3    10.0       88%         84%   89%
+Mojang/brigadier                           commit   82.5     67.9    17.5       79%         74%   80%
+Mojang/brigadier                           file     82.5     67.7     9.0       89%         87%   90%
+TerraformersMC/ModMenu                     commit   82.5     43.1    25.6       69%         41%   71%
+TerraformersMC/ModMenu                     file     82.5     37.6    10.0       88%         73%   90%
+VazkiiMods/Botania                         commit   82.5     54.0    34.7       58%         36%   59%
+VazkiiMods/Botania                         file     82.5     38.0    14.8       82%         61%   83%
+vectorwing/FarmersDelight                  commit   82.5     45.3    18.0       78%         60%   80%
+vectorwing/FarmersDelight                  file     82.5     38.1    13.6       84%         64%   86%
+ALL 9 mods (commit) mix body=24% struct=12% mixin=12% assets=15% data=3% restart=35%
+   s/step plain 82.5  plain+manual 95.5  hotswap 56.8  sulfur 29.8
+   sulfur saves 52.7 s (64%) vs plain, 65.7 s (69%) vs plain+manual, 27.0 s (48%) vs stock HotSwap
+    20 steps/day: plain 28 min, plain+manual 32 min, hotswap 19 min, sulfur 10 min
+    60 steps/day: plain 82 min, plain+manual 96 min, hotswap 57 min, sulfur 30 min
+   150 steps/day: plain 206 min, plain+manual 239 min, hotswap 142 min, sulfur 74 min
+ALL 9 mods (file) mix body=22% struct=17% mixin=16% assets=18% data=13% restart=15%
+   s/step plain 82.5  plain+manual 95.5  hotswap 49.9  sulfur 13.6
+   sulfur saves 68.9 s (84%) vs plain, 81.9 s (86%) vs plain+manual, 36.4 s (73%) vs stock HotSwap
+    20 steps/day: plain 28 min, plain+manual 32 min, hotswap 17 min, sulfur 5 min
+    60 steps/day: plain 83 min, plain+manual 96 min, hotswap 50 min, sulfur 14 min
+   150 steps/day: plain 206 min, plain+manual 239 min, hotswap 125 min, sulfur 34 min
+
