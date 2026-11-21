@@ -5,6 +5,9 @@ tool window (or an editor tab), throttled while you type, and changed code is ho
 
 ![The same edit with Gradle compile + HotSwap (left, 7.7 s until the game shows it) and with SulfurFrame (right, 1.6 s)](sf-idea-plugin/docs/media/method-body.gif)
 
+▶ [The one-minute comparison on YouTube](https://youtu.be/G87LOVIu5as): a method body, a Mixin, a texture and a new
+item, each edited both ways on the same PC.
+
 - Embedded game window, throttled to a low frame rate while you edit and parked while hidden
 - Starts in the background: the game does not take the focus or the mouse from the app you are in
 - Hotswap on save (also for files changed outside the IDE), "Restart into the Same World"
