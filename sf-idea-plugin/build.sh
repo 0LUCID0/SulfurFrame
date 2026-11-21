@@ -6,7 +6,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 IDEA_HOME="${IDEA_HOME:-$LOCALAPPDATA/Programs/IntelliJ IDEA Community Edition}"
-JDK="${JDK:-$HOME/.jdks/temurin-25.0.4.1/bin}"   # any JDK 25 (JBR has no javac/jar)
+# any JDK 25 with javac/jar (JBR has none): the newest installed one by version number (an update changes the folder name)
+newest_jdk25() {
+  for d in "$HOME/.jdks/temurin-25."* "/c/Program Files/Eclipse Adoptium/jdk-25."*; do
+    [ -x "$d/bin/javac" ] || [ -x "$d/bin/javac.exe" ] || continue
+    printf '%s\t%s\n' "$(basename "$d" | grep -oE '[0-9]+(\.[0-9]+)*' | head -1)" "$d/bin"
+  done | sort -V -k1,1 | tail -1 | cut -f2
+}
+JDK="${JDK:-$(newest_jdk25)}"
+[ -n "$JDK" ] || { echo "no JDK 25 found; set JDK=<jdk>/bin" >&2; exit 1; }
 AGENT="../poc/agent/sf-agent.jar"
 [ -f "$AGENT" ] || (cd ../poc/agent && bash build.sh)
 rm -rf build && mkdir -p build/classes build/SulfurFrame/lib

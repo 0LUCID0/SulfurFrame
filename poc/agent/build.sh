@@ -5,7 +5,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 # newest installed JDK 25 (an update changes the folder name)
-JDK="${JDK:-$( (ls -d "$HOME/.jdks/temurin-25."*/bin "/c/Program Files/Eclipse Adoptium/jdk-25."*/bin 2>/dev/null || true) | sort -V | tail -1)}"
+# (by version number: sorting whole paths compared ~/.jdks against Program Files instead of the versions)
+newest_jdk25() {
+  for d in "$HOME/.jdks/temurin-25."* "/c/Program Files/Eclipse Adoptium/jdk-25."*; do
+    [ -x "$d/bin/javac" ] || [ -x "$d/bin/javac.exe" ] || continue
+    printf '%s\t%s\n' "$(basename "$d" | grep -oE '[0-9]+(\.[0-9]+)*' | head -1)" "$d/bin"
+  done | sort -V -k1,1 | tail -1 | cut -f2
+}
+JDK="${JDK:-$(newest_jdk25)}"
 [ -x "$JDK/javac" ] || [ -x "$JDK/javac.exe" ] || { echo "no JDK 25 found; set JDK=<jdk>/bin" >&2; exit 1; }
 # ASM: one pinned release (keep it the latest: https://repo1.maven.org/maven2/org/ow2/asm/asm/), fetched once from
 # Maven Central into ~/.sulfurframe/lib. It used to be "whatever is newest in the Gradle cache", which changed under us.
