@@ -1,198 +1,259 @@
-# SulfurFrame IntelliJ 플러그인 (PoC)
+🌐 **English** · [한국어](README.ko.md)
 
-마인크래프트 모드 프로젝트를 열면, 빌드 파일에서 **마인크래프트 버전, 모드 로더, 로더 버전, 필요한 Java**를 읽어 툴윈도우에 보여 줍니다.
-그리고 게임 창을 툴윈도우 안에 넣습니다.
+> Translated from the Korean original ([README.ko.md](README.ko.md)), which is the source of truth: if the two differ, the Korean one is right. Last synced: 2026-11-21.
+
+# SulfurFrame IntelliJ plugin (PoC)
+
+When you open a Minecraft mod project, it reads **the Minecraft version, mod loader, loader version and required Java**
+from the build files and shows them in a tool window. Then it puts the game window inside that tool window.
 
 ![in-ide](docs/marketplace/01-game-in-tool-window.png)
 
-## 기능
-- **버전 자동 결정** (`profile/ProjectProfile.java`): 아무것도 실행하지 않고(Gradle 동기화 없이) 파일만 읽습니다.
-  - 빌드 스크립트의 플러그인 id로 로더를 판별: `fabric-loom` / `net.fabricmc.fabric-loom` / `dev.architectury.loom`,
-    `net.neoforged.moddev` / `net.neoforged.gradle`, `net.minecraftforge.gradle`, ForgeGradle 2의 `net.minecraftforge.gradle.forge`, `org.quiltmc.loom`
-  - 버전을 읽는 곳(우선순위 순):
-    1. `gradle.properties` (프로젝트에서 settings 루트까지)
-    2. 빌드 스크립트의 좌표: `com.mojang:minecraft:X`, `fabric-loader`, `net.minecraftforge:forge:MC-FORGE`, `neoForge { version }`, FG2의 `minecraft { version = "1.12.2-..." }`
+## Features
+- **Version detection** (`profile/ProjectProfile.java`): reads files only, without running anything (no Gradle sync).
+  - Detects the loader from the build script's plugin id: `fabric-loom` / `net.fabricmc.fabric-loom` /
+    `dev.architectury.loom`, `net.neoforged.moddev` / `net.neoforged.gradle`, `net.minecraftforge.gradle`, ForgeGradle
+    2's `net.minecraftforge.gradle.forge`, `org.quiltmc.loom`
+  - Where versions are read from (in order of priority):
+    1. `gradle.properties` (from the project up to the settings root)
+    2. coordinates in the build script: `com.mojang:minecraft:X`, `fabric-loader`, `net.minecraftforge:forge:MC-FORGE`,
+       `neoForge { version }`, FG2's `minecraft { version = "1.12.2-..." }`
     3. `gradle/libs.versions.toml`
-  - 주석과 `${...}` 참조를 처리합니다. NeoForge 버전만 있으면 MC 버전을 거꾸로 계산합니다(21.1.x → 1.21.1).
-    필요한 Java는 Mojang `javaVersion` 기준입니다(≤1.16: 8, 1.17: 16, ~1.20.4: 17, ~1.21.x: 21, 26.x: 25).
-  - 근거(evidence)를 로그로 보여 줍니다.
-- **Run client**: 프로젝트의 `gradlew runClient`를 실행하고(Loom, ModDevGradle, ForgeGradle 모두 같은 이름) 새로 뜬 마인크래프트 창을 찾아 자동으로 임베드합니다.
-- **임베딩** (`embed/GameEmbedder.java`): `poc/embed`에서 검증한 규칙을 모두 옮겼습니다.
-  - 비동기 창 조작
-  - 모드 없는 click-to-focus, `WM_MOUSEACTIVATE` 차단, 에디터 클릭 시 포커스 회수
-  - 멈춤 와치독, 임베드 직후 크기 nudge
-- **javaagent 내장**: 플러그인 안의 `sf-agent.jar`를 ASCII 경로에 풀어서 Attach API로 붙입니다. 코딩 중 FPS 제한과 SDL3 포커스 보정을 맡습니다.
-- **스로틀러**: 툴윈도우가 숨겨지면 게임을 최소화하고, 5초 뒤 힙을 줄이고 워킹셋을 트림합니다. 다시 보이면 원래대로 돌립니다.
+  - Handles comments and `${...}` references. With only a NeoForge version, the MC version is worked out backwards
+    (21.1.x → 1.21.1). The required Java follows Mojang's `javaVersion` (≤1.16: 8, 1.17: 16, up to 1.20.4: 17, up to
+    1.21.x: 21, 26.x: 25).
+  - Shows the evidence in the log.
+- **Run client**: runs the project's `gradlew runClient` (the same name in Loom, ModDevGradle and ForgeGradle), finds the
+  new Minecraft window and embeds it automatically.
+- **Embedding** (`embed/GameEmbedder.java`): carries over every rule proven in `poc/embed`.
+  - asynchronous window operations
+  - click-to-focus without a mod, blocking `WM_MOUSEACTIVATE`, taking the focus back when the editor is clicked
+  - freeze watchdog, a size nudge right after embedding
+- **Built-in javaagent**: unpacks the plugin's `sf-agent.jar` to an ASCII path and attaches it with the Attach API. It
+  handles the FPS cap while you code and the SDL3 focus fix.
+- **Throttler**: when the tool window is hidden, the game is minimized, and 5 s later its heap is shrunk and its working
+  set trimmed. When it is visible again, everything is set back.
 
-## 실제 IDE에서만 생기는 문제와 해결
-- **캔버스 HWND 찾기**: 화면 좌표로 창을 찾는 방식(WindowFromPoint)은 IntelliJ에서 실패했습니다.
-  IntelliJ는 `--add-opens java.desktop/sun.awt.windows=ALL-UNNAMED`로 실행되므로 `AWTAccessor`로 peer를 꺼내 `WComponentPeer.getHWnd()`로 읽습니다.
-- **툴윈도우를 숨기거나 옮기거나 플로팅하면 IntelliJ가 컴포넌트를 떼어 내고**, 캔버스의 네이티브 창이 파괴됩니다. 자식인 게임 창도 함께 파괴됩니다.
-  → `removeNotify` 직전에 게임을 **데스크톱 기준 최상위 창으로 되돌리고 최소화한 뒤 감추고**(park), `addNotify` 뒤 새 캔버스에 다시 붙입니다.
-  - park 위치를 IDE 프레임으로 했을 때, 플로팅 창을 다시 도킹하면 그 프레임이 사라지면서 게임 창이 함께 없어졌습니다.
-  - 그냥 감추기만(`SW_HIDE`) 하면 마인크래프트가 최소화로 보지 않아서 FPS가 그대로였습니다. 그래서 최소화한 뒤 감추고, 이 상태를 숨김으로 처리합니다.
+## Problems that only show up in the real IDE, and fixes
+- **Finding the canvas HWND**: finding the window by screen position (WindowFromPoint) failed in IntelliJ. IntelliJ runs
+  with `--add-opens java.desktop/sun.awt.windows=ALL-UNNAMED`, so the peer is taken out with `AWTAccessor` and read with
+  `WComponentPeer.getHWnd()`.
+- **When a tool window is hidden, moved or floated, IntelliJ detaches the component**, and the canvas's native window
+  is destroyed. The game window, its child, is destroyed with it.
+  → Right before `removeNotify`, the game is **made a top-level window of the desktop again, minimized and hidden**
+  (park), and after `addNotify` it is attached to the new canvas.
+  - With the IDE frame as the park spot, re-docking a floating window removed that frame and the game window with it.
+  - Hiding alone (`SW_HIDE`) is not seen as minimized by Minecraft, so its FPS stayed the same. So it is minimized and
+    then hidden, and that state counts as hidden.
 
-## 릴리스 빌드와 배포 (Gradle)
-저장소 루트의 Gradle 빌드(IntelliJ Platform Gradle Plugin 2.20.1, Gradle 9.9.1)가 배포용입니다.
+## Release build and publishing (Gradle)
+The Gradle build at the repository root (IntelliJ Platform Gradle Plugin 2.20.1, Gradle 9.9.1) is the one for releases.
 ```bash
-./gradlew buildPlugin                # → sf-idea-plugin/build/distributions/SulfurFrame-<버전>.zip
+./gradlew buildPlugin                # → sf-idea-plugin/build/distributions/SulfurFrame-<version>.zip
 ./gradlew check verifyPlugin         # fixture self-test + JetBrains Plugin Verifier
-./gradlew publishPlugin              # PUBLISH_TOKEN(서명은 CERTIFICATE_CHAIN, PRIVATE_KEY, PRIVATE_KEY_PASSWORD)
+./gradlew publishPlugin              # PUBLISH_TOKEN (signing: CERTIFICATE_CHAIN, PRIVATE_KEY, PRIVATE_KEY_PASSWORD)
 ```
-- 버전과 대상 IDE는 `gradle.properties`(`pluginVersion`, `platformVersion`, `sinceBuild`)에 있습니다. `-PideaHome=<설치 폴더>`나
-  `IDEA_HOME`을 주면 설치된 IDE에 대고 빌드해서 IDE를 내려받지 않습니다.
-- `:agent`(`poc/agent`)가 `sf-agent.jar`(안에 `sf-impl.jar` + ASM)를 만들고, 플러그인 jar에 `/sf-agent.jar`로 들어갑니다.
-- 0.1.0 확인(2026-11-17, IntelliJ 2026.3): Plugin Verifier "Compatible"(폐기 예정 API 2곳), self-test 6/6 + 5/5.
-- 0.2.0 확인(2026-11-21, IntelliJ 2026.3): Plugin Verifier "Compatible"(경고 없음), `check`의 픽스처 테스트 전부 통과, 다중 프로젝트
-  모드의 `runAllModsClient`가 `JAVA_HOME`이 Java 8인 샌드박스에서 게임까지 뜸.
-- 아이콘은 `docs/logo/gen-icon.py`로 만듭니다(라이트/다크 테마 모두 WCAG 1.4.11 3:1 이상).
+- The version and target IDE are in `gradle.properties` (`pluginVersion`, `platformVersion`, `sinceBuild`). With
+  `-PideaHome=<install folder>` or `IDEA_HOME`, it builds against an installed IDE and downloads none.
+- `:agent` (`poc/agent`) builds `sf-agent.jar` (containing `sf-impl.jar` + ASM), which goes into the plugin jar as
+  `/sf-agent.jar`.
+- 0.1.0 check (2026-11-17, IntelliJ 2026.3): Plugin Verifier "Compatible" (2 deprecated API uses), self-test 6/6 + 5/5.
+- 0.2.0 check (2026-11-21, IntelliJ 2026.3): Plugin Verifier "Compatible" (no warnings), every fixture test in `check`
+  passes, and the multi-project mod's `runAllModsClient` reaches the game in a sandbox whose `JAVA_HOME` is Java 8.
+- The icon is made with `docs/logo/gen-icon.py` (at least WCAG 1.4.11 3:1 on both light and dark themes).
 
-## 기대 효과 (측정, 2026-11-17)
-같은 PC, 같은 모드에서 수정 하나씩 나란히 찍은 비교 영상(https://youtu.be/G87LOVIu5as)의 장면은 Marketplace 스크린샷으로도 씁니다: [메서드 본문](docs/marketplace/compare-01-vs-part1.png), [Mixin](docs/marketplace/compare-02-vs-part2.png), [새 아이템](docs/marketplace/compare-03-vs-part4.png). 녹화와 편집 도구는 `demo/tools`에 있습니다.
+## Expected effect (measured, 2026-11-17)
+Scenes from the comparison video (https://youtu.be/G87LOVIu5as), where each edit is recorded side by side on the same
+PC and the same mod, also serve as Marketplace screenshots: [method body](docs/marketplace/compare-01-vs-part1.png),
+[Mixin](docs/marketplace/compare-02-vs-part2.png), [new item](docs/marketplace/compare-03-vs-part4.png). The recording
+and editing tools are in `demo/tools`.
 
-스크립트와 원자료는 `docs/effect-study/`에 있습니다(`fetch.py` → `classify.py` → `model.py`, `sensitivity.py`, 측정 스크립트 3개, `measured-2026-11-17.txt`).
+Scripts and raw data are in `docs/effect-study/` (`fetch.py` → `classify.py` → `model.py`, `sensitivity.py`, three
+measurement scripts, `measured-2026-11-17.txt`).
 
-**1. 변경이 실행 중인 게임에 어떻게 반영되는지 (대형 모드 9개, 커밋 1,080개)**
-Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farmer's Delight, Mod Menu의 최근 커밋 120개씩(머지 제외)을 GitHub API로 받아
-변경을 나눴습니다. Mojang 공식 GitHub에는 게임 코드가 없어서 라이브러리 brigadier는 참고로만 돌리고 합계에서 뺐습니다. 다른 저장소의 diff 원문은 저장소에 두지 않고 집계(`mix.json`)만 둡니다.
-- 바로 반영: 메서드 본문, 멤버 추가·삭제(JBR), Mixin, `assets/`(리소스 리로드), `data/`(`/reload`)
-- 재시작: 등록 코드, static 초기화, `fabric.mod.json`/`mods.toml`, 액세스 와이드너, `*mixins.json`, 상속 구조 변경
-- 빌드 파일만 바뀐 커밋(버전 올림 등)은 개발 루프가 아니라서 뺐고, 코드와 함께 바뀐 빌드 파일은 재시작으로 치지 않았습니다.
-- 분류는 정규식입니다. 표본 12건을 직접 보고, 메서드 안 지역 변수 선언까지 "구조 변경"으로 잡던 것을 고쳤습니다.
+**1. How changes reach a running game (9 large mods, 1,080 commits)**
+The latest 120 commits each (merges excluded) of Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2,
+Botania, Farmer's Delight and Mod Menu were fetched through the GitHub API and their changes sorted. Mojang's official
+GitHub has no game code, so the brigadier library was only run for reference and left out of the totals. The other
+repositories' raw diffs are not kept in the repository, only the tallies (`mix.json`).
+- Live: method bodies, added or removed members (JBR), Mixins, `assets/` (resource reload), `data/` (`/reload`)
+- Restart: registration code, static initialization, `fabric.mod.json`/`mods.toml`, access wideners, `*mixins.json`,
+  changes to the inheritance structure
+- Commits that only changed build files (version bumps and the like) are not part of the dev loop and were left out;
+  build files changed together with code did not count as restarts.
+- The sorting is done by regular expressions. 12 samples were checked by hand, which fixed local variable declarations
+  inside methods being counted as "structural changes".
 
-| 집계 | 본문 | 구조 | Mixin | assets | data | 재시작 |
+| Tally | Body | Structure | Mixin | assets | data | Restart |
 |---|---|---|---|---|---|---|
-| 커밋 단위 (가장 느린 변경이 커밋 전체를 결정) | 24% | 12% | 12% | 15% | 3% | 35% |
-| 파일 단위 (파일 하나 = 한 번의 수정) | 22% | 17% | 16% | 18% | 13% | 15% |
+| Per commit (the slowest change decides the whole commit) | 24% | 12% | 12% | 15% | 3% | 35% |
+| Per file (one file = one edit) | 22% | 17% | 16% | 18% | 13% | 15% |
 
-커밋 사이의 기록되지 않은 수정은 알 수 없습니다. 그래서 이 두 집계를 범위의 양 끝으로 둡니다. 값 조정이나 로그 추가 같은 중간 수정은 대부분 본문 변경이라 실제는 파일 단위 쪽에 가까울 것으로 보지만, 검증할 수는 없습니다.
-그 빈칸은 실사용 기록(아래 4)으로 채웁니다.
+Unrecorded edits between commits cannot be known, so these two tallies are taken as the two ends of the range.
+Intermediate edits such as tuning a value or adding a log line are mostly body changes, so reality is probably closer to
+the per-file end, but that cannot be verified. Real usage records (4 below) fill that gap.
 
-**2. 각 경로에 걸리는 시간 (같은 PC, 같은 날)**
+**2. The time each path takes (same PC, same day)**
 
-| 경로 | 테스트 사본 (Gradle 프로젝트 1개, 모드 56) | 다중 프로젝트 모드 (Gradle 프로젝트 9개, 모드 65) |
+| Path | Test copy (1 Gradle project, 56 mods) | Multi-project mod (9 Gradle projects, 65 mods) |
 |---|---|---|
-| Gradle 구성만 (`help`) | — | 30.7초 |
-| 재시작: `runClient --quickPlaySingleplayer` → 월드 진입 | 49.4 / 41.9 / 41.8초 | 85.1 / 82.1 / 80.2초 |
-| 기본 HotSwap: 본문 수정 후 `gradlew classes` | 10.9 / 7.0 / 7.5초 | 19.7 / 19.8 / 19.8초 |
-| 리소스: `gradlew processResources` | 7.1 / 6.5 / 6.9초 | 18.8 / 18.5 / 18.5초 |
-| SulfurFrame 교체 (컴파일 포함, Gradle 안 부름) | 0.5~1.3초 | (실사용 기록으로 확인 예정) |
-| SulfurFrame "같은 월드로 재시작" (Gradle 경유) | 38~52초 (일반 재시작과 같은 수준) | 일반 재시작과 같게 계산 |
-| 재시작, Gradle 경유 → Gradle 없이 (같은 명령줄, `measure-relaunch.sh`, 데운 뒤) | 31.8 → 29.9초 | 81.2 → 64.0초 |
+| Gradle configuration only (`help`) | — | 30.7 s |
+| Restart: `runClient --quickPlaySingleplayer` → in the world | 49.4 / 41.9 / 41.8 s | 85.1 / 82.1 / 80.2 s |
+| Stock HotSwap: `gradlew classes` after a body edit | 10.9 / 7.0 / 7.5 s | 19.7 / 19.8 / 19.8 s |
+| Resources: `gradlew processResources` | 7.1 / 6.5 / 6.9 s | 18.8 / 18.5 / 18.5 s |
+| SulfurFrame swap (compile included, Gradle not called) | 0.5–1.3 s | (to be confirmed by usage records) |
+| SulfurFrame "Restart into the Same World" (through Gradle) | 38–52 s (same as a normal restart) | counted the same as a normal restart |
+| Restart, through Gradle → without Gradle (same command line, `measure-relaunch.sh`, warmed up) | 31.8 → 29.9 s | 81.2 → 64.0 s |
 
-마지막 줄은 다른 줄과 측정한 시각이 달라서(테스트 사본의 재시작이 이날 더 빨랐음) 절대값이 아니라 차이(1.9초, 17.2초)만 모델에 씁니다.
-다중 프로젝트 모드의 기존 파일은 건드리지 않았습니다. 임시 클래스와 임시 리소스를 하나씩 추가해 고친 뒤 지우고 다시 빌드했습니다.
-임시 클래스는 아무도 의존하지 않는 클래스라 Gradle 쪽에 가장 유리한 경우입니다. 측정 중 게임은 무음으로 돌렸습니다.
+The last row was measured at a different time from the others (the test copy restarted faster that day), so only the
+differences (1.9 s, 17.2 s) go into the model, not the absolute values. No existing file of the multi-project mod was
+touched: one temporary class and one temporary resource were added, edited, then deleted and rebuilt. A temporary class
+nothing depends on is the best case for Gradle. The game ran muted during the measurements.
 
-**3. 결과: 수정-실행 1회당 기다리는 시간**
+**3. Result: waiting per edit-run step**
 
-| | 테스트 사본 | 다중 프로젝트 모드 |
+| | Test copy | Multi-project mod |
 |---|---|---|
-| 매번 재시작 | 44.4초 | 82.5초 |
-| 매번 재시작 + 종료·메뉴 클릭(가정 +13초) | 57.4초 | 95.5초 |
-| 기본 HotSwap | 25.6~29.6초 | 49.9~56.8초 |
-| JBR + 기본 HotSwap (구조 변경도 반영) | 19.6~25.3초 | 39.4~49.3초 |
-| **SulfurFrame** | **7.6~16.5초** | **11.0~29.8초** |
-| 재시작 대비 절감 | 63~83% | 64~87% |
-| 기본 HotSwap 대비 절감 | 44~70% | 48~78% |
-| JBR + 기본 HotSwap 대비 절감 | 35~61% | 40~72% |
+| Restart every time | 44.4 s | 82.5 s |
+| Restart every time + quitting and menu clicks (assumed +13 s) | 57.4 s | 95.5 s |
+| Stock HotSwap | 25.6–29.6 s | 49.9–56.8 s |
+| JBR + stock HotSwap (structural changes apply too) | 19.6–25.3 s | 39.4–49.3 s |
+| **SulfurFrame** | **7.6–16.5 s** | **11.0–29.8 s** |
+| Saved vs restarting | 63–83% | 64–87% |
+| Saved vs stock HotSwap | 44–70% | 48–78% |
+| Saved vs JBR + stock HotSwap | 35–61% | 40–72% |
 
-- 하루 60회 기준(가정): 다중 프로젝트 모드에서 재시작만 하면 약 82분, 기본 HotSwap은 50~57분, JBR + 기본 HotSwap은 39~49분, SulfurFrame은 11~30분 기다립니다.
-- JBR + 기본 HotSwap은 따로 재지 않고 계산했습니다. 기본 HotSwap과 같은 Gradle 컴파일을 쓰고, 멤버 추가·삭제도 바로 반영되는 점만 다릅니다(재정의 자체는 어느 쪽이든 1초 미만). Mixin은 바뀐 클래스는 재정의되지만 대상 클래스에 다시 적용되지 않아서(Mixin의 hotswap 에이전트가 필요하고, SulfurFrame은 이걸 붙임) 재시작으로 쳤습니다. IntelliJ 자체 빌더로 컴파일하면 이 줄은 더 짧아질 수 있습니다(재지 않음).
-- 불리한 쪽 끝(`sensitivity.py`)에서도 절감은 남습니다. 가장 빠른 재시작, 느린 리로드(5초), 첫 교체(2.5초)를 쓰고 Mixin을 재시작으로 쳐도 재시작 대비 40~63%, 기본 HotSwap 대비 11~40%입니다.
-- 재시작은 빌드 파일, 모드 메타데이터, 액세스 와이드너가 그대로면 Gradle을 건너뜁니다(아래 "빠른 재시작"). 커밋 표본으로는 어떤 재시작이 여기에 해당하는지 나눌 수 없어서, 범위의 큰 쪽 끝은 커밋 단위에 모든 재시작을 Gradle 경유로, 작은 쪽 끝은 파일 단위에 모든 재시작을 Gradle 없이로 계산했습니다(`model.py`의 `sulfur`와 `sulfur+relaunch`).
-- 그래도 재시작에서 줄어드는 것은 Gradle 몫뿐입니다. 게임 자체의 시작과 월드 진입(다중 프로젝트 모드 64초)은 그대로라, 효과는 대부분 바로 반영되는 변경에서 나옵니다. Gradle이 느린 프로젝트일수록 효과가 커집니다.
+- At 60 runs a day (assumed): on the multi-project mod, restarting only means about 82 minutes of waiting, stock
+  HotSwap 50–57, JBR + stock HotSwap 39–49, SulfurFrame 11–30.
+- JBR + stock HotSwap was calculated, not measured separately. It uses the same Gradle compile as stock HotSwap; the only
+  difference is that added or removed members apply live (the redefinition itself takes under 1 s either way). For
+  Mixins the changed class is redefined but not re-applied to its targets (that needs Mixin's hotswap agent, which
+  SulfurFrame adds), so they count as restarts. Compiling with IntelliJ's own builder could make this row shorter (not
+  measured).
+- The savings remain at the unfavourable end too (`sensitivity.py`). With the fastest restart, a slow reload (5 s), the
+  first swap (2.5 s) and Mixins counted as restarts, it is still 40–63% vs restarting and 11–40% vs stock HotSwap.
+- A restart skips Gradle as long as the build files, mod metadata and access wideners are unchanged ("Quick restart"
+  below). The commit sample cannot tell which restarts fall under that, so the high end of the range counts commits
+  with every restart through Gradle, and the low end counts files with every restart without Gradle (`sulfur` and
+  `sulfur+relaunch` in `model.py`).
+- Even so, a restart only loses the Gradle part. The game's own start and the world entry (64 s on the multi-project
+  mod) stay, so most of the effect comes from changes that apply live. The slower a project's Gradle, the bigger the
+  effect.
 
-**시간에 영향을 주는 요소**
-- **Gradle 구성 시간:** 기본 경로는 Gradle을 부를 때마다 이 비용을 냅니다. 다중 프로젝트 모드에서는 30초입니다. SulfurFrame의 교체와 리소스 반영은 Gradle을 부르지 않습니다.
-- **모드 수와 월드:** 게임 시작과 월드 진입 시간을 좌우합니다(56개 → 65개, 작은 평지 월드 → 실제 작업 월드).
-- **데몬 상태:** 첫 실행은 데몬이 데워지느라 느립니다(테스트 사본 49초 → 42초).
-- **고친 위치:** 다른 클래스가 많이 쓰는 클래스의 시그니처를 바꾸면 Gradle은 의존하는 클래스까지 다시 컴파일합니다. 위 측정은 Gradle에 가장 유리한 경우입니다.
-- **어노테이션 프로세서와 Kotlin:** 컴파일 시간이 늘어납니다(위 "어노테이션 프로세서와 Kotlin" 참고).
-- **리소스 양:** 리로드 시간은 리소스팩 크기에 따라 달라지고, SulfurFrame을 쓰든 안 쓰든 똑같이 듭니다.
-- **PC 상태:** 측정 당시 C: 드라이브 남은 공간은 2.4GB였고, IDE는 꺼져 있었습니다. 백신 검사와 다른 작업 부하도 영향을 줍니다.
+**What affects the times**
+- **Gradle configuration time:** the stock path pays it every time it calls Gradle. On the multi-project mod it is
+  30 s. SulfurFrame's swaps and resource updates do not call Gradle.
+- **Mod count and world:** they decide how long the game takes to start and enter the world (56 → 65 mods, a small flat
+  world → a real working world).
+- **Daemon state:** the first run is slow while the daemon warms up (test copy 49 s → 42 s).
+- **Where you edit:** changing the signature of a class many others use makes Gradle recompile its dependants too. The
+  measurements above are the best case for Gradle.
+- **Annotation processors and Kotlin:** they add compile time (see "Annotation processors and Kotlin" above).
+- **Amount of resources:** reload time depends on the resource pack size and costs the same with or without
+  SulfurFrame.
+- **PC state:** at the time of measuring, 2.4 GB were free on drive C:, and the IDE was closed. Antivirus scans and other
+  load also matter.
 
-**한계**
-- SulfurFrame은 지금 Fabric 1.21.1만 지원합니다. Create, AE2, Farmer's Delight는 NeoForge 모드라 그 행은 지원이 넓어졌을 때의 효과입니다.
-- NeoForge/Forge에서 Mixin 핫스왑은 아직 시험하지 않았습니다.
-- datagen 출력은 한 번에 많은 파일을 바꿔서 파일 단위 data 비율(Create 62%)이 부풀려져 있습니다.
-- 측정은 PC 한 대에서 한 것입니다.
+**Limits**
+- SulfurFrame supports only Fabric 1.21.1 for now. Create, AE2 and Farmer's Delight are NeoForge mods, so their rows
+  show the effect once support is wider.
+- Mixin hotswap on NeoForge/Forge has not been tested yet.
+- datagen output changes many files at once, which inflates the per-file data share (Create 62%).
+- The measurements were taken on one PC.
 
-**4. 실사용 기록 (`UsageLog`, `usage.py`)**
-패널 로그를 `~/.sulfurframe/logs/sulfurframe-<날짜>.log`에도 날짜·시각·프로젝트와 함께 남깁니다(14일 보관, 내 PC에만 쓰고 어디로도 보내지 않음, 자가 테스트 줄은 `autotest:` 표시).
-`idea.log`는 다른 플러그인 경고로 몇 분 만에 넘어가 쓸 수 없었습니다. `python docs/effect-study/usage.py`는 실제로 있었던 교체, 리소스 반영, 재시작의 수와 시간을 셉니다.
-커밋되지 않은 수정까지 포함되므로, 위 1의 범위가 실제로 어디쯤인지 이 기록으로 확인합니다.
+**4. Real usage records (`UsageLog`, `usage.py`)**
+The panel log is also written to `~/.sulfurframe/logs/sulfurframe-<date>.log` with date, time and project (kept 14 days,
+written only on your PC and sent nowhere; self-test lines are marked `autotest:`). `idea.log` rolls over within minutes
+from other plugins' warnings, so it was no use. `python docs/effect-study/usage.py` counts the swaps, resource updates
+and restarts that really happened, and how long they took. Uncommitted edits are included, so this record shows where
+in range 1 reality actually lies.
 
-## 빠른 빌드와 테스트 (Gradle 없이, 설치된 IDE 사용)
+## Quick build and test (no Gradle, uses an installed IDE)
 ```bash
-./sf-idea-plugin/build.sh          # → sf-idea-plugin/build/SulfurFrame (플러그인 폴더)
+./sf-idea-plugin/build.sh          # → sf-idea-plugin/build/SulfurFrame (plugin folder)
 ```
-- 설치된 IntelliJ IDEA 2026.3+(JBR 25, FFM 사용 가능)의 `lib/*.jar`에 대고 컴파일합니다. 에이전트는 `poc/agent/sf-agent.jar`를 넣습니다.
-- **샌드박스 자동 테스트**: 별도의 config/system/plugins 폴더로 IDE를 띄워서 사용자 설정을 건드리지 않습니다.
-  - Gradle과 Maven 플러그인을 끄고, 동의 창은 `-Djb.consents.confirmation.enabled=false` 등으로 건너뜁니다.
-  - 자가 테스트의 게임은 소리가 나지 않습니다(`ALSOFT_DRIVERS=null`, OpenAL 무음 출력). `options.txt`의 음량은 건드리지 않습니다. 옵션 동기화가 `soundCategory_*`를 공유해서, 그걸 바꾸면 평소 게임까지 음소거되기 때문입니다. 들으려면 `-Dsulfurframe.mute=false`(McFetch는 `SF_SOUND=1`).
-  - `-Dsulfurframe.autotest.pid=<실행 중인 마인크래프트 PID>`를 주면 툴윈도우가 자동으로 열립니다. 그다음 붙이기, 플로팅, 재도킹, 숨김, 보이기를 차례로 검사해서 `%TEMP%/sulfurframe-autotest.txt`와 스크린샷으로 남깁니다.
+- Compiles against `lib/*.jar` of an installed IntelliJ IDEA 2026.3+ (JBR 25, FFM available). The agent comes from
+  `poc/agent/sf-agent.jar`.
+- **Sandbox self-tests**: start the IDE with separate config/system/plugins folders, so your own settings stay untouched.
+  - The Gradle and Maven plugins are turned off, and consent dialogs are skipped with
+    `-Djb.consents.confirmation.enabled=false` and the like.
+  - The self-test game makes no sound (`ALSOFT_DRIVERS=null`, OpenAL's silent output). The volumes in `options.txt` are
+    left alone: the options sync shares `soundCategory_*`, so changing them would mute your everyday games too. To hear
+    it: `-Dsulfurframe.mute=false` (`SF_SOUND=1` for McFetch).
+  - With `-Dsulfurframe.autotest.pid=<PID of a running Minecraft>`, the tool window opens by itself. It then checks
+    attach, floating, re-docking, hiding and showing in turn, and records the results in
+    `%TEMP%/sulfurframe-autotest.txt` and screenshots.
 
-샌드박스는 `./sf-idea-plugin/sandbox.sh <프로젝트 폴더> [-Dsulfurframe.autotest.pid=<PID>] …`로 띄웁니다. IDE 빌드마다
-`%TEMP%/sf-idea-sandbox-<빌드 번호>`에 따로 만들어서, IDE를 올려도 이전 샌드박스와 섞이지 않습니다.
+The sandbox starts with `./sf-idea-plugin/sandbox.sh <project folder> [-Dsulfurframe.autotest.pid=<PID>] …`. It is
+created per IDE build in `%TEMP%/sf-idea-sandbox-<build number>`, so upgrading the IDE does not mix it with an older
+sandbox.
 
-**자가 테스트용 모드:** 이 저장소의 `demo/showcase-mod`(Fabric 1.21.1)입니다. `demo/tools/test-copy.sh`가 버려도 되는 사본을
-`%TEMP%/sf-showcase-test`에 만들고 샌드박스 명령을 출력합니다:
+**Self-test mod:** this repository's `demo/showcase-mod` (Fabric 1.21.1). `demo/tools/test-copy.sh` makes a throwaway
+copy in `%TEMP%/sf-showcase-test` and prints the sandbox command:
 ```bash
-./sf-idea-plugin/sandbox.sh <사본> -Dsulfurframe.autotest.runclient=true -Dsulfurframe.autotest.hotswap=<사본>/src/main/java/dev/sulfurframe/showcase/SfHotswapProbe.java -Dsulfurframe.autotest.world=SFWorld
+./sf-idea-plugin/sandbox.sh <copy> -Dsulfurframe.autotest.runclient=true -Dsulfurframe.autotest.hotswap=<copy>/src/main/java/dev/sulfurframe/showcase/SfHotswapProbe.java -Dsulfurframe.autotest.world=SFWorld
 ```
-테스트가 소스를 고치고 번역을 추가하므로 항상 사본에서 돌립니다. 아래 기록에 나오는 "lucid 사본"은 이 모드 전에 쓰던 개인 테스트
-모드입니다. 테스트는 이제 모드 이름을 코드에 넣어 두지 않고, 프로브 파일 옆의 `ModInitializer`, 아무 `assets/*/lang/*.json`,
-프로브의 패키지에서 찾습니다.
+The test edits sources and adds translations, so always run it on a copy. The "lucid copy" in the records below is a
+personal test mod used before this one. The test no longer has mod names in its code; it finds them from the
+`ModInitializer` next to the probe file, any `assets/*/lang/*.json`, and the probe's package.
 
-### IntelliJ 2026.3(빌드 263) 이전 확인 (2026-11-16)
-- **컴파일:** 2026.3의 jar로 오류 없이 컴파일됩니다. 경고는 `GameTab`의 `FileEditorManager.openFile(VirtualFile, boolean)`
-  deprecation 하나입니다. 대체 API(`requestOpenFile`)는 2026.3에서 생긴 것으로 보이고, 기존 메서드는 제거 예정이 아니라서
-  2026.2 호환(`since-build="262"`)을 위해 그대로 둡니다.
-- **번들 런타임:** 2026.3도 JBR 25(25.0.4.1)라서 FFM과 에이전트 쪽 변화는 없습니다.
-- **사용자 IDE:** 설정 이전 때 `sulfurframe.jar`가 새 설정 폴더(`IntelliJIdea2026.3/plugins`)로 옮겨졌고, 2026.3에서 로드되어
-  프로젝트 인식까지 동작한 기록이 있습니다.
-- **샌드박스 자동 테스트:** 12개 모두 통과(프로필 인식, 임베드, 16:9, 플로팅, 재도킹, 숨김, 복원, 레터박스, F11 전체화면,
-  F11 복귀, 에디터 탭, 탭 닫고 복귀). 첫 실행에서는 F11 검사가 키보드 포커스 없음으로 실패했습니다. 다른 앱이 앞에 있으면
-  Windows 포커스 잠금 때문에 `toFront()`가 작업 표시줄만 깜빡이기 때문입니다. 이제 F11 검사는 IDE가 앞으로 올 때까지 최대
-  1분 기다리고(그 사이 IDE 제목 표시줄을 클릭하면 됨), 기다렸다면 결과에 한 줄 남깁니다.
-- **실제 개발 루프(Run client → 임베드 → 편집 → 핫스왑 → 재시작):** 23개 모두 통과. lucid-study-mod 사본(Fabric 1.21.1)에
-  5초마다 `[SF-PROBE] <message()>`를 찍는 클래스를 넣고 `-Dsulfurframe.autotest.runclient=true
-  -Dsulfurframe.autotest.hotswap=<SfHotswapProbe.java> -Dsulfurframe.autotest.world=SFWorld`로 돌렸습니다.
-  Run client 후 27초 만에 임베드됐고, 메서드 본문 핫스왑은 컴파일 포함 523 ms(IDE 안 javac), 예열 후에는 414 ms였습니다.
-  JBR에서는 필드와 메서드를 더하거나 빼는 변경도 적용되고, 저장만 해도 스왑됩니다. 재시작과 IDE의 Rerun은 둘 다 저장 후
-  종료한 뒤 같은 월드로 돌아왔습니다.
-  - 테스트 쪽 수정 두 가지: 1.21.1의 `--quickPlaySingleplayer`는 없는 월드를 만들지 않고 타이틀 화면에 머뭅니다. 그래서
-    지정한 월드가 없으면 테스트가 먼저 테스트 월드 생성기로 만듭니다. 또 이 환경의 게임 로그에는 "joined the game" 줄이
-    없어서, 월드 진입은 서버의 `logged in with entity id` 줄로 판정합니다.
-  - 지금은 26개입니다. 컴파일 상수 변경(`SfProbeConst`)과 같은 바이트로 다시 빌드된 클래스 검사가 추가됐습니다.
-    상수는 프로브의 별도 메서드에서 읽습니다. 끝없이 도는 루프 안에서 읽으면, 이미 실행 중인 프레임은 스왑 뒤에도 옛 코드로
-    계속 돌기 때문입니다.
+### Checks before moving to IntelliJ 2026.3 (build 263) (2026-11-16)
+- **Compile:** compiles against the 2026.3 jars without errors. The one warning is the deprecation of
+  `FileEditorManager.openFile(VirtualFile, boolean)` in `GameTab`. The replacement API (`requestOpenFile`) seems to have
+  arrived in 2026.3, and the old method is not scheduled for removal, so it stays for 2026.2 compatibility
+  (`since-build="262"`).
+- **Bundled runtime:** 2026.3 is also JBR 25 (25.0.4.1), so nothing changes for FFM or the agent.
+- **Your own IDE:** when settings were imported, `sulfurframe.jar` moved to the new settings folder
+  (`IntelliJIdea2026.3/plugins`), and there is a record of it loading in 2026.3 and recognising the project.
+- **Sandbox self-tests:** all 12 pass (profile detection, embed, 16:9, floating, re-docking, hiding, restoring,
+  letterbox, F11 fullscreen, back from F11, editor tab, closing the tab and returning). In the first run the F11 check
+  failed for lack of keyboard focus: with another app in front, the Windows focus lock makes `toFront()` only flash the
+  taskbar. Now the F11 check waits up to 1 minute for the IDE to come to the front (click the IDE title bar meanwhile),
+  and notes it in the result if it had to wait.
+- **The real dev loop (Run client → embed → edit → hotswap → restart):** all 23 pass. A class printing
+  `[SF-PROBE] <message()>` every 5 s was added to a copy of lucid-study-mod (Fabric 1.21.1), run with
+  `-Dsulfurframe.autotest.runclient=true -Dsulfurframe.autotest.hotswap=<SfHotswapProbe.java>
+  -Dsulfurframe.autotest.world=SFWorld`. It embedded 27 s after Run client; a method body hotswap took 523 ms with
+  compiling (javac inside the IDE), 414 ms once warm. On JBR, adding or removing fields and methods applies too, and
+  saving alone swaps it in. Both restart and the IDE Rerun saved, quit and came back to the same world.
+  - Two fixes on the test side: on 1.21.1, `--quickPlaySingleplayer` does not create a missing world and stays on the
+    title screen, so when the given world is missing, the test first creates it with the test world generator. Also,
+    the game log in this environment has no "joined the game" line, so entering the world is decided by the server
+    line `logged in with entity id`.
+  - Now there are 26. Checks for a compile-time constant change (`SfProbeConst`) and for a class rebuilt with the same
+    bytes were added. The constant is read in a separate method of the probe: read inside an endless loop, a frame that
+    is already running would keep running the old code after the swap.
 
-### 실제 프로젝트에서 쓰며 찾은 것 (다중 프로젝트 모드, 2026-11-16)
-다중 프로젝트 모드(멀티 모듈, core의 `runAllModsClient`가 다른 모듈 네 개를 함께 실행)의 GUI 오버레이를 사용자 IDE에서
-SulfurFrame 루프로 고치면서 찾은 문제입니다. 오버레이 작업은 GUI 모듈 핫스왑 열 번 남짓(각 약 2초)으로 끝났습니다.
-- **기본 대상이 틀림:** 저장된 선택이 없으면 Run client가 알파벳순 첫 대상(다른 모듈 하나 + core, GUI 없음)을 띄웠습니다.
-  이제 같은 버전·로더 안에서는 프로젝트가 직접 정의한 실행 설정(`runAllModsClient`)이 먼저입니다(fixture `runconfig`).
-- **다른 모듈은 핫스왑 안 됨:** fast compile과 클래스 비교가 선택한 프로젝트(core)만 알아서 `:gui` 수정이 "no class
-  changed"였습니다. 이제 실행 작업의 class path에 출력이 올라간 다른 프로젝트의 소스셋도 컴파일·비교합니다(11개 소스셋).
-- **Gradle 빌드 뒤 751개 전송 → JVM 크래시:** 수정 시각만 비교해서, Gradle이 모듈의 클래스 파일을 전부 다시 쓴 뒤 한 줄
-  수정에 751개를 보냈고 JBR의 클래스 재정의 중 VM이 죽었습니다(`ConstantPool::to_cp_index`). 이제 바이트가 바뀐 클래스만
-  보내고, 나중에 알게 된 출력 폴더의 클래스는 기준으로 삼습니다.
-- **상수 변경이 반영 안 됨:** `static final` 상수는 javac가 읽는 쪽 클래스에 복사해 넣는데, fast compile은 고친 파일만
-  다시 컴파일해서 게임이 옛 값을 계속 썼습니다(경고 없음). 이제 그 클래스 이름이 나오는 소스를 다시 컴파일해 함께
-  보냅니다. 실측: `PreviewPalette.A_OUTLINE` 0.30 → 0.95 변경 시 사용하는 파일 11개 재컴파일, 클래스 7개 교체(5.1초),
-  재시작 없이 선택 상자가 다시 밝아짐.
-- **IDE 밖에서 고친 파일:** 외부 편집기나 에이전트가 고친 파일은 IntelliJ가 창이 활성화될 때까지 알아차리지 못해서
-  "저장 시 핫스왑"이 돌지 않았습니다. 이제 `SourceWatcher`가 빌드의 모든 `src` 폴더를 직접 감시해서 IDE 저장과 같은
-  경로로 보냅니다(둘 다 잡혀도 한 번만 스왑). 같이 고친 것: 저장 처리가 대상 모듈 밖의 코드를 버려서, `runAllModsClient`로
-  돌릴 때 `:gui` 파일을 IDE에서 저장해도 핫스왑되지 않았습니다. 테스트: VFS 새로고침 없이 디스크만 바꾼 변경이 게임에 반영
-  (루프 테스트 27개).
-- **빌드 도구:** Fabric Loom 1.19는 Gradle을 Java 25로 돌려야 합니다(게임은 Java 21). 프로젝트가
-  `gradle/gradle-daemon-jvm.properties`(`toolchainVersion=25`)로 Gradle JVM을 정하면 플러그인이 JAVA_HOME을 건드리지
-  않습니다. 테스트 사본도 Gradle 9.9.1 / Loom 1.19.4로 올려서 돌립니다.
+### Found while using it on a real project (multi-project mod, 2026-11-16)
+Problems found while fixing the GUI overlay of the multi-project mod (multi-module; the core `runAllModsClient` runs
+four other modules with it) with the SulfurFrame loop in the user's IDE. The overlay work was done in a dozen or so GUI
+module hotswaps (about 2 s each).
+- **Wrong default target:** with no saved choice, Run client started the alphabetically first target (another module +
+  core, no GUI). Now, within the same version and loader, a run configuration the project defines itself
+  (`runAllModsClient`) comes first (fixture `runconfig`).
+- **Other modules did not hotswap:** fast compile and class comparison only knew the selected project (core), so edits
+  in `:gui` were "no class changed". Now the source sets of other projects whose outputs are on the run task class path
+  are compiled and compared too (11 source sets).
+- **751 classes sent after a Gradle build → JVM crash:** only modification times were compared, so after Gradle rewrote
+  all class files of a module, a one-line edit sent 751 classes and the VM died during the JBR class redefinition
+  (`ConstantPool::to_cp_index`). Now only classes whose bytes changed are sent, and classes in output folders discovered
+  later serve as the baseline.
+- **Constant changes did not apply:** javac copies `static final` constants into the classes that read them, but fast
+  compile only recompiled the edited file, so the game kept using the old value (with no warning). Now sources that
+  mention that class name are recompiled and sent along. Measured: changing `PreviewPalette.A_OUTLINE` 0.30 → 0.95
+  recompiled the 11 files that use it and swapped 7 classes (5.1 s), and the selection box got bright again without a
+  restart.
+- **Files edited outside the IDE:** IntelliJ did not notice files changed by an external editor or an agent until its
+  window was activated, so "hotswap on save" did not run. Now `SourceWatcher` watches every `src` folder of the build
+  itself and sends changes down the same path as an IDE save (one swap even when both catch it). Fixed along the way:
+  save handling dropped code outside the target module, so saving a `:gui` file in the IDE did not hotswap when running
+  `runAllModsClient`. Test: a change made on disk only, without a VFS refresh, reaches the game (27 loop tests).
+- **Build tools:** Fabric Loom 1.19 needs Gradle to run on Java 25 (the game is Java 21). When a project chooses its
+  Gradle JVM with `gradle/gradle-daemon-jvm.properties` (`toolchainVersion=25`), the plugin leaves the daemon JVM to
+  Gradle (since 0.2.0 it still hands `gradlew` itself a Java 17+ JDK when `JAVA_HOME` is older). The test copy runs on
+  Gradle 9.9.1 / Loom 1.19.4 too.
 
-결과 (IntelliJ IDEA 2026.2.3, 바닐라 1.21.1):
+Results (IntelliJ IDEA 2026.2.3, vanilla 1.21.1):
 ```
 PASS profile detected  [FABRIC 1.21.1 0.17.2 (Java 21)]
 PASS embedded in the tool window
@@ -203,80 +264,99 @@ PASS hidden -> game minimized  [iconic true, state HIDDEN]
 PASS shown -> game restored  [iconic false, state CODING]
 failures: 0
 ```
-**Run client 흐름** (`-Dsulfurframe.autotest.runclient=true`, lucid-study-mod 안쪽 프로젝트의 임시 사본, Fabric 1.21.1):
+**Run client flow** (`-Dsulfurframe.autotest.runclient=true`, a temporary copy of the inner project of lucid-study-mod,
+Fabric 1.21.1):
 ```
 PASS profile detected  [FABRIC 1.21.1 0.17.2 (Java 21)]
-PASS Run client -> game embedded  [after 25 s (첫 실행 97 s)]
+PASS Run client -> game embedded  [after 25 s (first run 97 s)]
 PASS game fills the canvas  [game 450x725, canvas 450x725]
 ```
-- 버튼을 누르면 프로젝트의 `gradlew.bat runClient`가 실행되고, 개발 클라이언트 창이 뜨면 에이전트를 붙인 뒤 툴윈도우에 넣습니다.
-- 리소스를 로드하는 동안은 게임이 바빠서 와치독이 잠깐씩 입력 큐를 뗐다 붙입니다. 정상 동작입니다.
-- **실제 프로젝트에서 찾은 문제:** 이 프로젝트의 wrapper는 Gradle 8.12인데, 쓰는 Loom 1.11-SNAPSHOT은 8.14 이상이 필요해서
-  `runClient`가 실패합니다(원본의 `gradle-wrapper.properties`는 git에서 수정된 상태). 테스트는 사본의 wrapper만 캐시에 있는 9.4.1로 바꿔서 진행했고,
-  원본은 건드리지 않았습니다. 플러그인은 이제 Gradle의 "What went wrong" 내용을 툴윈도우 로그에 그대로 보여 줍니다.
+- Pressing the button runs the project `gradlew.bat runClient`; when the dev client window appears, the agent is
+  attached and the window goes into the tool window.
+- While resources load, the game is busy and the watchdog briefly detaches and reattaches the input queues. That is
+  normal.
+- **A problem found in a real project:** this project's wrapper is Gradle 8.12, but the Loom 1.11-SNAPSHOT it uses needs
+  8.14 or newer, so `runClient` fails (the original `gradle-wrapper.properties` is modified in git). The test changed
+  only the copy's wrapper to the cached 9.4.1 and left the original alone. The plugin now shows the Gradle "What went
+  wrong" text in the tool window log as is.
 
-버전 감지기 fixture 테스트:
+Version detector fixture tests:
 ```bash
 javac -d out sf-idea-plugin/src/main/java/dev/sulfurframe/idea/profile/ProjectProfile.java sf-idea-plugin/src/test/java/dev/sulfurframe/idea/profile/ProfileSelfTest.java
-java -cp out dev.sulfurframe.idea.profile.ProfileSelfTest sf-idea-plugin/src/test/resources/profiles [실제 프로젝트 폴더...]
+java -cp out dev.sulfurframe.idea.profile.ProfileSelfTest sf-idea-plugin/src/test/resources/profiles [real project folders...]
 ```
-fixture 6개(NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, kts 직접 선언, 버전 카탈로그)와 로컬 실제 프로젝트 4개를 정확히 감지했습니다.
+All 6 fixtures (NeoForge MDK, Forge 1.20.1 MDK, Forge FG2 1.12.2, Quilt, direct kts declarations, version catalog) and
+4 local real projects were detected correctly.
 
-## 아직 안 된 것
-- Linux: 실제 Linux 데스크톱(GNOME/KDE, mutter/kwin)과 GPU 드라이버 확인. 지금까지는 Xvfb + openbox와 WSLg에서 확인했습니다. 26.x(SDL3)와 1.12.2(LWJGL 2)는 PoC에서 확인(`poc/embed/README.md`), 플러그인으로는 1.21.1만 시험. 아래 "Linux (X11)" 참고.
-- 로더와 버전: 지금은 Fabric 1.21.1만 지원합니다. Forge와 다른 버전은 함께 개발 중인 더 큰 모드의 멀티 버전 확장과 함께 갑니다.
+## Not done yet
+- Linux: checking on real Linux desktops (GNOME/KDE, mutter/kwin) and GPU drivers. So far it was checked on Xvfb +
+  openbox and WSLg. 26.x (SDL3) and 1.12.2 (LWJGL 2) were checked in the PoC (`poc/embed/README.md`); the plugin itself
+  was only tested with 1.21.1. See "Linux (X11)" below.
+- Loaders and versions: only Fabric 1.21.1 is supported for now. Forge and other versions come with the multi-version
+  expansion of the bigger mod developed alongside.
 
-## 컨테이너 폴더와 멀티 버전 프로젝트 (`profile/Workspace.java`)
+## Container folders and multi-version projects (`profile/Workspace.java`)
 
-열린 폴더에서 **실행할 수 있는 클라이언트를 모두 찾아**, 클라이언트마다 "Minecraft: <위치> [태스크]" 실행 구성을 만듭니다(최신 MC 버전 순).
-메인 툴바의 실행 구성 목록에서 고르고, 선택은 프로젝트마다 기억합니다(`PropertiesComponent`).
-"Run client"는 고른 대상이 속한 빌드 루트의 wrapper로 해당 작업 경로를 실행합니다.
+It **finds every client that can run** in the opened folder and creates a "Minecraft: <location> [task]" run
+configuration for each (newest MC version first). Pick one from the run configuration list on the main toolbar; the
+choice is remembered per project (`PropertiesComponent`). "Run client" runs that task path with the wrapper of the build
+root the chosen target belongs to.
 
-| 구조 | 판별 방법 | 실행 작업 |
+| Structure | How it is recognised | Run task |
 |---|---|---|
-| 단일 프로젝트 | 폴더 자체가 모드 빌드 | `runClient` |
-| **컨테이너** (모드 여러 개를 담은 레포, 예: lucid-study-mod) | 하위 폴더마다 독립된 `settings.gradle` | 각 빌드에서 `runClient` |
-| **멀티 프로젝트** (다중 프로젝트 모드, 버전별 모듈) | `settings`의 `include(...)` 중 모드인 서브프로젝트 | `:core:mod-fabric-1_21_1:runClient` |
-| **Architectury** | 서브프로젝트의 `architectury { fabric() / neoForge() / forge() }`. `common`은 제외 | `:fabric:runClient`, `:neoforge:runClient` |
-| **Stonecutter** | `settings`의 `stonecutter { versions("1.20.1", "1.21.1") }`, 버전별 `versions/<v>/gradle.properties` | `:1.21.1:runClient` |
+| Single project | the folder itself is a mod build | `runClient` |
+| **Container** (a repo holding several mods, e.g. lucid-study-mod) | an independent `settings.gradle` in each subfolder | `runClient` in each build |
+| **Multi-project** (the multi-project mod, modules per version) | subprojects in the `settings` `include(...)` that are mods | `:core:mod-fabric-1_21_1:runClient` |
+| **Architectury** | `architectury { fabric() / neoForge() / forge() }` in a subproject. `common` is left out | `:fabric:runClient`, `:neoforge:runClient` |
+| **Stonecutter** | `stonecutter { versions("1.20.1", "1.21.1") }` in `settings`, per-version `versions/<v>/gradle.properties` | `:1.21.1:runClient` |
 
-- **kts 변수 추적:** `val mcVersion = rootProject.property("mc_1_21_1_version")`, `property("deps.x")`, groovy `def x = rootProject.y`를 따라가서 버전을 읽습니다.
-- **플러그인 판별 예외:** `apply false`로 선언만 한 플러그인과 `subprojects { }` 안에서 적용하는 플러그인은 그 프로젝트 자신의 로더로 보지 않습니다.
-- **폴더 이름은 버전 힌트로만:** `mod-forge-1_21_1` 같은 이름은 버전을 짐작하는 데만 씁니다. 빌드 스크립트에 로더 근거가 없는 스텁 모듈은 대상에서 뺍니다.
-- **중첩 settings 처리:** 다른 빌드에 include된 폴더는 자기 `settings.gradle`이 있어도 독립 빌드로 보지 않고, 프로퍼티도 상위 빌드 루트에서 읽습니다.
-- **제외 폴더:** `.git`, `.gradle`, `.claude/worktrees` 같은 점(.) 폴더와 `build`, `run`, `src`는 훑지 않습니다.
+- **Following kts variables:** versions are read by following `val mcVersion = rootProject.property("mc_1_21_1_version")`,
+  `property("deps.x")` and groovy `def x = rootProject.y`.
+- **Plugin detection exceptions:** plugins only declared with `apply false`, and plugins applied inside
+  `subprojects { }`, do not count as that project's own loader.
+- **Folder names are only a version hint:** names like `mod-forge-1_21_1` are only used to guess the version. Stub
+  modules with no loader evidence in their build script are left out.
+- **Nested settings:** a folder included in another build is not treated as an independent build even if it has its own
+  `settings.gradle`, and its properties are read from the outer build root.
+- **Skipped folders:** dot folders such as `.git`, `.gradle`, `.claude/worktrees`, and `build`, `run`, `src` are not
+  scanned.
 
-검증:
+Checks:
 ```
 PASS container     -> [runClient FABRIC 1.21.1 0.17.2, runClient NEOFORGE 1.21.1 21.1.265]
 PASS multiproject  -> [:core:mod-fabric-1_21_1:runClient FABRIC 1.21.1 0.16.10, :core:mod-fabric-1_20_1:runClient FABRIC 1.20.1 0.15.11]
 PASS architectury  -> [:fabric:runClient FABRIC 1.21.1 0.16.10, :neoforge:runClient NEOFORGE 1.21.1 21.1.265]
 PASS stonecutter   -> [:1.21.1:runClient FABRIC 1.21.1 0.16.10, :1.20.1:runClient FABRIC 1.20.1 0.16.10]
 ```
-실제 폴더 결과는 다음과 같습니다.
-- **lucid-study-mod:** 대상 5개(savedeath·untitled1 1.21.7, 루트·lucid-study-mod·lucid-study-mod2 1.21.1). 루트는 "(no gradlew)"로 표시됩니다.
-- **다중 프로젝트 모드:** Fabric 모듈 5개(`:core:mod-fabric-1_21_1`와 다른 모듈 4개)와 Forge `:core:mod-forge-1_21_1`(52.1.6). worktree 중복과 Forge 스텁은 빠졌습니다.
+Results on real folders:
+- **lucid-study-mod:** 5 targets (savedeath and untitled1 1.21.7, root, lucid-study-mod and lucid-study-mod2 1.21.1).
+  The root shows as "(no gradlew)".
+- **Multi-project mod:** 5 Fabric modules (`:core:mod-fabric-1_21_1` and 4 other modules) and Forge
+  `:core:mod-forge-1_21_1` (52.1.6). Worktree duplicates and the Forge stub were left out.
 
-샌드박스 IDE에서 lucid-study-mod 컨테이너 전체 사본을 열고 `lucid-study-mod`를 골라 Run client를 눌렀습니다.
-대상 5개가 나열됐고, 안쪽 프로젝트의 wrapper로 실행돼 82초 뒤 툴윈도우에 임베드됐습니다(테스트 4/4 PASS).
+In the sandbox IDE, a full copy of the lucid-study-mod container was opened, `lucid-study-mod` picked and Run client
+pressed. The 5 targets were listed, it ran with the inner project's wrapper, and it embedded in the tool window after
+82 s (tests 4/4 PASS).
 ```bash
-java -cp out dev.sulfurframe.idea.profile.WorkspaceSelfTest sf-idea-plugin/src/test/resources/workspaces [실제 폴더...]
+java -cp out dev.sulfurframe.idea.profile.WorkspaceSelfTest sf-idea-plugin/src/test/resources/workspaces [real folders...]
 ```
 
-## 화면 배치와 F11 전체화면
+## Layout and F11 fullscreen
 
-- **16:9 비율 유지**(기본값): 게임을 패널 안에서 16:9로 맞추고, 남는 곳은 검은 띠로 채웁니다. 세로로 긴 툴윈도우에서도 화면이 늘어나지 않습니다.
-  "16:9" 체크를 끄면 패널을 꽉 채웁니다.
-- **"Open as tab"**: 게임을 가로로 넓은 에디터 영역의 "Minecraft" 탭으로 옮깁니다(`GameTab`, `FileEditorProvider`).
-  탭을 닫으면 툴윈도우로 돌아옵니다. 옮길 때 캔버스가 새로 만들어지는데, 게임은 park 후 다시 붙습니다.
+- **Keep 16:9** (default): fits the game to 16:9 inside the panel and fills the rest with black bars. The picture does
+  not stretch even in a tall tool window. Unchecking "16:9" fills the panel.
+- **"Open as tab"**: moves the game to a "Minecraft" tab in the wide editor area (`GameTab`, `FileEditorProvider`).
+  Closing the tab brings it back to the tool window. Moving it creates a new canvas; the game is parked and attached
+  again.
   ![tab](docs/marketplace/02-game-as-editor-tab.png)
-- **F11 (게임 안의 전체화면 키)**: 임베드 상태에서 F11을 누르면 GLFW와 SDL은 창에 `WS_POPUP`만 추가합니다. 자식 창이라 패널 안에 그대로 남습니다.
-  다시 누르면 `WS_POPUP`이 빠지고 **제목 표시줄이 생겨서** 패널 안에 창 테두리가 붙습니다(1.21.1에서 실측).
-  → 와치독이 스타일 변화를 감지합니다.
-  - `WS_POPUP`이 생기면 게임을 IDE에서 빼서 IDE가 있는 모니터를 꽉 채웁니다.
-  - `WS_POPUP`이 빠지면 제목 표시줄을 걷어내고 패널에 다시 넣습니다.
+- **F11 (the in-game fullscreen key)**: pressing F11 while embedded makes GLFW and SDL only add `WS_POPUP` to the window.
+  As a child window it stays inside the panel. Pressing it again removes `WS_POPUP` and **adds a title bar**, so a window
+  border appears inside the panel (measured on 1.21.1).
+  → The watchdog detects the style change.
+  - When `WS_POPUP` appears, the game is taken out of the IDE and fills the monitor the IDE is on.
+  - When `WS_POPUP` goes away, the title bar is stripped and the game goes back into the panel.
 
-샌드박스 자동 테스트(12개 항목), **1.21.1(GLFW)과 26.3(SDL3) 모두 12/12 통과**:
+Sandbox self-tests (12 items), **12/12 on both 1.21.1 (GLFW) and 26.3 (SDL3)**:
 ```
 PASS 16:9 letterbox                     [game 450x253 (1.779) in canvas 450x708]
 PASS F11 -> fullscreen                  [fullscreen true, child false, rect 1920x1200, monitor 1920x1200]
@@ -284,235 +364,344 @@ PASS F11 again -> embedded, no title bar
 PASS open as editor tab
 PASS tab closed -> back in the tool window
 ```
-F11 검사는 실제 키를 보냅니다. 그래서 키보드 포커스가 게임에 있을 때만 보냅니다. IDE가 앞에 없으면 최대 1분 기다리고, 그래도 포커스가 없으면 실패로 기록합니다.
+The F11 check sends real keys, so it only sends them while the game has the keyboard focus. If the IDE is not in front,
+it waits up to 1 minute, and if there is still no focus, it records a failure.
 
-## IDE가 죽었을 때 게임 보호
+## Protecting the game when the IDE dies
 
-**실측 결과:** 임베드한 상태에서 IDE(호스트) 프로세스를 강제 종료하면, **약 2.75초 뒤 게임 창이 파괴됩니다.** 자식 창은 부모와 함께 파괴되기 때문입니다.
-게임 프로세스는 창 없이 남아서 더 쓸 수 없고, 마지막 자동 저장 이후의 월드 변경도 잃습니다.
-- **외부에서 구할 수 없음:** 다른 프로세스가 10ms 간격으로 감시하다가 첫 신호에 게임 창을 데스크톱으로 빼려 했지만 실패했습니다.
-  부모 창이 사라지는 순간 게임 창도 이미 파괴되는 중이었고, IDE의 GUI 스레드·프로세스 종료 신호는 그보다 늦게 왔습니다.
-  → **진짜 자식 창 구조에서는 강제 종료 시 창을 지킬 수 없습니다.** 대신 작업을 잃지 않게 합니다.
+**Measured:** killing the IDE (host) process while embedded **destroys the game window about 2.75 s later**, because a
+child window is destroyed with its parent. The game process stays without a window and is no longer usable, and world
+changes since the last autosave are lost.
+- **It cannot be rescued from outside:** another process watching every 10 ms tried to move the game window to the
+  desktop on the first sign and failed. The moment the parent window disappeared, the game window was already being
+  destroyed, and the IDE GUI thread and process exit signals came later than that.
+  → **With a true child window, the window cannot be kept when the IDE is killed.** Instead, no work is lost.
 
-| IDE 종료 방식 | 처리 | 결과(실측) |
+| How the IDE ends | Handling | Result (measured) |
 |---|---|---|
-| 정상 종료, 재시작, 플러그인 해제 | 툴윈도우 dispose → detach | 게임이 일반 창으로 남음 |
-| `taskkill`(/F 없음), 로그오프 | JVM 셧다운 훅 `releaseForShutdown` | **게임이 일반 창으로 남음** (Confirm Exit → Exit, 2초 후 IDE 종료, 게임 창 유지) |
-| **강제 종료(/F, 작업 관리자), 크래시** | **에이전트의 구명보트**(`Lifeboat`) | **게임이 월드를 저장하고 1~2초 안에 종료** |
+| Normal exit, restart, plugin unload | tool window dispose → detach | the game stays as a normal window |
+| `taskkill` (without /F), logoff | JVM shutdown hook `releaseForShutdown` | **the game stays as a normal window** (Confirm Exit → Exit, the IDE quits 2 s later, the game window stays) |
+| **Forced kill (/F, Task Manager), crash** | **the agent lifeboat** (`Lifeboat`) | **the game saves the world and quits within 1–2 s** |
 
-**구명보트**(`poc/agent/.../Lifeboat.java`): 게임 안의 데몬 스레드가 250ms마다 자기 창을 확인합니다.
-- **동작:** 다른 창의 자식인(임베드된) 상태에서 창이 사라지면, 게임에 평소의 종료를 요청합니다.
+**Lifeboat** (`poc/agent/.../Lifeboat.java`): a daemon thread inside the game checks its own window every 250 ms.
+- **What it does:** when the window disappears while it is a child of another window (embedded), it asks the game for
+  its usual quit.
   - GLFW: `glfwSetWindowShouldClose`
-  - SDL: `SDL_EVENT_QUIT` 넣기
+  - SDL: push `SDL_EVENT_QUIT`
   - LWJGL 2: `close_requested`
-  
-  마인크래프트는 "Stopping!" → 플레이어와 월드 저장 → 서버 종료 순서로 정상 종료합니다.
-- **건드리지 않는 경우:** 먼저 detach된(최상위) 창이 닫히는 것은 평범한 종료라 그대로 둡니다.
-- **창 핸들 얻는 법:** `GLFWNativeWin32`, SDL 창 프로퍼티(`SDL.window.win32.hwnd`), LWJGL 2 `WindowsDisplay.hwnd`
-- **Win32 호출:** LWJGL 3 JNI를 쓰고, LWJGL 2 게임은 JNA를 씁니다(1.8 이상에 포함).
 
-검증(호스트 강제 종료 → 게임 로그):
-- 1.21.1 (GLFW), 26.3 (SDL3), 1.12.2 (LWJGL 2 + JNA): 모두 "Stopping!"과 월드 저장 후 1초 안에 프로세스 종료
-- **실제 플러그인 흐름**: 샌드박스 IDE가 붙인 에이전트로 1.21.1 임베드 → IDE `/F` 강제 종료 → 2초 후 저장하고 종료
-- **월드를 연 상태**(lucid-study-mod `runClient --quickPlaySingleplayer`, 1.21.1 Fabric): 호스트 `/F` → "Saving worlds" → "All chunks are saved"(3개 차원) → 7초 안에 종료, `level.dat` 갱신 확인
-- **Run client로 띄운 게임 + IDE 정상 종료**(Confirm Exit → Exit): 게임은 일반 창으로 계속 돌아갑니다.
-  게임 부모는 Gradle 데몬이고 IDE의 자식은 Gradle 클라이언트뿐이라, IDE가 꺼져도 빌드가 취소되지 않습니다. 클라이언트는 게임이 끝날 때 함께 종료됩니다.
+  Minecraft shuts down normally: "Stopping!" → save players and worlds → stop the server.
+- **When it stays out of it:** a window that was detached first (top level) closing is an ordinary exit and is left
+  alone.
+- **Getting the window handle:** `GLFWNativeWin32`, the SDL window property (`SDL.window.win32.hwnd`), LWJGL 2
+  `WindowsDisplay.hwnd`
+- **Win32 calls:** through the LWJGL 3 JNI; LWJGL 2 games use JNA (bundled with 1.8 and newer).
 
-한계: 1.7.10은 LWJGL 3 JNI도 JNA도 없어서 구명보트를 쓸 수 없습니다(로그에 "unavailable"로 남김).
+Checks (host killed → game log):
+- 1.21.1 (GLFW), 26.3 (SDL3), 1.12.2 (LWJGL 2 + JNA): all "Stopping!" and a world save, process gone within 1 s
+- **The real plugin flow**: 1.21.1 embedded with the agent the sandbox IDE attached → IDE killed with `/F` → saved and
+  quit 2 s later
+- **With a world open** (lucid-study-mod `runClient --quickPlaySingleplayer`, 1.21.1 Fabric): host `/F` → "Saving
+  worlds" → "All chunks are saved" (3 dimensions) → quit within 7 s, `level.dat` updated
+- **A game started with Run client + a normal IDE exit** (Confirm Exit → Exit): the game keeps running as a normal
+  window. The game's parent is the Gradle daemon and the IDE's only child is the Gradle client, so closing the IDE does
+  not cancel the build. The client exits when the game ends.
 
-## 핫스왑 (디버거 없이)
+Limit: 1.7.10 has neither the LWJGL 3 JNI nor JNA, so the lifeboat cannot be used there (logged as "unavailable").
 
-**흐름:** 저장하거나 "Hotswap" 버튼을 누르면 다음 순서로 진행됩니다.
-1. 마지막 교체 이후 바뀐 `.java` 파일만 javac로 바로 컴파일해서 소스셋의 `build/classes/...`에 씁니다(`FastCompile.java`).
-   javac에 필요한 정보(소스 폴더, 출력 폴더, 컴파일 클래스패스, release, 인코딩, toolchain javac)는 Run client 때 Gradle init script(`sfClasspath` 태스크)로 **한 번만** 받아서
-   `%TEMP%\sulfurframe\classpath-*.txt`에 캐시합니다. 빌드 파일(`build.gradle*`, `settings.gradle*`, `gradle.properties`, `libs.versions.toml`)이 바뀌면 다시 받습니다.
-   캐시가 아직 없거나, Kotlin 파일이 바뀌었거나, PID로 붙여서 어떤 소스가 바뀌었는지 모르면 예전처럼 Gradle `<경로>:classes`(+ `clientClasses`)로 컴파일합니다.
-2. `build/classes` 아래에서 수정 시각이 바뀐 `.class` 파일을 찾습니다.
-3. 목록 파일을 ASCII 경로에 쓰고, Attach API로 에이전트에 `redefine=<목록>`을 보냅니다.
-4. 에이전트(`poc/agent/.../Hotswap.java`)가 이미 로드된 클래스를 `Instrumentation.redefineClasses`로 교체하고 결과 파일을 씁니다.
+## Hotswap (without a debugger)
 
-- **javac 경로의 범위:** 고친 파일만 컴파일하고(나머지는 출력 폴더의 클래스를 참조), 어노테이션 프로세서는 끕니다(`-proc:none`, Mixin refmap은 건드리지 않음). 핫스왑이 반영할 수 있는 것은 어차피 메서드 본문뿐이라 이걸로 충분합니다. 컴파일 오류가 나면 그 파일들은 다음 교체 때 다시 시도합니다.
+**Flow:** saving, or pressing the "Hotswap" button, goes through these steps.
+1. Only the `.java` files changed since the last swap are compiled right away with javac and written to the source
+   set's `build/classes/...` (`FastCompile.java`). What javac needs (source folders, output folders, compile class
+   path, release, encoding, toolchain javac) is fetched **once** at Run client time through a Gradle init script (the
+   `sfClasspath` task) and cached in `%TEMP%\sulfurframe\classpath-*.txt`. It is fetched again when build files
+   (`build.gradle*`, `settings.gradle*`, `gradle.properties`, `libs.versions.toml`) change. If there is no cache yet, a
+   Kotlin file changed, or the game was attached by PID so it is unknown which sources changed, it compiles with Gradle
+   `<path>:classes` (+ `clientClasses`) as before.
+2. Finds the `.class` files under `build/classes` whose modification time changed.
+3. Writes the list to a file on an ASCII path and sends `redefine=<list>` to the agent through the Attach API.
+4. The agent (`poc/agent/.../Hotswap.java`) replaces the already loaded classes with
+   `Instrumentation.redefineClasses` and writes a result file.
 
-- **디버거를 쓰지 않는 이유:** IntelliJ의 HotSwap(JDWP)은 게임을 디버거로 띄워야 하는데, `runClient`에 디버그 포트를 끼우면 Gradle 데몬과 충돌하기 쉽습니다. 이미 붙어 있는 에이전트를 쓰면 이 문제가 없습니다.
-- **반영되는 범위:** Run client는 게임을 **JetBrains Runtime(JBR)**과 `-XX:+AllowEnhancedClassRedefinition`으로 띄웁니다(`Jbr.java`, Gradle init script로 runClient의 실행 파일과 JVM 인자만 바꾸고 프로젝트 빌드 파일은 건드리지 않음). JBR에 들어 있는 DCEVM 덕분에 **메서드와 필드를 추가하거나 지워도** 그대로 교체됩니다.
-  - JBR은 게임이 필요한 Java 버전과 같아야 합니다. `~/.jdks`(IntelliJ의 SDK 다운로드)에서 찾고, 버전이 맞으면 IDE 자신의 JBR(2026.x는 25, 마인크래프트 26.x용)도 씁니다. 1.21.x는 `jbr-21`이 필요합니다.
-  - 맞는 JBR이 없으면 일반 JVM으로 띄우고, 그때는 **메서드 본문 변경**만 반영됩니다. 메서드나 필드를 추가·삭제하면 해당 클래스만 "restart needed"로 알려 주고, 나머지 클래스는 그대로 반영합니다(한 번에 실패하면 클래스별로 다시 시도).
-  - **한 번에 설치 (`JbrDownloader.java`):** 맞는 JBR이 없으면 Run client가 알림으로 다운로드를 제안합니다(Java 버전마다 IDE
-    세션당 한 번, JBR이 있는 17·21·25만). 누르면 백그라운드 작업(진행 표시, 취소 가능)으로:
-    1. IntelliJ의 JDK 다운로드가 쓰는 공개 목록(`download.jetbrains.com/jdk/feed/v1/jdks.json`)에서 이 OS·CPU의 JBR SDK(JCEF·DCEVM 제외)를 고르고
-    2. IDE의 프록시 설정으로 받아(`HttpRequests`, 약 230 MB) SHA-256을 확인한 뒤
-    3. `~/.jdks/jbr-<버전>`에 풉니다(IntelliJ 자체 다운로드와 같은 폴더·이름이라 `Jbr.find`가 그대로 찾음). `.part` 폴더에
-       풀고 마지막에 옮겨서, 중간에 취소하거나 깨진 다운로드가 설치된 JBR처럼 보이지 않습니다.
-    4. 끝나면 "Restart the game now" 알림을 띄웁니다. 다음 시작부터 JBR로 뜹니다(Gradle 없는 재시작도 JBR이 바뀐 것을 보고 Gradle로 갑니다).
-    - IntelliJ의 `JdkInstaller`/`JdkItem`은 내부 API(`@ApiStatus.Internal`)라 쓰지 않고, 공개 API(`HttpRequests`, `Decompressor`,
-      `Task.Backgroundable`)만 씁니다. 제안을 끄려면 `-Dsulfurframe.noJbrOffer=true`.
-    - 자가 테스트 `-Dsulfurframe.autotest.jbrdownload=true`: 실제로 내려받아 임시 폴더에 설치하고 JBR 21인지 확인한 뒤 지웁니다.
-  - 새로 추가한 필드는 초기값 없이(0, null) 시작합니다. 클래스 초기화(static 블록)가 다시 돌지 않고, 이미 있는 객체의 생성자도 다시 돌지 않기 때문입니다.
-  - 새 클래스는 교체할 필요가 없습니다. 처음 쓰일 때 build/classes에서 읽힙니다.
-- **아직 로드되지 않은 클래스:** 할 일이 없습니다. 나중에 로드될 때 새 파일을 읽습니다.
-- **저장 감지:** `VFS_CHANGES`의 `.java`/`.kt` 내용 변경을 0.5초 디바운스해서 받습니다. "Save All"로 파일 여러 개를 저장해도 한 번만 실행됩니다.
-  고른 대상 폴더 안의 파일일 때만 동작하고, 툴윈도우의 "Hotswap on save" 체크로 켜고 끕니다.
+- **Scope of the javac path:** only the edited files are compiled (the rest refer to the classes in the output folder),
+  and annotation processors are off (`-proc:none`, the Mixin refmap is left alone). Hotswap can only apply method
+  bodies anyway, so that is enough. On a compile error, those files are tried again on the next swap.
 
-검증: 샌드박스 IDE에서 lucid-study-mod 사본에 관찰용 클래스(5초마다 `[SF-PROBE] <message()>` 로그)를 넣고 진행했습니다.
+- **Why not the debugger:** IntelliJ's HotSwap (JDWP) needs the game started under the debugger, and putting a debug
+  port into `runClient` easily clashes with the Gradle daemon. An agent that is already attached has no such problem.
+- **What applies:** Run client starts the game on **JetBrains Runtime (JBR)** with
+  `-XX:+AllowEnhancedClassRedefinition` (`Jbr.java`; a Gradle init script changes only the runClient executable and JVM
+  arguments, and the project build files stay untouched). Thanks to the DCEVM inside JBR, **adding or removing methods
+  and fields** swaps in as well.
+  - The JBR has to match the Java version the game needs. It is looked up in `~/.jdks` (IntelliJ's SDK download), and the
+    IDE's own JBR (25 for 2026.x, for Minecraft 26.x) is used when the version matches. 1.21.x needs `jbr-21`.
+  - Without a matching JBR the game starts on a regular JVM, and then only **method body changes** apply. Adding or
+    removing methods or fields reports just those classes as "restart needed" and applies the rest (if one batch fails,
+    it retries class by class).
+  - **One-click install (`JbrDownloader.java`):** without a matching JBR, Run client offers a download in a notification
+    (once per Java version per IDE session, only for 17, 21 and 25, which have a JBR). Accepting runs a background task
+    (with progress, cancellable) that:
+    1. picks the JBR SDK for this OS and CPU (without JCEF or DCEVM variants) from the public list IntelliJ's JDK
+       download uses (`download.jetbrains.com/jdk/feed/v1/jdks.json`)
+    2. downloads it through the IDE proxy settings (`HttpRequests`, about 230 MB) and checks its SHA-256
+    3. unpacks it to `~/.jdks/jbr-<version>` (the same folder and name as IntelliJ's own download, so `Jbr.find` finds
+       it as is). It unpacks into a `.part` folder and moves it at the end, so a cancelled or broken download never looks
+       like an installed JBR.
+    4. shows a "Restart the game now" notification when done. The next start uses the JBR (a restart without Gradle
+       also sees the changed JBR and goes through Gradle).
+    - IntelliJ's `JdkInstaller`/`JdkItem` are internal API (`@ApiStatus.Internal`) and are not used; only public API
+      (`HttpRequests`, `Decompressor`, `Task.Backgroundable`). To turn the offer off: `-Dsulfurframe.noJbrOffer=true`.
+    - Self-test `-Dsulfurframe.autotest.jbrdownload=true`: really downloads it, installs it to a temporary folder,
+      checks that it is JBR 21, and deletes it.
+  - Newly added fields start without initial values (0, null): class initialization (static blocks) does not run again,
+    and constructors of existing objects do not run again either.
+  - New classes need no swap. They are read from build/classes the first time they are used.
+- **Classes not loaded yet:** nothing to do. They read the new file when they load later.
+- **Detecting saves:** `.java`/`.kt` content changes from `VFS_CHANGES` are received with a 0.5 s debounce. "Save All"
+  with several files runs only once. It only acts on files inside the chosen target folder, and is switched on and off
+  with the tool window's "Hotswap on save" option.
+
+Check: done in the sandbox IDE on a copy of lucid-study-mod with an observation class added (logging `[SF-PROBE]
+<message()>` every 5 s).
 ```
 PASS probe running (v1 in game log)
-PASS fast compile: class path read from Gradle   [최초 1회 13 s, 이후 캐시]
-PASS hotswap: method body change applied   [redefined 1, 에이전트 41 ms, 전체 2.4 s (javac)]
+PASS fast compile: class path read from Gradle   [13 s the first time, cached after]
+PASS hotswap: method body change applied   [redefined 1, agent 41 ms, total 2.4 s (javac)]
 PASS hotswap compiled with javac, not Gradle
 PASS hotswap on save (VFS change -> swap)  [game log shows v3]
 PASS hotswap (JBR): added field + method applied and running   [redefined 1; game log "[SF-PROBE] v4 extra1"]
 PASS hotswap (JBR): removed field + method applied              [redefined 1; "[SF-PROBE] v5"]
 ```
-게임 로그는 `v1 ×5 → v2 → v3`로 바뀌었고, **게임은 재시작하지 않았습니다.**
+The game log went `v1 ×5 → v2 → v3`, and **the game did not restart.**
 
-### 보강 (IDE 안 컴파일, Mixin, 리소스, 게임 안 알림)
-- **IDE 안에서 컴파일:** javac를 매번 새 프로세스로 띄우지 않고, IDE의 JBR에 들어 있는 javac(`jdk.compiler`, `ct.sym`)로 IDE 안에서 바로 컴파일합니다(`--release`는 프로젝트 것).
-  소스셋마다 파일 매니저를 유지해서 Minecraft 클래스패스 jar 색인을 한 번만 읽고, 클래스패스를 받은 직후 백그라운드에서 한 번 미리 컴파일해 둡니다.
-  IntelliJ 안에서는 `ToolProvider`가 javac를 못 찾아서(IDE 자체 시스템 클래스 로더), IDE가 실행 옵션으로 열어 둔 `com.sun.tools.javac.api.JavacTool`을 직접 씁니다. 없으면 예전처럼 javac 프로세스로 돌아갑니다.
-  결과: 교체 한 번(컴파일 + attach + 교체)이 **0.47~0.86초**, 구조 변경 직후 등은 1.3초 안팎(이전 2.4초, 그 전 Gradle 15초).
-- **Mixin:** Run client가 게임에 Mixin 자체의 핫스왑 에이전트(`-javaagent:<클래스패스의 (sponge-)mixin jar>`, `-Dmixin.hotSwap=true`)를 붙입니다. Mixin은 이때 Mixin 클래스마다 같은 이름의 가짜 클래스를 로드해 두고, 그 클래스가 교체되면 Mixin을 다시 읽어 대상 클래스에 다시 적용합니다. 그래서 우리 핫스왑이 Mixin 클래스를 그대로 교체하면 됩니다(로그 "Redefining mixin ...").
-- **리소스:** `src/*/resources` 저장을 감지해, Gradle이 알려 준 소스셋의 리소스 출력 폴더(`processResources`가 채우는 곳, dev 게임이 읽는 곳)에 바로 복사하고 에이전트를 부릅니다.
-  - `assets/` 아래(텍스처, 모델, 언어, 소리 등): 클라이언트 리소스 다시 불러오기(F3+T와 같음)
-  - `data/` 아래(레시피, 루트 테이블, 태그 등): 내장 서버에서 `/reload`. 월드가 열려 있을 때만 됩니다.
-  - `fabric.mod.json`, `mods.toml` 같은 모드 메타데이터는 `processResources`가 값을 채워 넣는 파일이라 복사하지 않고 "재시작 필요"로 알립니다.
-- **게임 안 알림:** 교체나 리소스 새로고침이 끝나면 핫바 위 액션바에 "Hotswap: 1 class reloaded" / "Resources reloaded (assets)" 같은 줄을 띄웁니다. 재시작이 필요한 클래스가 있으면 노란색으로 알립니다. 월드 안(HUD가 있을 때)에서만 보입니다.
-  - 게임 안 알림과 리소스 새로고침은 개발 환경의 이름(Mojang 매핑: NeoForge/Forge 개발 환경과 바닐라 26.x, Yarn: Fabric 개발 환경)으로 Minecraft 클래스를 찾습니다. 난독화된 게임에서는 동작하지 않습니다.
+### Additions (compiling inside the IDE, Mixin, resources, in-game messages)
+- **Compiling inside the IDE:** instead of starting a javac process every time, it compiles right inside the IDE with the
+  javac in the IDE's JBR (`jdk.compiler`, `ct.sym`; `--release` is the project's). A file manager is kept per source
+  set, so the Minecraft class path jar index is read once, and right after the class path arrives, one compile runs in
+  the background as a warm-up. Inside IntelliJ, `ToolProvider` cannot find javac (the IDE's own system class loader), so
+  `com.sun.tools.javac.api.JavacTool`, which the IDE opens through its launch options, is used directly. Without it, it
+  falls back to a javac process as before.
+  Result: one swap (compile + attach + redefine) takes **0.47–0.86 s**, around 1.3 s right after structural changes
+  and the like (2.4 s before, and Gradle's 15 s before that).
+- **Mixin:** Run client attaches Mixin's own hotswap agent to the game (`-javaagent:<the (sponge-)mixin jar on the class
+  path>`, `-Dmixin.hotSwap=true`). Mixin then loads a stand-in class with the same name for every Mixin class, and when
+  that class is redefined, it re-reads the Mixin and applies it to its targets again. So our hotswap only has to
+  redefine the Mixin class as usual (log "Redefining mixin ...").
+- **Resources:** saves under `src/*/resources` are detected, copied straight into the source set's resource output folder
+  that Gradle reported (what `processResources` fills and the dev game reads), and the agent is called.
+  - under `assets/` (textures, models, languages, sounds and so on): reload the client resources (like F3+T)
+  - under `data/` (recipes, loot tables, tags and so on): `/reload` on the integrated server. Only while a world is open.
+  - Mod metadata such as `fabric.mod.json` and `mods.toml` is filled in with values by `processResources`, so it is not
+    copied; instead a restart is suggested.
+- **In-game messages:** after a swap or resource reload, a line such as "Hotswap: 1 class reloaded" / "Resources reloaded
+  (assets)" appears in the action bar above the hotbar. Classes that need a restart are reported in yellow. Only visible
+  in a world (with the HUD).
+  - In-game messages and resource reloads find Minecraft classes by their dev environment names (Mojang mappings in
+    NeoForge/Forge dev environments and vanilla 26.x; Yarn in Fabric dev environments). They do not work in an
+    obfuscated game.
 
-검증(Windows 샌드박스 IDE, lucid-study-mod 사본 1.21.1 Fabric, jbr-21, 시험용 Mixin `SfMixinProbe`를 사본에 추가):
+Check (Windows sandbox IDE, lucid-study-mod copy 1.21.1 Fabric, jbr-21, test Mixin `SfMixinProbe` added to the copy):
 ```
 PASS hotswap: method body change applied            [864 ms incl. compile (javac in the IDE)]
 PASS hotswap compiled in the IDE (warm), whole swap fast
-PASS in-game message after a swap                   (에이전트 로그 "in-game message shown: Hotswap: 1 class reloaded")
-PASS hotswap: mixin change re-applied to its target ("Redefining mixin kr/kro/lucid/mixin/SfMixinProbe", 로그 m1 -> m2)
-PASS resource change -> client reload               (언어 파일 -> "Reloading ResourceManager")
+PASS in-game message after a swap                   (agent log "in-game message shown: Hotswap: 1 class reloaded")
+PASS hotswap: mixin change re-applied to its target ("Redefining mixin kr/kro/lucid/mixin/SfMixinProbe", log m1 -> m2)
+PASS resource change -> client reload               (language file -> "Reloading ResourceManager")
 ```
-데이터 리로드는 월드를 연 게임에 직접 attach해서 확인했습니다("resources: /reload on the integrated server", 서버 스레드 "Loaded 1295 recipes").
+The data reload was checked by attaching directly to a game with a world open ("resources: /reload on the integrated
+server", server thread "Loaded 1295 recipes").
 
-### 어노테이션 프로세서와 Kotlin
-- **어노테이션 프로세서:** Gradle에서 compileJava의 프로세서 경로(`annotationProcessorPath`)와 생성 소스 폴더를 받아, 빠른 컴파일에서도 돌립니다. Lombok처럼 그게 없으면 컴파일이 안 되는 프로젝트도 됩니다.
-  Mixin의 프로세서(refmap 생성기, `fabric-mixin-compile-extensions`, `sponge-mixin`)와 그 `-A` 옵션은 뺍니다. 개발 환경에는 필요 없고, 일부 파일만 컴파일하면 refmap을 그 파일들 것만으로 덮어쓰기 때문입니다.
-  프로세서용 클래스 로더는 소스셋마다 하나 만들어 계속 쓰고, 프로세서 객체만 매번 새로 만들어 넘깁니다(`task.setProcessors`). javac가 컴파일마다 jar를 다시 읽으면 Lombok 하나로 1.5초가 걸렸는데, 이렇게 하면 0.15~0.33초입니다.
-- **Kotlin:** 예전에는 `.kt`가 바뀌면 Gradle로 컴파일했습니다(10초 이상). 이제 Gradle에서 그 프로젝트가 실제로 쓰는 Kotlin 컴파일러(`kotlinCompilerClasspath`: `kotlin-compiler-embeddable` 등)와 Kotlin 소스·출력 폴더, 클래스패스, `jvmTarget`, 모듈 이름을 받아, `K2JVMCompiler`를 IDE 안의 별도 클래스 로더에서 돌립니다(한 번 로드해 계속 씀, 미리 데우기 포함).
-  바뀐 파일은 임시 폴더로 컴파일한 뒤 `.class`만 Kotlin 출력 폴더로 옮깁니다. 일부 파일만 컴파일하면 `META-INF/*.kotlin_module`이 그 파일들 것만으로 덮어써지기 때문입니다.
-  Kotlin을 먼저 컴파일하고 Java를 그다음에 컴파일하며, Java 컴파일 클래스패스에 Kotlin 출력을 넣습니다(Gradle의 compileClasspath에는 없음).
-  **IDE 안에서는 Kotlin 컴파일러가 실패**해서(컴파일러가 품고 있는 IntelliJ 코어가 IDE 환경을 집어 드는 것으로 보임, IDE 밖에서는 정상) 계속 떠 있는 별도 프로세스(`KotlinServer`, IDE의 JBR로 실행)로 돌립니다. 요청은 표준 입력으로 한 줄씩 보내고, 컴파일러는 그 프로세스에 로드된 채 데워져 있습니다. IntelliJ의 플러그인 클래스 로더는 jar 위치를 알려 주지 않아서, 서버 클래스 파일은 임시 폴더에 풀어 씁니다.
-  결과: 미리 데우기 10~12초(백그라운드), 그 뒤 Kotlin 파일 교체 한 번 약 1.8~2.5초(Kotlin과 Java를 함께 컴파일한 경우 포함). Gradle로는 30초 이상 걸렸습니다.
-- **고친 버그:** Gradle이 `build/resources`에 쓴 `fabric.mod.json` 같은 빌드 출력도 "저장"으로 받아 재시작을 권하고 있었습니다. `build/`, `.gradle/`, `run/`, `out/` 아래 변경은 이제 무시합니다.
+### Annotation processors and Kotlin
+- **Annotation processors:** compileJava's processor path (`annotationProcessorPath`) and generated source folder are
+  fetched from Gradle and run in the fast compile too. Projects that do not compile without them, such as with Lombok,
+  work. Mixin's processors (refmap generator, `fabric-mixin-compile-extensions`, `sponge-mixin`) and their `-A` options
+  are left out: the dev environment does not need them, and compiling only some files would overwrite the refmap with
+  just those files. One class loader for processors is created per source set and kept; only the processor objects are
+  created fresh each time and handed over (`task.setProcessors`). With javac re-reading the jars for every compile,
+  Lombok alone took 1.5 s; this way it is 0.15–0.33 s.
+- **Kotlin:** a changed `.kt` used to be compiled with Gradle (10 s or more). Now the Kotlin compiler the project really
+  uses (`kotlinCompilerClasspath`: `kotlin-compiler-embeddable` etc.), the Kotlin source and output folders, class path,
+  `jvmTarget` and module name are fetched from Gradle, and `K2JVMCompiler` runs in a separate class loader (loaded once
+  and kept, with a warm-up). Changed files are compiled into a temporary folder and only the `.class` files are moved to
+  the Kotlin output folder, because compiling only some files would overwrite `META-INF/*.kotlin_module` with just
+  those files. Kotlin is compiled first and Java after, with the Kotlin output on the Java compile class path (it is not
+  in Gradle's compileClasspath).
+  **Inside the IDE the Kotlin compiler fails** (the IntelliJ core bundled in the compiler seems to pick up the IDE
+  environment; outside the IDE it is fine), so it runs in a long-lived separate process (`KotlinServer`, started on the
+  IDE's JBR). Requests go one line at a time over standard input, and the compiler stays loaded and warm in that
+  process. IntelliJ's plugin class loader does not tell the jar location, so the server class files are unpacked to a
+  temporary folder.
+  Result: warm-up 10–12 s (in the background), then one Kotlin file swap takes about 1.8–2.5 s (including when Kotlin
+  and Java compile together). With Gradle it took more than 30 s.
+- **Fixed bug:** build outputs such as the `fabric.mod.json` Gradle writes to `build/resources` were also taken as
+  "saves" and suggested a restart. Changes under `build/`, `.gradle/`, `run/` and `out/` are now ignored.
 
-검증(테스트 사본에 Lombok 1.18.38과 Kotlin 2.2.21을 추가, Lombok getter를 쓰는 `SfLombokProbe`, Kotlin `object SfKotlinProbe`):
+Check (Lombok 1.18.38 and Kotlin 2.2.21 added to the test copy, `SfLombokProbe` using a Lombok getter, Kotlin
+`object SfKotlinProbe`):
 ```
 PASS hotswap with an annotation processor (Lombok)        [javac in the IDE]
-PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (게임 로그 "[SF-KOTLIN] k2")
+PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (game log "[SF-KOTLIN] k2")
 ```
 
-### 빠른 재시작 (핫스왑이 못 하는 변경)
-새 블록·아이템 등록, 모드 메타데이터, 액세스 와이드너, 빌드 변경처럼 게임이 시작할 때만 읽는 것은 실행 중에 바꿀 수 없습니다. 그래서 **Restart** 버튼이 그 부분을 맡습니다.
-1. 에이전트에게 열린 월드의 폴더 이름을 묻고(Mojang `storageSource.getLevelId()` / Yarn `session.getDirectoryName()`, 서버 필드에서 찾음), 정상 종료를 요청합니다. 게임이 월드를 저장하고 꺼질 때까지 기다립니다(90초가 넘으면 강제 종료).
-2. 게임을 `--quickPlaySingleplayer <월드>`(1.20+)로 다시 띄웁니다. 새 게임은 툴윈도우에 다시 붙고 같은 월드로 바로 들어갑니다.
-   - **Gradle 없이 (`QuickRelaunch.java`):** Gradle로 실행한 게임의 명령줄을 실행 중인 프로세스에서 읽어 둡니다
-     (Windows `NtQueryInformationProcess` + `CommandLineToArgvW`, Linux `/proc/<pid>/cmdline`, 인자 파일은 복사).
-     작업 폴더와 환경 변수는 에이전트가 시작할 때 기록합니다. Loom이 클래스패스와 환경을 `exec()` 안에서 정해서
-     Gradle 쪽(init script의 `doFirst`)에서는 최종 명령을 볼 수 없기 때문입니다. 다음 실행(Restart, Rerun, Run client)은
-     이 명령줄로 게임을 바로 띄우고, 그 실행에만 해당하는 것만 새로 넣습니다: 에이전트와 실행 표식, 디버그 포트, 개발 모드, quick play 월드.
-   - 띄우기 전에 그사이 저장한 소스는 빠른 컴파일로, 바뀐 리소스는 출력 폴더로 복사해 둡니다(`Hotswapper.prepareRelaunch`).
-   - **Gradle로 가는 경우:** 빌드 파일(`*.gradle(.kts)`, `gradle.properties`, 버전 카탈로그, wrapper·데몬 JVM 파일,
-     `buildSrc`/`build-logic`), 게임용 JBR, 모드 메타데이터나 액세스 와이드너(`fabric.mod.json`, `mods.toml`, `*.accesswidener`,
-     `*.classtweaker`, `accesstransformer.cfg`)가 바뀌었거나, 컴파일 오류가 있거나, 바로 실행이 실패했을 때. 이유는
-     `starting through Gradle: …`로 로그에 남습니다. `-Dsulfurframe.quickRelaunch=false`로 끕니다.
-   - **Windows 명령줄 길이:** 경로에 ASCII가 아닌 글자가 있으면 Loom이 인자 파일을 쓰지 않아 클래스패스가 통째로
-     명령줄에 들어갑니다(다중 프로젝트 모드 32,223자, 한계 32,767자). 넘칠 것 같으면 클래스패스를 `CLASSPATH` 환경 변수로
-     넘깁니다(실측: 명령줄 511자, 같은 시간에 모드 65개 로드).
-   - Gradle 경로: init script가 월드 이름을 Base64로 받아 인자에 붙여서 공백이나 한글도 됩니다.
-   - 한계: 지운 소스·리소스의 출력은 다음 Gradle 실행 때까지 남습니다. Loom의 Microsoft 로그인을 쓰면 하루 넘게 이어진
-     세션에서 저장된 토큰이 만료될 수 있습니다.
-   - 남은 재시작 가운데 무엇이 JVM 몫이고 무엇이 Minecraft나 우리 구현의 몫인지, 그리고 줄일 목표는 [`docs/roadmap.md`](docs/roadmap.md)에 있습니다.
+### Quick restart (changes hotswap cannot do)
+Things the game only reads at startup, such as registering new blocks and items, mod metadata, access wideners and build
+changes, cannot be changed while it runs. The **Restart** button takes care of those.
+1. Asks the agent for the folder name of the open world (Mojang `storageSource.getLevelId()` / Yarn
+   `session.getDirectoryName()`, found through the server fields) and requests a normal quit. Waits until the game has
+   saved the world and exited (forced after 90 s).
+2. Starts the game again with `--quickPlaySingleplayer <world>` (1.20+). The new game attaches to the tool window again and
+   goes straight into the same world.
+   - **Without Gradle (`QuickRelaunch.java`):** the command line of the game Gradle started is read from the running
+     process (Windows `NtQueryInformationProcess` + `CommandLineToArgvW`, Linux `/proc/<pid>/cmdline`; argument files
+     are copied). The working folder and environment variables are recorded by the agent at startup, because Loom sets
+     the class path and environment inside `exec()`, where the Gradle side (an init script's `doFirst`) cannot see the
+     final command. The next run (Restart, Rerun, Run client) starts the game straight from this command line, adding
+     only what belongs to that run: the agent and launch marker, debug port, dev mods, quick play world.
+   - Before starting, sources saved in the meantime are fast-compiled, and changed resources copied to the output
+     folder (`Hotswapper.prepareRelaunch`).
+   - **When it goes through Gradle:** when build files (`*.gradle(.kts)`, `gradle.properties`, version catalogs, wrapper
+     and daemon JVM files, `buildSrc`/`build-logic`), the game's JBR, mod metadata or access wideners
+     (`fabric.mod.json`, `mods.toml`, `*.accesswidener`, `*.classtweaker`, `accesstransformer.cfg`) changed, on a
+     compile error, or when starting directly failed. The reason is logged as `starting through Gradle: …`. Turn it off
+     with `-Dsulfurframe.quickRelaunch=false`.
+   - **Windows command line length:** with non-ASCII characters in the path, Loom does not use an argument file, so the
+     whole class path goes onto the command line (32,223 characters on the multi-project mod, limit 32,767). When it
+     would overflow, the class path is passed in the `CLASSPATH` environment variable (measured: a 511-character command
+     line, 65 mods loaded in the same time).
+   - Gradle path: the init script receives the world name in Base64 and adds it to the arguments, so spaces and Korean
+     characters work.
+   - Limits: outputs of deleted sources and resources stay until the next Gradle run. With Loom's Microsoft login, the
+     saved token may expire in a session that runs for more than a day.
+   - Which of the remaining restarts are the JVM's part and which are Minecraft's or our implementation's, and the goals
+     for cutting them, are in [`docs/roadmap.md`](docs/roadmap.md).
 
-재시작이 필요한 변경을 감지하면 로그와 IDE 알림에 **"Restart into the same world"** 버튼을 띄웁니다.
-- 저장한 파일: `fabric.mod.json`, `quilt.mod.json`, `mods.toml`, `*.accesswidener`, `accesstransformer.cfg`, `*mixins.json`, `build.gradle*`, `settings.gradle*`, `gradle.properties`, `libs.versions.toml`
-- 핫스왑 결과의 "restart needed"(JBR이 없을 때의 구조 변경)
-- **시작할 때 한 번만 도는 코드가 바뀐 경우**(`StartupCode.java`): 교체 전후 클래스에서 `<clinit>`, `onInitialize*`, `register*`, `initialize*`의 명령어를 비교합니다(줄 번호 제외, IntelliJ 내장 ASM). 교체 자체는 성공하지만 이미 실행된 코드라 게임에 반영되지 않는 경우입니다(새 블록 등록 등).
+When a change that needs a restart is detected, a **"Restart into the same world"** button appears in the log and an IDE
+notification.
+- Saved files: `fabric.mod.json`, `quilt.mod.json`, `mods.toml`, `*.accesswidener`, `accesstransformer.cfg`,
+  `*mixins.json`, `build.gradle*`, `settings.gradle*`, `gradle.properties`, `libs.versions.toml`
+- "restart needed" from a hotswap result (structural changes without a JBR)
+- **Code that runs only once at startup changed** (`StartupCode.java`): the instructions of `<clinit>`, `onInitialize*`,
+  `register*` and `initialize*` are compared between the class before and after the swap (line numbers excluded,
+  IntelliJ's bundled ASM). The swap itself succeeds, but the code has already run, so the game does not show it (new
+  block registrations and the like).
 
-### 조용한 시작 (포커스와 마우스를 뺏지 않기)
-새 게임 창은 처음에 일반 창으로 떠서 포커스를 가져갑니다. quick play로 월드에 들어가면 Minecraft가 마우스를 잡고,
-GLFW는 `ClipCursor`로 커서를 그 창 영역에 가둡니다(시스템 전체). 원래는 포커스를 잃을 때(WM_KILLFOCUS) 풀리지만, 창이
-IDE의 자식 창이 되면 그 메시지가 오지 않습니다. 그래서 세 가지 문제가 있었습니다.
-- Run client를 누르면 쓰던 앱(브라우저, 다른 창)에서 포커스가 빠져나갔습니다.
-- 커서가 옛 게임 창 크기의 사각형에 갇혔습니다. 다른 앱 위에서도 마찬가지였습니다.
-- Minecraft가 계속 "활성, 마우스 잡힘"으로 남아 일시정지 메뉴가 뜨지 않았습니다. 게임에 포커스를 주려는 첫 클릭이
-  공격이 되어, 크리에이티브에서는 발밑 블록이 기반암까지 부서졌습니다(자가 테스트 플레이어가 공허로 떨어짐).
+### Quiet start (not taking the focus or the mouse)
+A new game window first appears as a normal window and takes the focus. Entering a world with quick play makes
+Minecraft grab the mouse, and GLFW confines the cursor to that window area with `ClipCursor` (system-wide). Normally that
+is released when the focus is lost (WM_KILLFOCUS), but once the window becomes a child of the IDE, that message never
+comes. That caused three problems:
+- Pressing Run client took the focus away from the app you were using (browser, another window).
+- The cursor was trapped in a rectangle the size of the old game window, even over other apps.
+- Minecraft stayed "active, mouse grabbed", so the pause menu never appeared. The first click meant to give the game the
+  focus became an attack, and in creative it broke the blocks underfoot down to bedrock (the self-test player fell into
+  the void).
 
-고친 방법:
-- **창을 만들 때부터 포커스를 주지 않음 (에이전트, `SfHooks.beforeGlfwCreateWindow`):** IDE가 띄운 게임(`launch=`로
-  시작한 premain, Gradle 없는 재시작 포함)에서 `nglfwCreateWindow` 직전에 `GLFW_FOCUSED`와 `GLFW_FOCUS_ON_SHOW`를 끕니다.
-  게임이 정한 창 옵션(`glfwDefaultWindowHints` 뒤)이 다 정해진 다음이라 덮어써지지 않습니다. 창이 활성이 아니면 Minecraft는
-  마우스를 잡지 않으므로(`grabMouse`가 창 활성 여부를 먼저 봄) 커서도 갇히지 않고, 월드에 들어가면 일시정지 메뉴로 기다립니다.
-- **X11: 창 관리자에게도 "포커스 주지 말 것" (`SfHooks.afterGlfwCreateWindow`, `X11Lifeboat.markNoFocusOnMap`):** GLFW 옵션은
-  GLFW 자신의 포커스 요청만 막고, 창 관리자는 새로 매핑된 최상위 창에 스스로 포커스를 줍니다(openbox에서 0.2~0.8초). 그래서
-  Linux에서는 창을 숨긴 채(`GLFW_VISIBLE` 끔) 만들고, `glfwCreateWindow`가 돌아오는 순간 EWMH `_NET_WM_USER_TIME = 0`("매핑될 때
-  포커스를 주지 말 것")을 붙인 뒤 GLFW로 바로 보이게 합니다. 속성은 GLFW의 X 연결로 쓰므로 매핑 요청보다 먼저 서버에 닿습니다.
-  Xlib 호출은 LWJGL JNI 호출기(모든 인자가 long인 것: x86-64에서는 int 인자도 64비트 칸으로 전달됨)로 합니다. 표시를 못 붙여도
-  창은 항상 보이게 합니다.
-- **안전망 (`GameEmbedder.releaseStaleClip`):** 임베드 뒤 약 20초 동안, 게임에 키보드가 없으면 WM_KILLFOCUS를 한 번 보내고
-  남은 커서 가둠을 풉니다. `GLFW_FOCUS_ON_SHOW`가 없는 GLFW 3.2 이하나, 다른 경로로 창이 포커스를 받은 경우를 위한 것입니다.
-- **테스트 월드 복구 (`TestWorld.playerLost`):** 자가 테스트는 실행 전에 `level.dat`을 읽어서, 플레이어가 죽었거나 오버월드
-  바닥(-64) 아래에 있으면 그 월드를 `<이름>-broken-<시각>`으로 옮기고 새 테스트 월드를 만듭니다.
+How it was fixed:
+- **No focus from the moment the window is created (agent, `SfHooks.beforeGlfwCreateWindow`):** in games the IDE starts
+  (premain started with `launch=`, including restarts without Gradle), `GLFW_FOCUSED` and `GLFW_FOCUS_ON_SHOW` are turned
+  off right before `nglfwCreateWindow`. That is after the game has set all its window hints (after
+  `glfwDefaultWindowHints`), so they are not overwritten. Minecraft does not grab the mouse unless its window is active
+  (`grabMouse` checks that first), so the cursor is not trapped either, and on entering the world it waits in the pause
+  menu.
+- **X11: telling the window manager not to give focus too (`SfHooks.afterGlfwCreateWindow`,
+  `X11Lifeboat.markNoFocusOnMap`):** GLFW's hints only stop GLFW's own focus request; the window manager gives focus to
+  a newly mapped top-level window by itself (0.2–0.8 s in openbox). So on Linux the window is created hidden
+  (`GLFW_VISIBLE` off), and the moment `glfwCreateWindow` returns, EWMH `_NET_WM_USER_TIME = 0` ("do not give focus when
+  mapped") is set, and then GLFW shows it right away. The property is written over GLFW's X connection, so it reaches
+  the server before the map request. Xlib calls go through LWJGL's JNI invokers (the all-long ones: on x86-64 int
+  arguments are passed in 64-bit slots too). Even if the property cannot be set, the window is always shown.
+- **Safety net (`GameEmbedder.releaseStaleClip`):** for about 20 s after embedding, if the game has no keyboard, one
+  WM_KILLFOCUS is sent and any leftover cursor confinement released. For GLFW 3.2 and older without `GLFW_FOCUS_ON_SHOW`,
+  or when the window got the focus some other way.
+- **Test world recovery (`TestWorld.playerLost`):** before running, the self-test reads `level.dat`, and if the player
+  died or is below the overworld floor (-64), it moves that world to `<name>-broken-<time>` and creates a new test world.
 
-검증(Windows 샌드박스, quick play로 Run client, 100 ms마다 확인): 실행하는 동안 앞 창이 한 번도 게임이 아니었고,
-`GetClipCursor`는 화면 전체(0,0,1920,1200) 그대로였고, 게임 로그에 "mouse grabbed"가 없었습니다. 월드에 들어간 뒤 에이전트에
-화면을 물으면 `screen=GameMenuScreen`(일시정지 메뉴)입니다. 창은 임베드되기 전에 잠깐 화면에 보일 수 있습니다(포커스는
-가져가지 않음).
+Check (Windows sandbox, Run client with quick play, checked every 100 ms): the foreground window was never the game
+during the run, `GetClipCursor` stayed the whole screen (0,0,1920,1200), and the game log had no "mouse grabbed". Asking
+the agent for the screen after entering the world gives `screen=GameMenuScreen` (the pause menu). The window may be
+visible briefly before it is embedded (without taking the focus).
 
-Linux(WSL2, Xvfb + openbox, `xvfb-test.sh runclient` + 0.2초마다 `xdotool getactivewindow`): 개발 루프 자가 테스트(핫스왑,
-Gradle 없는 재시작, Rerun 포함) 모두 통과, 게임 로그에 `_NET_WM_USER_TIME 0` 표시가 남고, 실행 4번 동안 활성 창이 한 번도 게임이
-아니었습니다. 이 표시 전에는 실행할 때마다 새 창이 뜨는 순간 0.2~0.8초 게임 창이 활성으로 잡혔습니다.
-- 테스트 쪽 수정: `xvfb-test.sh`가 이전 실행의 게임을 `net.minecraft.client.main.Main`으로만 찾아서 Fabric 개발 클라이언트
-  (`fabric.dli.config`)가 남았고, 그 게임이 테스트 월드의 `session.lock`을 잡고 있어 quick play가 월드를 열지 못했습니다
-  (`AlreadyLockedException`). 이제 개발 클라이언트도 끕니다.
+Linux (WSL2, Xvfb + openbox, `xvfb-test.sh runclient` + `xdotool getactivewindow` every 0.2 s): all dev loop self-tests
+pass (including hotswap, restart without Gradle and Rerun), the game log shows the `_NET_WM_USER_TIME 0` marker, and in
+4 runs the active window was never the game. Before this marker, the game window was active for 0.2–0.8 s every time a
+new window appeared.
+- Test-side fix: `xvfb-test.sh` only looked for the previous run's game as `net.minecraft.client.main.Main`, so a Fabric
+  dev client (`fabric.dli.config`) was left running, and that game held the test world's `session.lock`, so quick play
+  could not open the world (`AlreadyLockedException`). Dev clients are now stopped too.
 
-### 엉뚱한 게임을 붙이지 않기
-예전에는 Run client 뒤 새로 뜬 마인크래프트 창을 아무거나 붙였습니다. 그사이 런처로 다른 마인크래프트를 켜면 그게 붙을 수 있었습니다.
-이제 Run client가 init script로 게임 JVM에 에이전트를 시작 시점부터 붙이고(`-javaagent:...=launch=<실행마다 고유한 파일>`), 에이전트가 그 파일에 자기 PID를 씁니다. 플러그인은 **그 PID의 창만** 붙이고 다른 창은 무시합니다. Linux에서 PID를 모르는 창을 고르던 대체 경로도 없앴습니다. FPS 제한도 게임 시작부터 걸립니다.
+### Never attaching the wrong game
+After Run client, any new Minecraft window used to be attached. Starting another Minecraft from a launcher meanwhile
+could get that one attached. Now Run client attaches the agent to the game JVM from startup through an init script
+(`-javaagent:...=launch=<a file unique to each launch>`), and the agent writes its PID to that file. The plugin attaches
+**only that PID's window** and ignores the others. The fallback on Linux that picked a window without knowing its PID is
+gone too. The FPS cap also applies from game start.
 
-검증(Windows 샌드박스, 월드 `SFWorld`에서 시작, Run client 직후 미끼로 바닐라 1.12.2를 따로 띄움):
+Check (Windows sandbox, starting in world `SFWorld`, vanilla 1.12.2 started separately as a decoy right after Run client):
 ```
 PASS Run client -> game embedded                [game pid 6864]
-PASS another Minecraft (decoy) not embedded     [decoy pid 40088 먼저 떴지만 무시]
+PASS another Minecraft (decoy) not embedded     [decoy pid 40088 came up first but was ignored]
 PASS startup code change -> restart offered     [LucidsCustomPack.onInitialize]
 PASS restart -> new game embedded               [38 s]
 PASS restart -> back in the same world          [world 'SFWorld']
 ```
 
-### 한계와 다음 과제
-- **구조 변경:** JBR이 있으면 됩니다(위). Java 8/17 게임용 JBR은 시험하지 않았습니다. Attach PID로 붙인 게임은 이미 떠 있는 JVM이라, 직접 JBR과 플래그로 띄운 경우에만 구조 변경이 됩니다.
-- **새로 추가한 정적 필드의 초기값, 생성자 변경:** 이미 만들어진 객체와 클래스 초기화에는 반영되지 않습니다.
-- **Fabric 환경 어노테이션:** 바뀐 바이트에는 Knot의 `@Environment` 정리가 적용되지 않습니다. 클라이언트 개발 환경에서는 대개 문제가 없습니다.
-- NeoForge/Forge와 Linux에서의 Mixin 핫스왑은 아직 시험하지 않았습니다. NeoForge/Forge는 함께 개발 중인 더 큰 모드가 그 로더로 넓힐 때 함께 합니다. Linux의 리소스 리로드와 게임 안 알림은 아래 "Linux (X11)"에서 확인했습니다.
+### Limits and next steps
+- **Structural changes:** work with a JBR (above). JBRs for Java 8/17 games have not been tested. A game attached by PID
+  is a JVM that is already running, so structural changes only work when it was started with the JBR and the flag.
+- **Initial values of newly added static fields, constructor changes:** not reflected in objects already created or in
+  class initialization.
+- **Fabric environment annotations:** Knot's `@Environment` stripping is not applied to changed bytes. Usually no
+  problem in a client dev environment.
+- Mixin hotswap on NeoForge/Forge and on Linux has not been tested yet. NeoForge/Forge come along when the bigger mod
+  developed alongside expands to those loaders. Resource reloads and in-game messages on Linux were checked in
+  "Linux (X11)" below.
 
 ## Linux (X11)
 
-같은 플러그인이 Linux에서는 `embed/X11Embedder.java`를 씁니다(`GameView.create`가 OS로 고름).
-Windows의 `GameEmbedder`와 같은 기능 묶음(`GameView` 인터페이스)이고, X11 호출은 `embed/X11.java`(libX11 FFM)에 모았습니다.
-창 조회는 `embed/NativeWindows.java`가 두 OS를 감쌉니다(런처와 자가 테스트가 사용).
+On Linux the same plugin uses `embed/X11Embedder.java` (`GameView.create` picks by OS). It is the same feature set as
+the Windows `GameEmbedder` (the `GameView` interface), with the X11 calls gathered in `embed/X11.java` (libX11 through
+FFM). Window lookup is wrapped for both OSes by `embed/NativeWindows.java` (used by the launcher and the self-test).
 
-- **IDE가 X11로 돌아야 합니다.** Wayland 세션의 IntelliJ는 Wayland 툴킷을 쓰는데, Wayland에는 다른 프로그램의 창을 자식으로 넣는 방법이 없습니다. `-Dawt.toolkit.name=XToolkit`로 실행하면 됩니다. 아니면 Canvas에 안내 문구가 나오고 attach를 거절합니다.
-- **임베드:** `XWithdrawWindow` → `override_redirect` 켜기 → 창 관리자가 프레임에서 뺄 때까지 대기 → Canvas 아래로 `XReparentWindow`, 매핑. 창 관리자가 되가져가면 다시 시도하고, 에이전트도 즉시 돌려놓습니다.
-- **키보드:** X11에서는 자식 창을 클릭해도 포커스가 옮겨지지 않습니다. 창 관리자들이 쓰는 방식대로 게임 창의 버튼에 패시브 그랩(`XGrabButton`, 동기 모드)을 걸고, 클릭이 오면 `XSetInputFocus` 후 `XAllowEvents(ReplayPointer)`로 그 클릭을 게임에 그대로 넘깁니다. IDE의 다른 곳을 클릭하면 키보드를 AWT로 돌려줍니다.
-- **숨김/이동:** 툴윈도우를 숨기거나 옮기기 전에 게임을 루트로 옮기고 매핑을 해제(park)합니다. 다시 보이면 새 Canvas로 넣습니다. 숨김 상태에서는 Windows의 최소화 대신 매핑 해제를 씁니다(자식 창에는 "최소화"가 없음, FPS는 에이전트가 제한). 힙 축소(jcmd)는 같고, 워킹셋 트림은 Windows 전용입니다.
-- **IDE 종료:** 셧다운 훅이 `override_redirect`를 끄고 루트로 돌려 일반 창으로 남깁니다. 크래시 때는 에이전트의 X11 구명보트가 월드를 저장하고 게임을 끝냅니다(`poc/embed/README.md`).
-- **F11 전체화면:** 게임이 전체화면을 요청하면 IDE 밖으로 꺼냅니다. `override_redirect`를 끄고, `_NET_WM_STATE_FULLSCREEN`을 붙여 루트에 매핑한 뒤 IDE 모니터 크기로 맞춥니다. 창 모드로 돌아오면 다시 넣습니다.
-  - 판단 기준은 게임 자신의 상태입니다. 에이전트가 1초마다 `glfwGetWindowMonitor` 결과를 보고합니다. 에이전트 없이는 창이 모니터 크기로 커졌는지로 판단합니다.
-  - 포커스는 `_NET_ACTIVE_WINDOW` 클라이언트 메시지(pager 출처)로 창 관리자에게 요청합니다. 새로 매핑된 창에 그냥 `XSetInputFocus`를 하면 openbox가 포커스 가로채기 방지로 IDE에 되돌렸고, GLFW는 포커스를 잃은 전체화면 창을 최소화했습니다.
-  - 바닐라처럼 난독화된 게임에서도 통계 파일(전체화면 여부, 힙)을 씁니다. 전에는 `Minecraft` 클래스를 이름으로 못 찾으면 아무것도 쓰지 않았습니다.
-- 폴더 탐색, 버전 결정, Run client(`gradlew`), 핫스왑은 OS와 무관한 코드라 그대로 씁니다. 아래처럼 Linux IDE에서 전부 돌려 봤습니다.
+- **The IDE has to run on X11.** IntelliJ in a Wayland session uses the Wayland toolkit, and Wayland has no way to put
+  another program's window inside as a child. Start it with `-Dawt.toolkit.name=XToolkit`. Otherwise the Canvas shows a
+  hint and attach is refused.
+- **Embedding:** `XWithdrawWindow` → turn on `override_redirect` → wait until the window manager takes it out of the
+  frame → `XReparentWindow` under the Canvas, map it. If the window manager takes it back, it retries, and the agent puts
+  it back immediately too.
+- **Keyboard:** on X11, clicking a child window does not move the focus. As window managers do, a passive grab
+  (`XGrabButton`, synchronous mode) is put on the game window's buttons, and when a click comes, `XSetInputFocus` is
+  followed by `XAllowEvents(ReplayPointer)` to hand the same click to the game. Clicking elsewhere in the IDE gives the
+  keyboard back to AWT.
+- **Hiding/moving:** before the tool window is hidden or moved, the game is moved to the root and unmapped (park). When
+  visible again it goes into the new Canvas. While hidden, unmapping is used instead of Windows' minimize (child windows
+  have no "minimize"; the agent caps the FPS). Heap shrinking (jcmd) is the same; working set trimming is Windows-only.
+- **IDE exit:** a shutdown hook turns `override_redirect` off and moves the game to the root, leaving a normal window. On
+  a crash, the agent's X11 lifeboat saves the world and ends the game (`poc/embed/README.md`).
+- **F11 fullscreen:** when the game asks for fullscreen, it is taken out of the IDE: `override_redirect` off,
+  `_NET_WM_STATE_FULLSCREEN` set, mapped on the root, and sized to the IDE's monitor. Back in windowed mode it goes back
+  in.
+  - The game's own state decides: the agent reports the result of `glfwGetWindowMonitor` every second. Without the
+    agent, it is decided by whether the window grew to the monitor size.
+  - Focus is requested from the window manager with a `_NET_ACTIVE_WINDOW` client message (pager source). A plain
+    `XSetInputFocus` on a newly mapped window was handed back to the IDE by openbox's focus stealing prevention, and GLFW
+    minimized the fullscreen window that lost the focus.
+  - The stats file (fullscreen state, heap) is written for obfuscated games such as vanilla too. Before, nothing was
+    written when the `Minecraft` class could not be found by name.
+- Folder scanning, version detection, Run client (`gradlew`) and hotswap are OS-independent code and are used as is. They
+  were all run in a Linux IDE as below.
 
-**테스트 환경:** WSL2 Ubuntu 24.04, IntelliJ IDEA 2026.3 Linux판(`-Dawt.toolkit.name=XToolkit`), 바닐라 1.21.1 / lucid 사본(Fabric 1.21.1, Loom 1.19.4, Gradle 9.9.1).
-화면은 **Xvfb + openbox**입니다(`./sf-idea-plugin/xvfb-test.sh f11|runclient [핫스왑 프로브]`; `sudo apt install xvfb openbox xdotool x11-apps imagemagick` 필요).
-WSLg에서는 정확한 판단이 안 됩니다.
-- WSLg의 창 관리자는 Windows 쪽에서 활성인 창이 아니면 X 키보드 포커스를 None으로 돌려 놓습니다(`_NET_ACTIVE_WINDOW` 0). 그래서 임베드된 게임에 실제 키가 닿지 않습니다.
-- 전체화면을 빠져나오는 순간 WSLg의 X 서버가 죽은 적이 있습니다("X connection to :0 broken").
-- 전체화면으로 바뀌는 순간 IDE가 malloc 힙 손상으로 한 번 죽은 적도 있습니다. 스택이 남지 않았습니다. 감시 폴링의 X 호출을 작업 스레드 하나로 모은 뒤로는 재발하지 않았습니다.
+**Test environment:** WSL2 Ubuntu 24.04, IntelliJ IDEA 2026.3 for Linux (`-Dawt.toolkit.name=XToolkit`), vanilla 1.21.1 /
+the lucid copy (Fabric 1.21.1, Loom 1.19.4, Gradle 9.9.1). The display is **Xvfb + openbox**
+(`./sf-idea-plugin/xvfb-test.sh f11|runclient [hotswap probe]`; needs
+`sudo apt install xvfb openbox xdotool x11-apps imagemagick`). WSLg does not give reliable results:
+- WSLg's window manager resets the X keyboard focus to None unless the window is active on the Windows side
+  (`_NET_ACTIVE_WINDOW` 0), so real keys never reach the embedded game.
+- WSLg's X server once died at the moment of leaving fullscreen ("X connection to :0 broken").
+- The IDE also once died from malloc heap corruption at the moment of switching to fullscreen, with no stack left. It has
+  not happened again since the watch polling's X calls were moved to one worker thread.
 
-F11 흐름(`f11`, 바닐라를 pid로 붙임):
+F11 flow (`f11`, vanilla attached by pid):
 ```
 PASS profile detected  [FABRIC 1.21.1 0.17.2 (Java 21)]
 PASS embedded in the tool window
@@ -528,108 +717,211 @@ PASS open as editor tab
 PASS tab closed -> back in the tool window
 failures: 0
 ```
-Run client 흐름(`runclient`, 25개 모두 통과): Run client → 임베드 74초(첫 실행은 Loom 준비로 110초).
-- 핫스왑: 메서드 본문 javac 226~516 ms, 저장·외부 편집, 상수 전파, 같은 바이트 건너뛰기.
-- 메서드 추가 → 재시작 안내(Linux에는 JBR 21이 없어 구조 변경은 재시작).
-- 리소스 리로드, 시작 코드·`fabric.mod.json` 변경 → 재시작, 재시작 → 같은 월드, 상태바, Run 창, Rerun.
+Run client flow (`runclient`, all 25 pass): Run client → embedded in 74 s (110 s on the first run while Loom set up).
+- Hotswap: method body javac 226–516 ms, saves and external edits, constant propagation, skipping identical bytes.
+- Adding a method → restart suggested (there is no JBR 21 on Linux, so structural changes restart).
+- Resource reload, startup code and `fabric.mod.json` changes → restart, restart → same world, status bar, Run window,
+  Rerun.
 
-**찾아서 고친 것: 첫 실행 접근성 화면이 quick play를 막음.** 새 run 폴더에서는 Minecraft가 "Welcome to Minecraft! ... Narrator" 화면을 띄웁니다. 그 화면 때문에 `--quickPlaySingleplayer`가 월드에 들어가지 못하고, "같은 월드로 재시작"이 타이틀 화면에서 멈췄습니다. Windows 테스트 사본은 누군가 이 화면을 한 번 넘긴 상태(`onboardAccessibility:false`)라 드러나지 않았습니다. 이제 quick play로 실행할 때 run 폴더의 `options.txt`에 `onboardAccessibility:false`를 넣습니다(`SharedInstance.skipAccessibilityOnboarding`).
+**Found and fixed: the first-run accessibility screen blocked quick play.** In a new run folder, Minecraft shows a
+"Welcome to Minecraft! ... Narrator" screen. Because of it, `--quickPlaySingleplayer` could not enter the world, and
+"Restart into the same world" stopped at the title screen. The Windows test copy had already been past this screen once
+(`onboardAccessibility:false`), so it never showed there. Now `onboardAccessibility:false` is put in the run folder's
+`options.txt` when starting with quick play (`SharedInstance.skipAccessibilityOnboarding`).
 
-Windows 회귀 확인(같은 빌드, 2026.3 샌드박스): Run client + 핫스왑 26/26, F11 흐름 12/12.
+Windows regression check (same build, 2026.3 sandbox): Run client + hotswap 26/26, F11 flow 12/12.
 
-예전 WSLg 화면: ![linux](snapshot-linux.png)
+Earlier WSLg screen: ![linux](snapshot-linux.png)
 
-## 공유 인스턴스 (모드끼리 월드·설정 공유)
-패널의 **Shared worlds**를 켜면 같은 마인크래프트 버전의 모든 프로젝트가 게임 폴더 하나를 같이 씁니다(`SharedInstance.java`, 기본은 꺼짐).
-- `~/.sulfurframe/instances/<버전>/`에 공용 폴더를 두고, 각 프로젝트 `run/`의 `saves`, `resourcepacks`, `screenshots`, `shaderpacks`를 거기로 연결합니다. Windows는 디렉터리 정션(관리자 권한 불필요), 그 밖에는 심볼릭 링크입니다. `config/`, `logs/`, `mods/`는 프로젝트마다 그대로입니다.
-- `options.txt`, `servers.dat`, `hotbar.nbt`는 게임이 통째로 다시 써서 링크가 끊어지므로, 실행 전에 공용 폴더에서 복사해 오고 게임이 끝나면 돌려놓습니다(더 최근 것이 이김).
-- 처음 연결할 때 프로젝트에 있던 월드는 공용 폴더로 옮깁니다. 이름이 겹치면 `이름 (프로젝트)`로 보존하고, 아무것도 지우지 않습니다.
-- 프로젝트의 버전이 바뀌면 링크만 새 버전 폴더로 바꿉니다. 이전 버전 폴더의 월드는 그대로 남습니다.
+## Shared instance (worlds and settings shared between mods)
+Turning on **Shared worlds** in the panel makes every project of the same Minecraft version use one game folder
+(`SharedInstance.java`, off by default).
+- A shared folder lives in `~/.sulfurframe/instances/<version>/`, and `saves`, `resourcepacks`, `screenshots` and
+  `shaderpacks` of each project's `run/` are linked there. Directory junctions on Windows (no admin rights needed),
+  symbolic links elsewhere. `config/`, `logs/` and `mods/` stay per project.
+- `options.txt`, `servers.dat` and `hotbar.nbt` are rewritten whole by the game, which would break a link, so they are
+  copied from the shared folder before the run and copied back when the game ends (the newer one wins).
+- On the first link, worlds already in the project are moved to the shared folder. Name clashes are kept as
+  `name (project)`, and nothing is deleted.
+- When a project's version changes, only the links move to the new version folder. Worlds in the old version folder
+  stay.
 
-검증(임시 홈 폴더, 가짜 프로젝트 두 개): 링크 생성(정션), 겹친 월드 `World1 (projB)` 보존, A의 `options.txt`가 B로 넘어감, 다시 적용해도 변화 없음, 한글·공백 경로, 버전 변경 시 이전 버전 월드 보존.
+Check (temporary home folder, two fake projects): links created (junctions), the clashing world kept as
+`World1 (projB)`, A's `options.txt` carried over to B, applying again changes nothing, Korean characters and spaces in
+paths, the old version's worlds kept on a version change.
 
-## 월드 스냅샷과 테스트 월드
-- **Snapshot:** 에이전트로 열린 월드 이름을 묻고, 내장 서버에서 `save-all flush`를 실행해 저장을 끝낸 뒤(완료는 파일로 알림), 월드 폴더를 `~/.sulfurframe/snapshots/<버전>/<월드>/<시각>/`에 복사합니다(`WorldSnapshots.java`). `session.lock`은 뺍니다.
-- **Restore…:** 월드와 스냅샷을 고르면, 빠른 재시작 흐름으로 게임을 끄고 → 월드 폴더를 스냅샷으로 바꾸고 → 같은 월드로 다시 띄웁니다. 바뀌기 전 월드도 `…-before-restore` 스냅샷으로 남겨서, 되돌리기 자체도 되돌릴 수 있습니다.
-- **Test world:** 평지, 크리에이티브, 치트 켬, 평화로움, 낮·날씨 고정, 몹 스폰 끔, 인벤토리 유지 월드를 만들고 바로 들어갑니다(게임이 떠 있으면 재시작해서 들어감). 1.20.5 이상.
-  quickPlay는 없는 월드를 만들어 주지 않고, 게임 메뉴로 만들려면 버전·매핑마다 다른 코드가 필요해서, `level.dat`(NBT)를 직접 씁니다(`TestWorld.java`). 오래된 데이터 버전은 게임의 데이터 픽서가 올려 주므로 한 형식으로 1.20.5 이후 전 버전을 맡습니다. 모드 데이터 팩은 게임이 새 팩으로 보고 자동으로 켭니다.
-  처음 만든 파일은 "Unknown data version: 0"으로 열리지 않았습니다. `Data.version`은 레벨 포맷 번호(Anvil 19133)이고 게임 버전 묶음은 대문자 `Version`이어서였습니다(바이트코드에서 확인).
+## World snapshots and test worlds
+- **Snapshot:** asks the agent for the open world's name, runs `save-all flush` on the integrated server to finish saving
+  (completion signalled through a file), and copies the world folder to
+  `~/.sulfurframe/snapshots/<version>/<world>/<time>/` (`WorldSnapshots.java`). `session.lock` is left out.
+- **Restore…:** pick a world and a snapshot, and the quick restart flow stops the game → replaces the world folder with
+  the snapshot → starts again into the same world. The world before the change is kept as a `…-before-restore`
+  snapshot too, so the restore itself can be undone.
+- **Test world:** creates a flat, creative, cheats-on, peaceful world with fixed daytime and weather, no mob spawning and
+  keep-inventory, and enters it right away (restarting the game if it is running). 1.20.5 and newer.
+  quickPlay does not create a missing world, and creating one through the game menu needs different code per version and
+  mapping, so `level.dat` (NBT) is written directly (`TestWorld.java`). Older data versions are upgraded by the game's
+  data fixer, so one format covers every version from 1.20.5 on. Mod data packs are seen by the game as new packs and
+  enabled automatically.
+  The first file made would not open ("Unknown data version: 0"): `Data.version` is the level format number (Anvil
+  19133), and the game version compound is the capitalised `Version` (confirmed from bytecode).
 
-검증: 1.21.1(lucid 사본)에서 만든 테스트 월드로 quickPlay → 평지·크리에이티브·낮으로 입장, 모드 데이터 팩 자동 로드("Found new data pack lcd, loading it automatically"). 에이전트의 `world=`/`cmd=save-all flush`/`done=` → 월드 이름 "SF Flat", "ran /save-all flush", 완료 표시.
-- **영구 월드와 임시 월드:** **Test world**는 남는 테스트 월드, **Temp world**는 버리는 테스트 월드입니다(`TempWorlds.java`). 임시 월드는 이름이 `[Temp] Test`로 시작하고, 목록(`~/.sulfurframe/temp-worlds.txt`)에 적혀 다음 때 지워집니다: 게임이 끝날 때, 그리고 IDE가 먼저 꺼졌던 경우 다음 플러그인 시작 때.
-  안전장치: 게임이 잡고 있는 월드(`session.lock` 잠김)는 건너뛰고, 이름에 `[Temp] ` 표식이 없으면 목록에 있어도 지우지 않습니다. 재시작으로 같은 임시 월드에 다시 들어갈 때는 이전 게임의 종료 정리가 그 월드를 지우지 않도록 잠시 핀을 겁니다.
-  검증(임시 홈): 임시 월드 삭제, 핀 걸린 임시 월드 유지, 목록에 잘못 들어간 진짜 월드 `Real` 유지(목록에서만 빠짐).
+Check: quickPlay into a test world made on 1.21.1 (the lucid copy) → entered flat, creative, daytime; the mod data pack
+loaded automatically ("Found new data pack lcd, loading it automatically"). The agent's `world=`/`cmd=save-all flush`/
+`done=` → world name "SF Flat", "ran /save-all flush", completion marker.
+- **Permanent and temporary worlds:** **Test world** is a test world that stays, **Temp world** one that is thrown away
+  (`TempWorlds.java`). Temporary worlds have names starting with `[Temp] Test` and are listed in
+  `~/.sulfurframe/temp-worlds.txt`, then deleted: when the game ends, and on the next plugin start if the IDE closed
+  first.
+  Safety nets: a world the game holds (`session.lock` locked) is skipped, and a world without the `[Temp] ` marker in its
+  name is not deleted even if it is on the list. When a restart enters the same temporary world again, it is pinned
+  briefly so the previous game's exit cleanup does not delete it.
+  Check (temporary home): a temporary world deleted, a pinned temporary world kept, a real world `Real` that wrongly got
+  on the list kept (only removed from the list).
 
-## 게임 로그, 크래시, 리소스 문제, 디버거, Inspect
-- **Game log 탭:** `run/logs/latest.log`를 따라가며 보여 줍니다(`GameLog.java`, `GameLogPanel.java`). 스택 트레이스의 프레임은 IDE의 Java 예외 필터로 소스 링크가 되고, "경고와 오류만" 필터가 있습니다.
-- **크래시:** Loom 개발 실행에서는 "Crash report saved to" 줄이 표준 출력에만 나가서, `run/crash-reports` 폴더를 지켜봅니다. 새 보고서가 생기면 원인(Description)과 첫 번째 내 코드 프레임(`knot/`, `app//` 접두어 제거)을 찾아 알림을 띄웁니다: 코드로 가기, 보고서 열기, 재시작.
-- **Problems 탭:** 게임이 로그에 남기는 빠진 모델/블록스테이트/텍스처를 목록으로 모읍니다(더블클릭으로 파일 열기). **Check translations**는 블록스테이트와 아이템 모델에 비해 `en_us.json`에 빠진 키를 찾고, **Add missing translations**는 이름을 사람이 읽게 바꿔(`ms_block` → "Ms Block") 넣습니다.
-- **Debug:** 켜 두면 Run client가 게임에 JDWP(빈 포트)를 붙여 띄우고, 창이 뜨면 IDE 디버거가 "SulfurFrame: Minecraft" 원격 실행 구성으로 자동 연결합니다(`DebugAttach.java`).
-- **Inspect:** 플레이어가 보고 있는 블록(위치, 상태, 블록/블록 엔티티 클래스, NBT)이나 엔티티(클래스, NBT)를 에이전트가 게임 스레드에서 읽어 보여 줍니다(`LookAt.java`). 클래스 이름을 누르면 소스로 갑니다.
+## Game log, crashes, resource problems, debugger, Inspect
+- **Game log tab:** follows `run/logs/latest.log` (`GameLog.java`, `GameLogPanel.java`). Stack trace frames become source
+  links through the IDE's Java exception filter, and there is a "warnings and errors only" filter.
+- **Crashes:** in a Loom dev run, the "Crash report saved to" line only goes to standard output, so the
+  `run/crash-reports` folder is watched. When a new report appears, its cause (Description) and the first frame of your
+  own code (with the `knot/` and `app//` prefixes removed) are found, and a notification offers: go to code, open
+  report, restart.
+- **Problems tab:** collects the missing models/blockstates/textures the game logs (double-click to open the file).
+  **Check translations** finds keys missing from `en_us.json` compared with the blockstates and item models, and **Add
+  missing translations** adds them with a readable name (`ms_block` → "Ms Block").
+- **Debug:** when on, Run client starts the game with JDWP (a free port), and when the window appears, the IDE debugger
+  connects automatically through a "SulfurFrame: Minecraft" remote run configuration (`DebugAttach.java`).
+- **Inspect:** shows the block the player is looking at (position, state, block/block entity class, NBT) or the entity
+  (class, NBT), read by the agent on the game thread (`LookAt.java`). Clicking a class name goes to its source.
 
-검증(1.21.1 lucid 사본, 샌드박스 IDE 자동 테스트): 빠진 모델 2건 보고, 빠진 번역 3개 찾고 3개 추가, 디버거 세션 연결, 일부러 던진 예외로 크래시 → 원인과 `kr.kro.lucid.SfHotswapProbe` 프레임 찾음.
+Check (1.21.1 lucid copy, sandbox IDE self-test): 2 missing models reported, 3 missing translations found and 3 added, a
+debugger session connected, a crash from a deliberately thrown exception → cause and the `kr.kro.lucid.SfHotswapProbe`
+frame found.
 
-## 임베드된 게임의 마우스 시점 (GLFW, Windows)
-키보드는 되는데 마우스로 시점이 안 돌아가던 문제. GLFW는 `glfwSetInputMode(GLFW_CURSOR_DISABLED)`가 불릴 때 창이 "포커스"인지 `GetActiveWindow()`로 확인하는데, 자식 창은 절대 활성 창이 아닙니다. 그래서 클릭으로 포커스를 받은 뒤에 일어난 마우스 잡기(월드 입장, 메뉴 닫기)는 기록만 되고 적용되지 않아, GLFW가 모든 마우스 이동을 버립니다. GLFW는 `WM_SETFOCUS`를 받을 때는 잡기를 적용하므로, 에이전트가 커서 모드가 DISABLED로 바뀌고 게임이 임베드돼 있고 키보드 포커스를 가진 순간에 게임 창에 `WM_SETFOCUS`를 직접 보냅니다(`GlfwCursorFix.java`, 렌더 스레드 = GLFW 스레드에서 실행). 실제 IDE에서 사용자가 확인했습니다.
+## Mouse look in the embedded game (GLFW, Windows)
+The keyboard worked, but the mouse did not turn the view. When `glfwSetInputMode(GLFW_CURSOR_DISABLED)` is called, GLFW
+checks whether the window is "focused" with `GetActiveWindow()`, and a child window is never the active window. So a
+mouse grab that happens after the focus came by click (entering the world, closing a menu) is only recorded and never
+applied, and GLFW drops every mouse movement. GLFW does apply the grab when it receives `WM_SETFOCUS`, so the agent sends
+`WM_SETFOCUS` to the game window itself the moment the cursor mode becomes DISABLED while the game is embedded and has
+the keyboard focus (`GlfwCursorFix.java`, run on the render thread = the GLFW thread). Confirmed by the user in the real
+IDE.
 
-## Gradle과 게임이 쓰는 Java
-- **Gradle 자체의 JDK:** IDE 환경의 `JAVA_HOME`이 게임에 필요한 Java보다 낮으면(26.x용 Loom은 Java 25 Gradle을 요구), 그 버전 이상인 JDK를 찾아 gradlew에 넘깁니다(`GradleJava.java`). 프로젝트가 Gradle JVM을 직접 정해 두었으면(`org.gradle.java.home`, 또는 `gradle/gradle-daemon-jvm.properties`의 데몬 툴체인) 데몬은 Gradle이 고르지만, gradlew 런처 자체는 여전히 `JAVA_HOME`으로 뜹니다. 그래서 그때도 `JAVA_HOME`이 Java 17보다 낮으면(예: Java 8) 17 이상인 JDK를 넘깁니다. 클래스패스 스캔과 핫스왑 컴파일도 같은 JDK라 데몬 하나를 같이 씁니다.
-- **게임의 JBR:** 실행 태스크의 `javaLauncher`를 툴체인으로 직접 정하는 빌드(예: `javaLauncher.set(javaToolchains.launcherFor { 21 })`)에서는 `executable`만 바꾸면 "Toolchain from `executable` property does not match…", 비우면 "Cannot query … javaLauncher … no value"로 실패합니다. 그래서 JBR이 완전한 JDK(javac 있음)이면 `org.gradle.java.installations.paths`로 알려 주고 `javaLauncher`를 "JetBrains <버전>" 툴체인으로 바꿉니다. init 스크립트는 `afterEvaluate`에서 등록해 빌드 스크립트의 설정보다 나중에 적용됩니다.
-- **실행 태스크:** 빌드 스크립트의 Loom 실행 설정(`runConfigs.create("allModsClient")`, `runs { x { client() } }`)을 읽어 클라이언트 설정마다 목록에 따로 띄웁니다(`[runAllModsClient]`). datagen/gametest 설정은 뺍니다. 모든 init 스크립트는 `-PsfRunTask`로 실행하는 그 태스크에만 붙습니다.
+## The Java that Gradle and the game use
+- **Gradle's own JDK:** when `JAVA_HOME` in the IDE environment is older than the Java the game needs (Loom for 26.x
+  requires a Java 25 Gradle), a JDK of at least that version is found and handed to gradlew (`GradleJava.java`). When the
+  project chooses its Gradle JVM itself (`org.gradle.java.home`, or a daemon toolchain in
+  `gradle/gradle-daemon-jvm.properties`), Gradle picks the daemon, but the gradlew launcher itself still starts on
+  `JAVA_HOME`. So in that case too, if `JAVA_HOME` is older than Java 17 (e.g. Java 8), a JDK of 17 or newer is handed
+  over. The class path scan and hotswap compiles use the same JDK, so they share one daemon.
+- **The game's JBR:** in builds that set the run task's `javaLauncher` through a toolchain themselves (e.g.
+  `javaLauncher.set(javaToolchains.launcherFor { 21 })`), changing only `executable` fails with "Toolchain from
+  `executable` property does not match…", and clearing it fails with "Cannot query … javaLauncher … no value". So when
+  the JBR is a full JDK (with javac), it is announced through `org.gradle.java.installations.paths` and `javaLauncher` is
+  switched to a "JetBrains <version>" toolchain. The init script registers this in `afterEvaluate`, so it applies after
+  the build script's settings.
+- **Run tasks:** the build script's Loom run configurations (`runConfigs.create("allModsClient")`,
+  `runs { x { client() } }`) are read, and each client configuration gets its own entry in the list
+  (`[runAllModsClient]`). datagen/gametest configurations are left out. Every init script only attaches to the task run
+  with `-PsfRunTask`.
 
-검증: 다중 프로젝트 모드의 `runClient`/`runAllModsClient`의 launcher가 JBR 21로 잡히고 `runAllModsClient`로 게임이 실제로 뜸(JBR 21, `-XX:+AllowEnhancedClassRedefinition`). Maxwells_Chamber(26.3)는 Java 25 Gradle로 설정 통과, launcher JBR 25.
+Check: the launcher of the multi-project mod's `runClient`/`runAllModsClient` is set to JBR 21, and the game really
+starts with `runAllModsClient` (JBR 21, `-XX:+AllowEnhancedClassRedefinition`). Maxwells_Chamber (26.3) passes
+configuration with a Java 25 Gradle, launcher JBR 25.
 
-## 긴 클라이언트 이름
-목록에서 넘치는 이름은 `…`로 자르지 않고 흘러갑니다(1.5초 멈춤 → 끝까지 → 멈춤 → 처음으로). 닫힌 목록의 선택 항목과 펼친 목록의 가리킨 줄만 움직이고, 넘칠 때만 다시 그립니다(`MarqueeRenderer.java`).
+## Long client names
+Names that overflow the list are not cut with `…` but scroll (1.5 s pause → to the end → pause → back to the start).
+Only the selected item of the closed list and the hovered row of the open list move, and it only repaints when the name
+overflows (`MarqueeRenderer.java`).
 
-## Datagen 버튼
-**Datagen**을 누르면 프로젝트의 데이터 생성 태스크를 돌리고, 바뀐 생성 파일만 골라 떠 있는 게임에 넘깁니다(`Datagen.java`). 넘기는 길은 저장한 리소스와 같습니다: 게임의 리소스 폴더로 복사한 뒤 `assets/`는 클라이언트 리로드, `data/`는 `/reload`.
-- **태스크:** 빌드 스크립트의 실행 설정 중 이름이 데이터인 것(Loom `datagen`, ModDevGradle `data`/`clientData`, NeoGradle `data`)을 쓰고, 없으면 로더 기본값(Fabric `runDatagen`, NeoForge/Forge `runData`)을 씁니다.
-- **출력 폴더:** datagen 인자(`-Dfabric-api.datagen.output-dir=${file("…")}`, `--output`, `file("…")`)에서 읽고, 없으면 `src/main/generated`, `src/generated/resources`를 봅니다.
-- **바뀐 파일:** 실행 전후 내용(CRC32)을 비교합니다. datagen이 같은 내용으로 다시 써도 바뀐 것으로 치지 않고, datagen 자체 기록인 `.cache`는 뺍니다.
-- 생성 폴더는 사용자가 저장한 파일이 아니라서, 끝난 뒤 15초 동안은 저장 감지가 그 폴더를 무시합니다(같은 리로드를 두 번 하지 않게). IDE 파일 목록도 새로고침합니다.
-- 생성 폴더가 리소스 폴더(`sourceSets.main.resources.srcDir`)가 아니면 게임에 넘길 수 없어서 재시작하라고 알립니다.
+## Datagen button
+**Datagen** runs the project's data generation task and passes only the generated files that changed to the running game
+(`Datagen.java`). The route is the same as for saved resources: copied to the game's resource folder, then a client
+reload for `assets/` and `/reload` for `data/`.
+- **Task:** a run configuration in the build script whose name is about data (Loom `datagen`, ModDevGradle
+  `data`/`clientData`, NeoGradle `data`); otherwise the loader default (Fabric `runDatagen`, NeoForge/Forge `runData`).
+- **Output folder:** read from the datagen arguments (`-Dfabric-api.datagen.output-dir=${file("…")}`, `--output`,
+  `file("…")`); otherwise `src/main/generated` and `src/generated/resources` are checked.
+- **Changed files:** contents (CRC32) are compared before and after the run. Datagen rewriting the same content does not
+  count as a change, and datagen's own record `.cache` is left out.
+- The generated folder is not something the user saved, so save detection ignores it for 15 s after the run (so the same
+  reload does not happen twice). The IDE file list is refreshed too.
+- If the generated folder is not a resource folder (`sourceSets.main.resources.srcDir`), it cannot be passed to the game,
+  so a restart is suggested.
 
-검증(lucid 사본): 생성 파일 하나(`data/c/tags/item/ingots.json`)를 지우고 실행 → `runDatagen` 53초, 바뀐 파일은 그 파일 하나(새 파일 1).
-자동 테스트(샌드박스 IDE): 생성 파일 삭제 → Datagen → 그 파일이 다시 생기고 떠 있는 게임이 `data` 리로드(1개 파일). 마우스 클릭 확인만 화면이 가려져 건너뜀.
+Check (the lucid copy): deleting one generated file (`data/c/tags/item/ingots.json`) and running → `runDatagen` 53 s, the
+only changed file was that one (1 new file). Self-test (sandbox IDE): generated file deleted → Datagen → the file comes
+back and the running game does a `data` reload (1 file). Only the mouse click check was skipped because the screen was
+covered.
 
-### 에이전트 jar가 잠겨 있을 때
-플러그인은 시작할 때 에이전트를 `%TEMP%\sulfurframe`에 풀어 둡니다. 예전에는 늘 같은 이름(`sf-agent.jar`)이라, 다른 IDE에서 띄운 게임이 그 파일을 잡고 있으면 덮어쓰기가 실패했습니다. 그러면 에이전트가 없어서 "어느 게임이 내 것인지" 표시도 없었고, 그 사이 뜬 다른 Minecraft(테스트의 미끼)를 붙였습니다. 이제 내용으로 이름을 붙이고(`sf-agent-<crc>.jar`) 같은 파일이 있으면 그대로 씁니다. 잠긴 옛 파일은 건드리지 않습니다.
+### When the agent jar is locked
+The plugin unpacks the agent to `%TEMP%\sulfurframe` at startup. It used to always have the same name (`sf-agent.jar`),
+so overwriting failed when a game started from another IDE held that file. Without the agent there was no marker of
+"which game is mine", and another Minecraft that came up meanwhile (the test decoy) got attached. Now it is named by its
+content (`sf-agent-<crc>.jar`) and an existing identical file is reused. A locked old file is left alone.
 
-## 개발 모드 (Dev mods…)
-개발용 게임마다 있으면 좋은 모드를 프로젝트를 고치지 않고 넣습니다(`DevMods.java`). 실행할 때마다 체크된 모드의 그 마인크래프트 버전·로더용 최신 빌드를 Modrinth에서 받아(필수 의존성 포함, `~/.sulfurframe/devmods/<버전>/`에 보관) Fabric/Quilt 게임에 `-Dfabric.addMods`로 붙입니다. 오프라인이면 받아 둔 파일을 씁니다.
+## Dev mods (Dev mods…)
+Mods that every dev game is better off with are added without changing the project (`DevMods.java`). On every run, the
+latest build of each checked mod for that Minecraft version and loader is downloaded from Modrinth (required
+dependencies included, kept in `~/.sulfurframe/devmods/<version>/`) and added to Fabric/Quilt games with
+`-Dfabric.addMods`. Offline, the downloaded files are used.
 
-| 모드 | 로더 | 구분 | 용도 |
+| Mod | Loaders | Kind | Purpose |
 |---|---|---|---|
-| modmenu | Fabric, Quilt | 필수(기본 켬) | 모드 목록과 설정 화면(Fabric에는 기본으로 없음) |
-| emi, jei | 모두 / Fabric·NeoForge·Forge | 선택 | 레시피·아이템 확인 |
-| jade | 모두 | 선택 | 보고 있는 블록·엔티티와 그 모드 |
-| spark | 모두 | 선택 | 프로파일러 |
-| mixintrace | Fabric, Quilt | 선택 | 크래시 보고서에 믹스인 정보 |
-| sodium | Fabric, Quilt, NeoForge | 선택 | 흔한 렌더러 교체 모드와의 호환 확인(충돌할 수 있음) |
+| modmenu | Fabric, Quilt | required (on by default) | mod list and config screens (Fabric has none built in) |
+| emi, jei | all / Fabric·NeoForge·Forge | optional | checking recipes and items |
+| jade | all | optional | the block or entity you look at, and its mod |
+| spark | all | optional | profiler |
+| mixintrace | Fabric, Quilt | optional | Mixin info in crash reports |
+| sodium | Fabric, Quilt, NeoForge | optional | checking compatibility with a common renderer replacement (may conflict) |
 
-- NeoForge/Forge는 모드 목록과 설정 화면이 기본으로 있어서 필수가 없습니다. 이 로더에서 넣는 방식은 다음 단계입니다(지금은 Fabric/Quilt만).
-- WorldEdit은 넣지 않습니다(크고 성격이 뚜렷한 모드라, 필요한 프로젝트가 직접 넣습니다).
-- 목록 밖의 모드는 Modrinth 이름이나 링크로 추가합니다. **This project only**를 켜면 그 프로젝트만의 목록을 따로 둡니다(예: 충돌하는 모드 끄기).
-- 프로젝트가 이미 넣은 모드(빌드 스크립트에 이름이 있거나 클래스패스에 jar가 있음)는 건너뜁니다. Fabric은 같은 모드 id 두 개를 받지 않습니다.
+- NeoForge/Forge have a mod list and config screens built in, so nothing is required there. Adding mods on those loaders
+  is the next step (only Fabric/Quilt for now).
+- WorldEdit is not added (a large mod with a distinct character; projects that need it add it themselves).
+- Mods outside the list are added by Modrinth name or link. **This project only** keeps a separate list for that project
+  (e.g. turning off a conflicting mod).
+- Mods the project already includes (named in the build script, or a jar on the class path) are skipped. Fabric does not
+  accept two mods with the same id.
 
-검증: lucid 사본(1.21.1)에 Mod Menu 11.0.5가 로드되고 초기화됨(업데이트 확인까지). Maxwells_Chamber(26.3)는 21.0.0을 고름. 다중 프로젝트 모드는 Mod Menu를 직접 넣어서 건너뜀.
+Check: Mod Menu 11.0.5 loads and initializes in the lucid copy (1.21.1), update check included. Maxwells_Chamber (26.3)
+picks 21.0.0. The multi-project mod includes Mod Menu itself, so it is skipped.
 
-## 저절로 전체화면이 되던 문제
-임베드한 직후 "game went fullscreen (F11)"로 IDE 밖으로 나가는 일이 모드가 많은 빌드(다중 프로젝트 모드)에서 실행마다 있었습니다. 판정이 창 스타일 `WS_POPUP` 하나였는데, GLFW는 테두리 없는 창의 스타일을 다시 계산할 때도 이 값을 줍니다. 진짜 F11은 창을 모니터 크기로 키우므로(`glfwSetWindowMonitor`), 이제 `WS_POPUP`이면서 모니터를 덮을 때만 전체화면으로 보고, 패널 크기 그대로인 `WS_POPUP`은 자식 창 스타일로 되돌려 IDE 안에 둡니다. 원인 모드는 플러그인 밖(같은 Gradle 명령, PoC 호스트 임베드)에서 재현되지 않아 아직 모릅니다.
+## Going fullscreen by itself
+Right after embedding, "game went fullscreen (F11)" took the game out of the IDE on every run of a build with many mods
+(the multi-project mod). The check was the `WS_POPUP` window style alone, but GLFW also sets it when it recalculates the
+style of a borderless window. A real F11 grows the window to the monitor size (`glfwSetWindowMonitor`), so now it only
+counts as fullscreen when it is `WS_POPUP` and covers the monitor; a `WS_POPUP` window still at the panel size gets its
+child window style back and stays in the IDE. The mod causing it could not be reproduced outside the plugin (the same
+Gradle command, embedded in the PoC host), so it is still unknown.
 
-## 화면 배치 (UI 1단계)
-기능을 Swing 버튼 대신 IDE 액션으로 바꾸고(`SfActions.java`, `plugin.xml`), 기능마다 IntelliJ의 제자리에 둡니다.
-- **게임 툴 윈도우:** 위에 아이콘 툴바(Run Client, Restart, Hotswap, Datagen, Inspect, Worlds ▾, 옵션 ⚙). 폭이 모자라면 IntelliJ가 `»`로 접습니다(`ToolbarLayoutStrategy.AUTOLAYOUT_STRATEGY`). 대상 콤보박스는 2단계(실행 구성)까지 남깁니다.
-- **같은 액션이 있는 곳:** Tools | SulfurFrame, 상태 표시줄 메뉴, Find Action(Ctrl+Shift+A), Keymap(단축키 지정 가능).
-- **Settings | Tools | SulfurFrame** (`SulfurConfigurable.java`): Hotswap on save, 공유 월드, Run 때 디버거, 16:9, 코딩 중 프레임 상한(끄기 가능, 기본 15), 개발 모드 목록(IDE 전체 / 이 프로젝트만). 설정은 `Settings.java` 한 곳을 거치고, 예전 키를 그대로 써서 이전 선택이 이어집니다.
-- **상태 표시줄** (`SulfurStatusWidget.java`): 게임이 붙으면 `⛏ playing · 144 fps · 20 TPS · 2.1/4.0 GB`. 숫자는 에이전트가 1초마다 파일로 써 줍니다(`stats=`, `GameStats`). 누르면 SulfurFrame 메뉴.
-- **아래 툴 윈도우 "Minecraft Log"** (`SulfurLogToolWindowFactory.java`): Game log, Problems, SulfurFrame 로그 탭. Run/Build 창과 같은 자리입니다. 패널은 두 툴 윈도우 중 먼저 열리는 쪽이 만듭니다(`PanelHost.obtain`).
+## Layout (UI step 1)
+Features moved from Swing buttons to IDE actions (`SfActions.java`, `plugin.xml`), each in its proper IntelliJ place.
+- **Game tool window:** an icon toolbar on top (Run Client, Restart, Hotswap, Datagen, Inspect, Worlds ▾, options ⚙).
+  When it is too narrow, IntelliJ folds it into `»` (`ToolbarLayoutStrategy.AUTOLAYOUT_STRATEGY`). The target combo box
+  stays until step 2 (run configurations).
+- **Where the same actions are:** Tools | SulfurFrame, the status bar menu, Find Action (Ctrl+Shift+A), Keymap
+  (shortcuts can be assigned).
+- **Settings | Tools | SulfurFrame** (`SulfurConfigurable.java`): Hotswap on save, shared worlds, debugger on Run, 16:9,
+  frame cap while coding (can be off, default 15), dev mod lists (whole IDE / this project only). Settings all go
+  through `Settings.java` and keep the old keys, so earlier choices carry over.
+- **Status bar** (`SulfurStatusWidget.java`): when a game is attached, `⛏ playing · 144 fps · 20 TPS · 2.1/4.0 GB`. The
+  numbers are written to a file by the agent every second (`stats=`, `GameStats`). Clicking opens the SulfurFrame menu.
+- **Bottom tool window "Minecraft Log"** (`SulfurLogToolWindowFactory.java`): Game log, Problems and SulfurFrame log tabs.
+  In the same place as the Run/Build windows. The panel is created by whichever of the two tool windows opens first
+  (`PanelHost.obtain`).
 
-## 실행 구성 (UI 2단계)
-마인크래프트 클라이언트가 IntelliJ 실행 구성이 됩니다(`SulfurRunConfigurationType`, `SulfurRunConfiguration`, `SulfurRunState`, `SulfurProgramRunner`).
-- 스캔이 찾은 클라이언트마다 "Minecraft: <위치> [태스크]" 실행 구성을 만듭니다. 메인 툴바의 실행 구성 목록에서 고르고 ▶ Run, 🐞 Debug, ■ Stop, Rerun(Ctrl+F5), Shift+F10/F9를 그대로 씁니다. 패널의 대상 콤보박스는 없어졌고, 패널 기능(핫스왑, Inspect …)은 선택된 실행 구성의 클라이언트를 따릅니다.
-- 실행은 예전처럼 패널이 합니다(Gradle, 에이전트, 임베드). Run 창에는 Gradle과 게임의 출력이 소스 링크와 함께 나옵니다.
-- **Stop**은 프로세스를 죽이지 않고 저장 후 종료합니다(에이전트 `world=…,quit`). 그때 있던 월드를 기억해서 **Rerun**은 같은 월드로 돌아갑니다. 실행 구성에 "Join world"를 적으면 처음부터 그 월드로 들어갑니다.
-- **Debug**로 실행하면 디버그 포트를 열고 창이 뜨면 디버거를 붙입니다(설정의 "Debug" 체크박스를 대신함).
-- 패널의 Restart, Test world 등도 실행 구성을 거쳐 시작해서, Run 창이 늘 지금 게임을 보여 줍니다.
+## Run configurations (UI step 2)
+Minecraft clients become IntelliJ run configurations (`SulfurRunConfigurationType`, `SulfurRunConfiguration`,
+`SulfurRunState`, `SulfurProgramRunner`).
+- Each client the scan finds gets a "Minecraft: <location> [task]" run configuration. Pick it from the run configuration
+  list on the main toolbar and use ▶ Run, 🐞 Debug, ■ Stop, Rerun (Ctrl+F5) and Shift+F10/F9 as usual. The panel's target
+  combo box is gone, and panel features (hotswap, Inspect …) follow the client of the selected run configuration.
+- Running is still done by the panel (Gradle, agent, embedding). The Run window shows Gradle's and the game's output
+  with source links.
+- **Stop** does not kill the process but saves and quits (agent `world=…,quit`). It remembers the world that was open,
+  so **Rerun** goes back to the same world. Putting a world in the run configuration's "Join world" enters that world
+  from the start.
+- Running with **Debug** opens a debug port and attaches the debugger when the window appears (replaces the "Debug"
+  checkbox in the settings).
+- The panel's Restart, Test world and so on also start through the run configuration, so the Run window always shows the
+  current game.

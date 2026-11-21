@@ -1,3 +1,5 @@
+🌐 **English** · [한국어](README.ko.md)
+
 # SulfurFrame
 
 An IntelliJ IDEA plugin that runs your Minecraft mod's dev client **inside the IDE**: the game window is embedded in a
@@ -88,9 +90,22 @@ then `./gradlew publishPlugin`.
 
 ## Layout
 
-- `sf-idea-plugin/` – the plugin (design notes and test results in its [README](sf-idea-plugin/README.md), Korean)
+- `sf-idea-plugin/` – the plugin (design notes and test results in its [README](sf-idea-plugin/README.md))
 - `poc/agent/` – the Java agent loaded into the game (frame cap, focus fixes, stats), bundled into the plugin
 - `poc/embed/`, `poc/profile/` – proofs of concept and the options sync core
+
+## Documentation
+
+Every document comes in English and Korean; the switch at the top of each page goes to the other one. "Source" is the
+version that is written first and wins if the two ever differ.
+
+| Document | English | 한국어 | Source |
+|---|---|---|---|
+| Overview (this page) | [README.md](README.md) | [README.ko.md](README.ko.md) | English |
+| Plugin: design notes, measurements, test records | [sf-idea-plugin/README.md](sf-idea-plugin/README.md) | [README.ko.md](sf-idea-plugin/README.ko.md) | 한국어 |
+| Goals (not promises) | [sf-idea-plugin/docs/roadmap.md](sf-idea-plugin/docs/roadmap.md) | [roadmap.ko.md](sf-idea-plugin/docs/roadmap.ko.md) | 한국어 |
+| Embedding PoC and the javaagent | [poc/embed/README.md](poc/embed/README.md) | [README.ko.md](poc/embed/README.ko.md) | 한국어 |
+| Profiles, worlds and options sync PoC | [poc/profile/README.md](poc/profile/README.md) | [README.ko.md](poc/profile/README.ko.md) | 한국어 |
 
 ## License
 

@@ -1,40 +1,50 @@
-# SulfurFrame 목표 (약속 아님)
+🌐 **English** · [한국어](roadmap.ko.md)
 
-날짜나 버전은 정하지 않습니다(마케팅 계획의 "약속하지 않습니다" 원칙). 여기 있는 것은 방향이고, 공개 문서에는
-이미 동작하는 것만 씁니다.
+> Translated from the Korean original ([roadmap.ko.md](roadmap.ko.md)), which is the source of truth: if the two differ, the Korean one is right. Last synced: 2026-11-21.
 
-## 왜 아직 재시작해야 하나: JVM 몫과 우리 몫
+# SulfurFrame goals (not promises)
 
-핫스왑 자체는 JVM이 허락하는 범위를 거의 다 씁니다(JBR의 클래스 재정의 + 상수 사용처 재컴파일 + Mixin 재적용).
-남은 재시작은 원인에 따라 둘로 나뉩니다.
+No dates or versions are set (the marketing plan's "no promises" rule). These are directions; public documents only
+describe what already works.
 
-| 원인 | 누구 몫 | 지금 |
+## Why some changes still need a restart: the JVM's part and ours
+
+Hotswap already uses nearly everything the JVM allows (JBR class redefinition + recompiling the users of changed
+constants + re-applying Mixins). The restarts that remain fall into two groups by cause.
+
+| Cause | Whose part | Now |
 |---|---|---|
-| 이미 실행 중인 프레임은 끝날 때까지 옛 코드로 돎 | JVM (재정의 규칙) | 바꿀 수 없음. 끝없는 루프 안의 변경은 루프가 끝나야 반영 |
-| 정적 초기화(`<clinit>`)는 클래스당 한 번 | Java (언어 규칙) | 바꿀 수 없음. 바뀌면 재시작 권함(`StartupCode`) |
-| 컴파일 상수가 읽는 쪽에 복사됨 | javac | 이미 우회: 사용처 소스를 다시 컴파일해 함께 보냄 |
-| 새 블록·아이템 등록 | **Minecraft** (시작 뒤 레지스트리를 얼림) | 재시작 → 목표 2 |
-| 모드 메타데이터, 액세스 와이드너 | **우리 구현** (`processResources`, Loom 리매핑을 Gradle에 맡김) | Gradle 경유 재시작 → 목표 1 |
-| 지운 소스·리소스의 출력이 남음, Windows 명령줄 길이 | **우리 구현** (Gradle 없는 재시작) | 다음 Gradle 실행 때 정리, 길면 `CLASSPATH`로 넘김 |
+| A frame that is already running keeps the old code until it returns | JVM (redefinition rules) | Cannot change. A change inside an endless loop applies when the loop ends |
+| Static initialization (`<clinit>`) runs once per class | Java (language rules) | Cannot change. A restart is suggested when it changes (`StartupCode`) |
+| Compile-time constants are copied into the classes that read them | javac | Already worked around: the users' sources are recompiled and sent along |
+| Registering new blocks, items and the like | **Minecraft** (freezes its registries after startup) | Restart → goal 2 |
+| Mod metadata, access wideners | **Our implementation** (`processResources` and Loom remapping are left to Gradle) | Restart through Gradle → goal 1 |
+| Outputs of deleted sources and resources stay behind; Windows command line length | **Our implementation** (restart without Gradle) | Cleaned up on the next Gradle run; a long class path goes through `CLASSPATH` |
 
-## 목표 1: 메타데이터 변경도 Gradle 없이 (가까움)
+## Goal 1: metadata changes without Gradle too (close)
 
-- `fabric.mod.json`, `quilt.mod.json`, `mods.toml`의 `${...}` 값을 플러그인이 직접 채워 출력 폴더에 씁니다.
-  채울 값은 빌드의 `processResources` 설정(`expand`/`filesMatching`)에서 읽습니다. 읽지 못하는 설정이면 지금처럼 Gradle로 갑니다.
-- 그러면 이 경우의 재시작도 Gradle 없이 뜹니다. 다중 프로젝트 모드에서 81초 → 64초(`measure-relaunch.sh`).
-- 액세스 와이드너와 class tweaker는 Loom이 게임 jar를 다시 리매핑해야 해서 따로 조사합니다. 메타데이터를 먼저 합니다.
-- 검증: 자가 테스트의 "fabric.mod.json 변경 → Gradle 경유"를 "Gradle 없이, 바뀐 값이 게임에 보임"으로 바꿉니다.
+- The plugin fills the `${...}` values of `fabric.mod.json`, `quilt.mod.json` and `mods.toml` itself and writes them to
+  the output folder. The values come from the build's `processResources` settings (`expand`/`filesMatching`). Settings
+  it cannot read go through Gradle as today.
+- Restarts in that case then skip Gradle too: 81 s → 64 s on the multi-project mod (`measure-relaunch.sh`).
+- Access wideners and class tweakers need Loom to remap the game jar again, so they are looked into separately.
+  Metadata comes first.
+- Check: the self-test's "fabric.mod.json change → through Gradle" becomes "without Gradle, and the changed value shows
+  in the game".
 
-## 목표 2: 실행 중 등록 (멂, 조사부터)
+## Goal 2: registering while the game runs (far, research first)
 
-- 레지스트리를 풀고 → 새 항목을 등록하고 → 모델·태그·번역을 다시 읽고 → 클라이언트와 서버를 동기화합니다.
-- 범위: 싱글플레이 개발 클라이언트만. 멀티플레이와 배포용 빌드는 다루지 않습니다.
-- 안전장치: 시작하기 전에 열린 월드의 스냅샷을 자동으로 찍습니다(`WorldSnapshots`). 실패하면 그 스냅샷으로 재시작합니다.
-- Minecraft 버전마다 레지스트리 내부가 달라서, 로더·버전 지원과 마찬가지로 함께 개발 중인 더 큰 모드의 멀티 버전 작업과 함께 갑니다.
-- 첫 단계: Fabric 1.21.1에서 블록 하나를 실행 중에 등록해 보고, 무엇이 깨지는지(아이템 그룹, 블록 상태, 렌더 레이어,
-  네트워크 동기화 ID) 목록을 만듭니다.
+- Unfreeze the registries → register the new entries → reload models, tags and translations → sync client and server.
+- Scope: single-player dev clients only. Multiplayer and release builds are out of scope.
+- Safety net: a snapshot of the open world is taken automatically before starting (`WorldSnapshots`). On failure the
+  game restarts from that snapshot.
+- Registry internals differ between Minecraft versions, so like loader and version support, this goes together with
+  the multi-version work of the bigger mod developed alongside.
+- First step: register one block at runtime on Fabric 1.21.1 and list what breaks (item groups, block states, render
+  layers, network sync IDs).
 
-## 그 밖의 후보
+## Other candidates
 
-- 첫 실행 경험: JBR 21이 없으면 툴윈도우에서 바로 설치(IntelliJ의 JDK 다운로더).
-- 실사용 기록(`UsageLog`, `usage.py`)으로 효과 범위가 실제로 어디쯤인지 채우기.
+- ~~First-run experience: install JBR 21 straight from the tool window when it is missing.~~ Done in 0.2.0 (one-click
+  JetBrains Runtime download).
+- Use real usage records (`UsageLog`, `usage.py`) to find where in the measured range the effect actually lands.

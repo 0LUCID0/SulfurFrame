@@ -1,154 +1,194 @@
-# SulfurFrame — 프로필·월드 관리 (PoC)
+🌐 **English** · [한국어](README.ko.md)
 
-목표는 모든 마인크래프트 클라이언트(공식 런처, Prism, CurseForge, Modrinth, 모드 개발 프로젝트)에 흩어진 월드, 키 설정, 옵션을 다루는 것입니다.
-계층은 세 개로 나눕니다.
+> Translated from the Korean original ([README.ko.md](README.ko.md)), which is the source of truth: if the two differ, the Korean one is right. Last synced: 2026-11-21.
 
-1. **개인 프로필(평소 플레이):** 키 설정과 옵션을 병합 동기화하고, 서버 목록·리소스팩·셰이더팩·스크린샷은 하나로 묶고, 월드는 라이브러리로 다룹니다.
-2. **개발 작업 공간:** 마인크래프트 버전별 공용 개발 홈, 테스트 월드 템플릿, 스냅샷. 개인 프로필과 격리됩니다.
-3. **다리:** 실제 월드의 복사본으로 개발 빌드를 시험하고, 빌드를 인스턴스에 배포합니다. 원본은 읽기만 합니다.
+# SulfurFrame — profiles and worlds (PoC)
 
-## 1단계: 인스턴스 스캐너 (`InstanceScanner.java`)
+The goal is to handle the worlds, key bindings and options scattered across every Minecraft client (the official
+launcher, Prism, CurseForge, Modrinth, mod dev projects). There are three layers.
 
-읽기 전용입니다. 아무것도 바꾸지 않습니다.
+1. **Personal profile (everyday play):** key bindings and options are merge-synced; server lists, resource packs,
+   shader packs and screenshots are pooled; worlds are handled as a library.
+2. **Dev workspace:** a shared dev home per Minecraft version, test world templates, snapshots. Isolated from the
+   personal profile.
+3. **Bridge:** try a dev build on a copy of a real world, deploy a build to an instance. Originals are only read.
+
+## Step 1: instance scanner (`InstanceScanner.java`)
+
+Read-only. It changes nothing.
 
 ```bash
 java InstanceScanner.java --dev-root "C:/path/to/workspace" [--json out.json]
 ```
 
-| 출처 | 읽는 것 |
+| Source | What it reads |
 |---|---|
-| 공식 런처 | `%APPDATA%/.minecraft/launcher_profiles*.json`의 설치별 `gameDir` (같은 폴더는 하나로 합침) |
-| Prism | `prismlauncher.cfg`의 `InstanceDir`, 인스턴스별 `instance.cfg`, `mmc-pack.json`(마인크래프트 버전, 로더) |
+| Official launcher | each installation's `gameDir` in `%APPDATA%/.minecraft/launcher_profiles*.json` (the same folder is merged into one) |
+| Prism | `InstanceDir` in `prismlauncher.cfg`, each instance's `instance.cfg` and `mmc-pack.json` (Minecraft version, loader) |
 | CurseForge | `~/curseforge/minecraft/Instances/*/minecraftinstance.json` |
-| Modrinth | `%APPDATA%/ModrinthApp/profiles/*`. 메타데이터가 `app.db`(SQLite)라서 버전과 로더는 인스턴스의 로그·`options.txt`에서 추정 |
-| 개발 프로젝트 | `gradle.properties`의 `minecraft_version`과 `run/`(또는 `runs/client`) |
+| Modrinth | `%APPDATA%/ModrinthApp/profiles/*`. Its metadata is in `app.db` (SQLite), so version and loader are guessed from the instance's logs and `options.txt` |
+| Dev projects | `minecraft_version` in `gradle.properties` and `run/` (or `runs/client`) |
 
-인스턴스마다 게임 폴더, 마인크래프트 버전, 로더, 모드 수, `options.txt`의 데이터 버전과 키 설정 수, 월드 목록을 보여 줍니다.
-월드 정보는 `level.dat`을 직접 읽은 이름, **마지막으로 연 버전**(`Version.Name`, `DataVersion`), 마지막 플레이 날짜입니다.
+For each instance it shows the game folder, Minecraft version, loader, mod count, the data version and key binding
+count of `options.txt`, and the worlds. World info is the name read straight from `level.dat`, the **version it was
+last opened with** (`Version.Name`, `DataVersion`), and the last played date.
 
-- 로그는 UTF-8이 아닐 수 있어서 바이트 그대로 읽습니다. 로더 인식 형식은 `Loading Minecraft X with Fabric Loader Y`, `forge-<mc>-<ver>`, `neoforge-…`입니다.
-- **인스턴스보다 새 버전으로 저장된 월드는 ⚠로 표시합니다.** 이 PC에서도 하나 발견했습니다. Modrinth `my`(1.21.1) 안에 1.21.4로 마지막 저장된 월드가 있습니다.
-- 계정 이름 같은 개인 정보는 출력하지 않습니다.
+- Logs may not be UTF-8, so they are read as raw bytes. Recognised loader formats: `Loading Minecraft X with Fabric
+  Loader Y`, `forge-<mc>-<ver>`, `neoforge-…`.
+- **Worlds saved by a newer version than their instance are marked ⚠.** One turned up on this PC too: a world in
+  Modrinth `my` (1.21.1) was last saved with 1.21.4.
+- Personal information such as account names is not printed.
 
-### 이 PC 결과 (2026-11-07)
-인스턴스 12개(공식 1, Prism 1, Modrinth 6, 개발 4), 월드 8개. CurseForge 인스턴스는 0개. 공식 런처는 버전을 `options.txt` 데이터 버전(4671)으로만 알 수 있습니다.
+### Results on this PC (2026-11-07)
+12 instances (official 1, Prism 1, Modrinth 6, dev 4), 8 worlds. No CurseForge instances. For the official launcher
+the version is only known from the `options.txt` data version (4671).
 
-## 2단계: 키 설정·옵션 병합 동기화 (`OptionsSync.java`)
+## Step 2: merge-syncing key bindings and options (`OptionsSync.java`)
 
 ```bash
-./options-sync.sh pull   [--apply] <gameDir>...   # 인스턴스 → 마스터
-./options-sync.sh status           <gameDir>...   # push하면 무엇이 바뀌는지
-./options-sync.sh push   [--apply] <gameDir>...   # 마스터 → 인스턴스
+./options-sync.sh pull   [--apply] <gameDir>...   # instances → master
+./options-sync.sh status           <gameDir>...   # what a push would change
+./options-sync.sh push   [--apply] <gameDir>...   # master → instances
 ```
 
-- **`--apply` 없이는 아무것도 쓰지 않습니다.** 쓰기 전에는 `options.txt.sf-bak-<시각>` 백업을 남기고, 그 폴더로 게임이 실행 중이면 쓰지 않습니다.
-- **마스터는 합집합으로 보관합니다**(`~/.sulfurframe/profile/options.master`, `--master`로 변경 가능). 인스턴스에는 공유 키만 병합하고,
-  그 파일의 나머지 줄과 `version:` 줄은 그대로 둡니다. 게임이 저장할 때 모르는 옵션을 지우므로 링크로 묶으면 안 되는 문제를 피합니다.
-- **공유 범위**(`share.txt`, 기본값): 모든 키 설정, 마우스 감도·반전, 자동 점프, 웅크리기·달리기 토글, 언어, 사운드 볼륨, 채팅 크기,
-  자막, FOV, 화면 흔들림 등. **그래픽과 비디오 옵션은 인스턴스별로 둡니다**(개발용과 플레이용이 다르게 원할 수 있음).
-- **충돌 규칙(3방향 병합):** `options.txt`는 게임을 켤 때마다 다시 저장되므로 파일 시각은 쓰지 않습니다. 인스턴스마다 마지막 push 직후의 값(baseline)을 `<master>/baselines/`에 두고, **그 값에서 바뀐 키만 그 인스턴스에서 사용자가 바꾼 것**으로 보고 퍼뜨립니다. 여러 곳에서 같은 키를 다르게 바꿨으면 충돌로 보고하고 가장 최근 저장본을 씁니다. 아무도 바꾸지 않은 키와 첫 동기화는 **다수결**입니다(동률이면 최근 저장본). 인스턴스별 예외는 그 게임 폴더의 `sulfurframe-keep.txt`에 키를 적습니다(예: `key_iris.*`).
-- **버전 간 변환:** 1.12 이하의 숫자 키 코드(LWJGL 2)와 1.13+ 이름(`key.keyboard.w`, `key.mouse.left`)을 서로 변환합니다.
-- **없는 키 추가:** 그 인스턴스에 없는 바닐라 키는 추가합니다(모르는 키는 게임이 무시). **모드 키는 그 모드의 키가 이미 있는 인스턴스에만** 추가합니다.
+- **Nothing is written without `--apply`.** Before writing it leaves an `options.txt.sf-bak-<time>` backup, and it does
+  not write while a game is running from that folder.
+- **The master keeps the union** (`~/.sulfurframe/profile/options.master`, change it with `--master`). Only the shared
+  keys are merged into an instance; the rest of that file and its `version:` line stay as they are. That avoids the
+  problem with linking the files: the game drops options it does not know when it saves.
+- **What is shared** (`share.txt`, defaults): all key bindings, mouse sensitivity and invert, auto-jump, sneak and
+  sprint toggles, language, sound volumes, chat size, subtitles, FOV, view bobbing and so on. **Graphics and video
+  options stay per instance** (dev and play setups may want them different).
+- **Conflict rule (three-way merge):** `options.txt` is saved again every time the game starts, so file times are not
+  used. For each instance the values right after the last push (the baseline) are kept in `<master>/baselines/`, and
+  **only keys that changed from that baseline count as the user's change in that instance** and get spread. If several
+  places changed the same key differently, that is reported as a conflict and the most recently saved one wins. Keys
+  nobody changed, and the first sync, go by **majority** (a tie goes to the most recently saved). Per-instance
+  exceptions are listed in that game folder's `sulfurframe-keep.txt` (e.g. `key_iris.*`).
+- **Between versions:** numeric key codes of 1.12 and older (LWJGL 2) and the 1.13+ names (`key.keyboard.w`,
+  `key.mouse.left`) are converted both ways.
+- **Missing keys are added:** vanilla keys missing from an instance are added (the game ignores keys it does not know).
+  **Mod keys are only added to instances that already have keys of that mod.**
 
-### 검증 (실제 인스턴스 파일의 **복사본**으로, 2026-11-15)
-대상: Modrinth `my`(1.21.1, 키 102개), Prism 1.21.1(40개), 개발 26.3(62개), 직접 만든 1.12.2 형식 파일.
-- 4개를 pull하니 마스터 항목이 166개가 됐습니다. Modrinth 쪽에서 나중에 G로 바꾼 버리기 키가 이겼습니다.
-- push 후 1.12 파일에는 `key_key.drop:34`(G)로 변환되어 들어갔고, 1.21 전용 모드 키(axiom)는 들어가지 않았습니다.
-- **공유 대상이 아닌 줄은 세 파일 모두 그대로였습니다**(해시 비교). 백업이 하나씩 생겼고, 다시 push하면 변경 0건입니다.
-- Prism 복사본에 `sulfurframe-keep.txt`(`key_iris.*`)를 두니 iris 키 3개가 변경 목록에서 빠졌습니다.
+### Check (on **copies** of real instance files, 2026-11-15)
+Targets: Modrinth `my` (1.21.1, 102 keys), Prism 1.21.1 (40), dev 26.3 (62), a hand-made 1.12.2-format file.
+- Pulling all 4 gave a master of 166 entries. The drop key, changed later to G on the Modrinth side, won.
+- After a push, the 1.12 file got it converted as `key_key.drop:34` (G), and a 1.21-only mod key (axiom) was not added.
+- **Lines that are not shared stayed untouched in all three files** (hash comparison). One backup each was made, and
+  pushing again changes nothing.
+- With `sulfurframe-keep.txt` (`key_iris.*`) in the Prism copy, the 3 iris keys dropped out of the change list.
 
-알려진 한계: `key.` 접두사를 쓰는 모드 키는 바닐라로 취급되어 모든 인스턴스에 추가됩니다(게임이 무시하니 무해).
-26.x에만 있는 바닐라 디버그 키도 구버전 파일에 추가됩니다(역시 무시됨). **실제 인스턴스 파일에는 아직 쓰지 않았습니다.**
+Known limits: mod keys that use the `key.` prefix are treated as vanilla and added to every instance (harmless, the
+game ignores them). Vanilla debug keys that exist only in 26.x are added to older files too (ignored as well).
+**Nothing has been written to real instance files yet.**
 
-## 다음 단계
-2-1. 동기화를 자동으로 실행 (javaagent `premain`에서 push, JVM 종료 훅에서 pull. 어떤 런처든 JVM 인자만 넣으면 됨)
-3. 실제 월드 스냅샷으로 개발 빌드 시험, 빌드를 인스턴스에 배포
-4. 개발 공용 홈(정션)과 테스트 월드 템플릿
+## Next steps
+2-1. Run the sync automatically (push in a javaagent's `premain`, pull in a JVM shutdown hook; any launcher works by
+adding a JVM argument)
+3. Try dev builds on real world snapshots, deploy builds to instances
+4. Shared dev home (junction) and test world templates
 
-### 실제 인스턴스 미리보기 (2026-11-15, 아무것도 쓰지 않음, 해시로 확인)
-처음 만든 "최근 파일이 이긴다" 규칙은 미리보기에서 틀린 것으로 드러났습니다. 공식 런처의 `.minecraft`가 가장 최근에 저장됐다는 이유로
-다른 9곳의 언어를 `en_us`로, FOV를 70으로, 꺼 둔 음악을 다시 켜려 했습니다. 그래서 3방향 병합과 다수결로 바꿨습니다.
-바꾼 뒤에는 언어 `ko_kr`(9/10)처럼 대부분이 쓰는 값으로 맞춰집니다. FOV(70 vs 90)와 음악(켬 vs 끔)은 5:5 동률이었습니다.
+### Preview on real instances (2026-11-15, nothing written, checked by hash)
+The first rule, "the most recent file wins", turned out wrong in the preview. Because the official launcher's
+`.minecraft` was saved most recently, it was about to set the language of the 9 other places to `en_us`, FOV to 70,
+and turn music that was off back on. So it was changed to a three-way merge with majority voting. After the change,
+values follow what most places use, such as language `ko_kr` (9/10). FOV (70 vs 90) and music (on vs off) were 5:5 ties.
 
-## 2-1단계: 자동 동기화 (javaagent)
+## Step 2-1: automatic sync (javaagent)
 
-동기화 코드(`src/dev/sulfurframe/profile/OptionsSync.java`, Java 8 문법)가 `sf-agent.jar`에 함께 들어갑니다.
-- **게임 시작 시(`premain`):** 마인크래프트가 옵션을 읽기 전에 실행합니다. 이 인스턴스에서 바뀐 값을 마스터로 올리고, 다른 인스턴스의 변경을 받아옵니다.
-- **게임 종료 시(JVM 종료 훅):** 게임 중에 바꾼 값을 마스터로 올리고, 이 인스턴스의 기준값을 갱신합니다. 비정상 종료로 이 단계가
-  빠져도 다음 시작 때 기준값 비교로 따라잡습니다.
-- **게임 폴더 찾기:** 에이전트 인자 `gameDir=`, JVM 명령줄의 `--gameDir`, 작업 폴더 순(Prism, Modrinth, CurseForge, Gradle 실행은 작업 폴더가 게임 폴더).
-- **마스터 잠금:** 게임 여러 개가 동시에 켜지거나 꺼져도 마스터를 번갈아 씁니다(`<master>/lock`).
-- **기록:** 무엇을 동기화했는지 `<master>/sync.log`에 남습니다. 종료 시점에는 게임 로그가 이미 닫혀 있어서 따로 둡니다.
-- **백업:** 자동 동기화가 시작할 때마다 `options.txt`를 쓰므로, 인스턴스마다 최근 백업 5개만 유지합니다.
-- **에이전트 인자:** `mode=sync`(동기화만 하고 LWJGL 패치·FPS 제한은 안 함, 평소 플레이용), `sync=off`, `master=<dir>`.
-  마스터 프로필이 없으면 아무것도 하지 않습니다.
+The sync code (`src/dev/sulfurframe/profile/OptionsSync.java`, Java 8 syntax) ships inside `sf-agent.jar`.
+- **On game start (`premain`):** runs before Minecraft reads its options. Values changed in this instance go up to the
+  master, and changes from other instances come in.
+- **On game exit (JVM shutdown hook):** values changed during play go up to the master, and this instance's baseline is
+  updated. If a crash skips this step, the baseline comparison catches up on the next start.
+- **Finding the game folder:** the agent argument `gameDir=`, then `--gameDir` on the JVM command line, then the working
+  folder (Prism, Modrinth, CurseForge and Gradle runs use the game folder as working folder).
+- **Master lock:** several games starting or quitting at once take turns writing the master (`<master>/lock`).
+- **Log:** what was synced goes to `<master>/sync.log`. The game's own log is already closed at exit, so it is kept
+  separately.
+- **Backups:** automatic sync writes `options.txt` on every start, so only the latest 5 backups per instance are kept.
+- **Agent arguments:** `mode=sync` (sync only, no LWJGL patches or FPS cap; for everyday play), `sync=off`,
+  `master=<dir>`. Without a master profile it does nothing.
 
-설치: `./install-autosync.sh`가 에이전트를 빌드해 `~/.sulfurframe/sf-agent.jar`(한글 없는 경로: Java 8 제약)에 복사하고, 런처에 넣을
-JVM 인자를 출력합니다. **런처 설정은 바꾸지 않습니다.**
+Install: `./install-autosync.sh` builds the agent, copies it to `~/.sulfurframe/sf-agent.jar` (a path without Korean
+characters: a Java 8 restriction) and prints the JVM argument to put in the launcher. **It does not change launcher
+settings.**
 ```
 -javaagent:C:\Users\<you>\.sulfurframe\sf-agent.jar=mode=sync
 ```
-런처별 위치: Prism(인스턴스 편집 → 설정 → Java 인수), Modrinth(프로필 설정 → Java/메모리 → JVM 인수), CurseForge(설정 → Minecraft →
-Java 설정, 전역), 공식 런처(설치 → 편집 → 추가 옵션 → JVM 인수).
+Where to put it: Prism (Edit instance → Settings → Java arguments), Modrinth (Profile settings → Java and memory → JVM
+arguments), CurseForge (Settings → Minecraft → Java settings, global), official launcher (Installations → Edit → More
+options → JVM arguments).
 
-### 검증 (바닐라 1.21.1, 시험용 마스터 복사본, 2026-11-15)
-1. **처음 동기화하는 인스턴스:** 시작 때 마스터 값으로 맞춰졌고(버리기 키 J → Q), 기준값 파일이 생겼습니다.
-2. **게임이 꺼진 동안 바꾼 값:** 버리기 키를 J로 바꿔 두니 다음 시작 때 사용자 변경으로 인식되어 마스터로 올라갔습니다.
-3. **종료 시점:** 실행 중에 움직인 볼륨 슬라이더 값(0.349)이 종료 때 마스터로 올라갔습니다. 아무것도 만지지 않은 실행에서는 게임이
-   값을 바꾸지 않았습니다(오인 전파 없음).
+### Check (vanilla 1.21.1, a test copy of the master, 2026-11-15)
+1. **An instance syncing for the first time:** on start it took the master's values (drop key J → Q), and a baseline
+   file was created.
+2. **A value changed while the game was off:** with the drop key set to J beforehand, the next start recognised it as
+   the user's change and sent it up to the master.
+3. **At exit:** a volume slider moved during play (0.349) went up to the master at exit. In a run where nothing was
+   touched, the game did not change any values (nothing spread by mistake).
 
-알려진 동작: 바닐라는 저장할 때 모르는 키(모드 키)를 지웁니다. 그래서 모드 없는 인스턴스에서는 매번 시작할 때 그 키를 다시 넣고
-게임이 다시 지웁니다. 동작에는 해가 없지만 시작할 때마다 백업이 하나씩 생깁니다(5개 유지).
+Known behaviour: vanilla drops keys it does not know (mod keys) when it saves. So in an instance without mods, those
+keys are added again on every start and the game drops them again. Harmless, but each start leaves a backup (5 kept).
 
-## 2-2단계: 콘텐츠 프로필 (인스턴스 단위, 주로 키 설정)
+## Step 2-2: content profiles (per instance, mostly key bindings)
 
-같은 플레이라도 모드팩·콘텐츠마다 키 배치가 다릅니다. 그래서 기본 마스터 위에 **이름 붙은 프로필**을 겹칩니다.
-- 프로필: `<master>/profiles/<이름>.txt` (`key:value` 줄). 인스턴스 지정: 그 게임 폴더의 `sulfurframe-profile.txt`(여러 개면 뒤가 우선).
-- **적용:** 그 인스턴스의 프로필 값 → 없으면 기본 마스터 값.
-- **수집:** 프로필이 가진 키를 그 인스턴스에서 바꾸면 **그 프로필**이 바뀌고, 같은 프로필을 쓰는 인스턴스에만 퍼집니다. 프로필 키는 기본 다수결에 참여하지 않습니다.
-- 자동 동기화(에이전트)도 같은 규칙을 따릅니다.
+The same player wants different key layouts per modpack or content. So **named profiles** are layered on top of the
+default master.
+- Profile: `<master>/profiles/<name>.txt` (`key:value` lines). Assigning to an instance: `sulfurframe-profile.txt` in
+  that game folder (with several, later ones win).
+- **Applying:** the instance's profile value → otherwise the default master value.
+- **Collecting:** changing a key that a profile has in that instance changes **that profile**, which spreads only to
+  instances using the same profile. Profile keys do not take part in the default majority vote.
+- Automatic sync (the agent) follows the same rules.
 
 ```bash
-./options-sync.sh suggest <gameDir>...                              # 인스턴스끼리 갈리는 키를 묶어 프로필 후보로 보여 줌
-./options-sync.sh profile-new <이름> <gameDir> 'key_iris.*' --apply  # 그 인스턴스의 현재 값으로 프로필 생성
-./options-sync.sh assign <gameDir> <이름>[,<이름>] --apply           # 인스턴스에 지정 ("-"면 해제)
-./options-sync.sh profiles <gameDir>...                             # 프로필과 지정 현황
+./options-sync.sh suggest <gameDir>...                              # groups keys that differ between instances into profile candidates
+./options-sync.sh profile-new <name> <gameDir> 'key_iris.*' --apply  # creates a profile from that instance's current values
+./options-sync.sh assign <gameDir> <name>[,<name>] --apply           # assigns to an instance ("-" removes)
+./options-sync.sh profiles <gameDir>...                             # profiles and assignments
 ```
 
-### 검증 (복사본, 2026-11-15)
-- 동기화 전 백업으로 `suggest`를 돌리니 실제 차이가 묶였습니다. iris 셰이더 키가 팩마다 다르고, zoomify 줌 키도 다르고,
-  FindTheMurderer에만 있는 키(툴바, 플레이어 목록, 모드 메뉴)가 있고, FOV와 음악은 5:5로 갈렸습니다.
-- Modrinth 복사본의 iris 키로 `shaders` 프로필을 만들어 Prism·Modrinth에 지정했습니다. Prism에서 iris 새로고침 키를 F9로 바꾸니
-  **프로필에만 반영**됐고(기본 마스터는 그대로), **같은 프로필을 쓰는 Modrinth에만** 퍼졌습니다. 프로필이 없는 개발 인스턴스는 그대로였습니다.
+### Check (copies, 2026-11-15)
+- `suggest` on the pre-sync backups grouped the real differences: iris shader keys differ per pack, the zoomify zoom
+  key differs, some keys exist only in FindTheMurderer (toolbar, player list, mod menu), and FOV and music split 5:5.
+- A `shaders` profile made from the iris keys of the Modrinth copy was assigned to Prism and Modrinth. Changing the iris
+  reload key to F9 in Prism **changed only the profile** (the default master stayed), and spread **only to Modrinth,
+  which uses the same profile**. The dev instance without the profile stayed as it was.
 
-실제 인스턴스에는 아직 프로필을 만들거나 지정하지 않았습니다.
+No profiles have been created or assigned on real instances yet.
 
-## 2-3단계: 개발 중인 모드의 키는 동기화하지 않음
+## Step 2-3: keys of the mod you are developing are not synced
 
-개발 인스턴스(모드 프로젝트의 `run/`)에는 바닐라와 내가 만드는 모드만 있습니다. 그래서:
-- **바닐라 키**는 마스터로 모든 인스턴스에 공유합니다.
-- **내가 개발하는 모드의 키**는 그 개발 인스턴스에서 주고받지 않습니다. 동기화하면 코드에서 기본 키를 바꿔도 마스터의 예전 키가 다시
-  들어가서, 새 기본값을 테스트할 수 없습니다. 모드 ID는 가장 가까운 Gradle 프로젝트의 `fabric.mod.json`, `quilt.mod.json`, `mods.toml`,
-  `neoforge.mods.toml`, `mcmod.info`에서 읽습니다. 이 PC에서 찾은 ID: `maxwells_chamber`, `disconnected1nn`, `lcd`, `untitled1`.
-- **네임스페이스 판단 수정:** 많은 모드가 키 이름을 `key.<modid>.<동작>`으로 짓습니다. 이전 규칙은 이걸 바닐라로 봐서
-  `maxwells_chamber`·jade 키가 모든 인스턴스에 추가됐습니다(실제로 개발 폴더 3곳에 들어감). 이제 `key.<동작>`, `key.hotbar.*`,
-  `key.debug.*`만 바닐라이고, `key.<x>.<y>`는 모드 x의 키입니다. 이미 들어간 남의 모드 키는 그 모드가 없는 게임이 다음 저장 때 지우고,
-  그 뒤로는 다시 추가되지 않습니다.
+A dev instance (a mod project's `run/`) has only vanilla and the mod you are making. So:
+- **Vanilla keys** are shared with every instance through the master.
+- **Keys of the mod you are developing** are neither sent nor received in that dev instance. Syncing them would put the
+  master's old key back after you change the default in code, so a new default could never be tested. Mod IDs are read
+  from the nearest Gradle project's `fabric.mod.json`, `quilt.mod.json`, `mods.toml`, `neoforge.mods.toml` or
+  `mcmod.info`. IDs found on this PC: `maxwells_chamber`, `disconnected1nn`, `lcd`, `untitled1`.
+- **Namespace fix:** many mods name their keys `key.<modid>.<action>`. The old rule took those for vanilla, so
+  `maxwells_chamber` and jade keys were added to every instance (they did land in 3 dev folders). Now only
+  `key.<action>`, `key.hotbar.*` and `key.debug.*` are vanilla, and `key.<x>.<y>` belongs to mod x. Keys of other mods
+  that already got in are dropped by games without that mod on their next save, and are not added again.
 
-검증: 실제 인스턴스 10곳 `status`가 변경 0건(파일 해시 동일)이고 개발 폴더 4곳의 모드 ID를 찾았습니다. 복사본에서는 개발 폴더의
-`maxwells_chamber.enter`를 G로 바꿔도 마스터로 가지 않았고(E 유지), 그 모드가 없는 인스턴스에는 모드 키가 추가되지 않았습니다.
+Check: `status` on the 10 real instances shows 0 changes (file hashes identical), and the mod IDs of the 4 dev folders
+were found. On copies, changing `maxwells_chamber.enter` to G in a dev folder did not reach the master (E stayed), and
+mod keys were not added to instances without that mod.
 
-플레이용 인스턴스(남의 모드가 든 Modrinth·Prism)의 키 복원은 `own-profiles --from-backup`으로 할 수 있습니다(미적용).
+Key bindings of play instances (Modrinth and Prism with other people's mods) can be restored with
+`own-profiles --from-backup` (not applied).
 
-## 2-4단계: IDE 플러그인과 연결
+## Step 2-4: connecting to the IDE plugin
 
-- **플러그인이 실행하는 개발 클라이언트**(Run client)는 에이전트 인자로 `gameDir=<run 폴더>`, `ownMods=<모드ID+…>`,
-  `createMaster=true`를 넘깁니다. 실행 폴더와 개발 중인 모드는 추측하지 않고 열린 프로젝트에서 가져옵니다
-  (`sf-idea-plugin/.../profile/ModIds.java`). 마스터가 없으면 첫 개발 실행이 마스터를 만듭니다.
-- **`SharedInstance`(MC 버전별 공용 폴더)는 더 이상 `options.txt`를 통째로 복사하지 않습니다.** 같은 버전 프로젝트끼리 파일을
-  통째로 돌려쓰면 한 프로젝트의 모드 키가 다른 프로젝트로 넘어가고, 개발 중인 모드 키 제외도 무시됐습니다. 월드·리소스팩·
-  스크린샷·셰이더팩 링크와 `servers.dat`·`hotbar.nbt` 복사는 그대로입니다. `run/`에 `options.txt`가 아직 없는 새 프로젝트만
-  공용 폴더의 것을 한 번 받습니다.
-- 검증: 플러그인의 `ModIds`가 프로젝트 4곳의 ID를 읽었습니다(`maxwells_chamber`, `disconnected1nn`, `lcd`, `untitled1`).
-  플러그인과 같은 인자로 바닐라 1.21.1을 실행하니 빈 폴더에 마스터가 생겼고(144개), 넘긴 모드 ID(`testmod`)의 키는 마스터에
-  들어가지 않았습니다. **IDE 안에서 Run client로 실행하는 흐름은 아직 시험하지 않았습니다.**
+- **Dev clients started by the plugin** (Run client) get the agent arguments `gameDir=<run folder>`,
+  `ownMods=<mod IDs+…>` and `createMaster=true`. The run folder and the mods in development are taken from the open
+  project instead of guessed (`sf-idea-plugin/.../profile/ModIds.java`). Without a master, the first dev run creates it.
+- **`SharedInstance` (a shared folder per MC version) no longer copies `options.txt` whole.** Passing the whole file
+  around between projects of the same version carried one project's mod keys into another and ignored the exclusion
+  of keys of the mod in development. The links for worlds, resource packs, screenshots and shader packs, and the
+  copies of `servers.dat` and `hotbar.nbt`, stay. Only a new project without an `options.txt` in `run/` takes the shared
+  folder's one, once.
+- Check: the plugin's `ModIds` read the IDs of 4 projects (`maxwells_chamber`, `disconnected1nn`, `lcd`, `untitled1`).
+  Running vanilla 1.21.1 with the same arguments as the plugin created a master in an empty folder (144 entries), and
+  keys of the passed mod ID (`testmod`) did not go into the master. **The flow of running through Run client inside
+  the IDE has not been tested yet.**
