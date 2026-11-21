@@ -21,6 +21,14 @@ public class MetadataTemplateSelfTest {
         expect(failures, "render an edited template", MetadataTemplate.render(edited, Map.of("version", "1.0.0+mc1.21.1")),
                 out.replace("\"Showcase\"", "\"Showcase edited\""));
 
+        // a CRLF source that expand wrote out with LF (seen on Linux): still lines up, and the new file follows the output
+        String crlf = tpl.replace("\n", "\r\n");
+        expect(failures, "learn from a CRLF source and an LF output", MetadataTemplate.learn(crlf, out), Map.of("version", "1.0.0+mc1.21.1"));
+        expect(failures, "render like the last output (LF)", MetadataTemplate.renderLike(edited.replace("\n", "\r\n"), Map.of("version", "1.0.0+mc1.21.1"), out),
+                out.replace("\"Showcase\"", "\"Showcase edited\""));
+        expect(failures, "render like the last output (CRLF)", MetadataTemplate.renderLike(edited, Map.of("version", "1.0.0+mc1.21.1"), out.replace("\n", "\r\n")),
+                out.replace("\"Showcase\"", "\"Showcase edited\"").replace("\n", "\r\n"));
+
         // mods.toml style: $name and dotted names, the same name twice
         String toml = "version=\"${mod_version}\"\nloaderVersion=\"$loader.range\"\n[[dependencies.${mod_id}]]\nmodId=\"${mod_id}\"\n";
         String tomlOut = "version=\"2.3\"\nloaderVersion=\"[4,)\"\n[[dependencies.cool]]\nmodId=\"cool\"\n";

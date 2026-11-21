@@ -48,6 +48,9 @@ final class MetadataTemplate {
      * output is the same text.
      */
     static Map<String, String> learn(String template, String output) {
+        // expand rewrites line endings (a CRLF source came out LF on Linux): compare text, not line separators
+        template = lf(template);
+        output = lf(output);
         var parts = parse(template);
         if (parts == null) return null;
         var regex = new StringBuilder("\\A");
@@ -80,6 +83,17 @@ final class MetadataTemplate {
         }
         return out.toString();
     }
+
+    /**
+     * {@link #render} with the line endings of {@code like} (the last Gradle output): what processResources would
+     * write, since expand does not keep the source's own line endings.
+     */
+    static String renderLike(String template, Map<String, String> values, String like) {
+        String r = render(lf(template), values);
+        return r == null || !like.contains("\r\n") ? r : r.replace("\n", "\r\n");
+    }
+
+    private static String lf(String s) { return s.replace("\r\n", "\n"); }
 
     /** Placeholder names used by {@code template} (empty if none or unsupported). */
     static Set<String> names(String template) {

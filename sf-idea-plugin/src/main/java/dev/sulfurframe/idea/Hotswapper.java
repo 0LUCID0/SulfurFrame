@@ -161,10 +161,11 @@ final class Hotswapper {
         String template = metadataTemplates.get(key);
         if (template == null) return "not seen when the game started";
         if (!Files.isRegularFile(to)) return "no build output to learn its values from";
-        var values = MetadataTemplate.learn(template, Files.readString(to));
+        String last = Files.readString(to);
+        var values = MetadataTemplate.learn(template, last);
         if (values == null) return "its placeholders could not be read from the last build";
         String now = Files.readString(src);
-        String filled = MetadataTemplate.render(now, values);
+        String filled = MetadataTemplate.renderLike(now, values, last);
         if (filled == null) {
             var unknown = new ArrayList<>(MetadataTemplate.names(now));
             unknown.removeAll(values.keySet());
