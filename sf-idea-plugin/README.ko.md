@@ -419,9 +419,14 @@ PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (게임 로�
      Gradle 쪽(init script의 `doFirst`)에서는 최종 명령을 볼 수 없기 때문입니다. 다음 실행(Restart, Rerun, Run client)은
      이 명령줄로 게임을 바로 띄우고, 그 실행에만 해당하는 것만 새로 넣습니다: 에이전트와 실행 표식, 디버그 포트, 개발 모드, quick play 월드.
    - 띄우기 전에 그사이 저장한 소스는 빠른 컴파일로, 바뀐 리소스는 출력 폴더로 복사해 둡니다(`Hotswapper.prepareRelaunch`).
+   - **모드 메타데이터 (`MetadataTemplate`):** `fabric.mod.json`, `quilt.mod.json`, `mods.toml`이 바뀌어도 Gradle 없이
+     갑니다. `processResources`가 채우는 `${version}` 같은 값은 빌드 스크립트의 Groovy 식이라 플러그인이 계산할 수 없지만,
+     지난 Gradle 실행이 채운 결과가 출력 폴더에 있습니다. 게임이 시작할 때 원본(템플릿)을 기억해 두었다가, 바뀌면 그
+     템플릿과 출력을 맞대어 각 자리의 값을 알아내고, 바뀐 원본에 같은 값을 채워 출력 폴더에 씁니다. 새 자리 표시가 생겼거나,
+     `${name}`/`$name`이 아닌 Groovy 문법(`${식}`, `<% %>`, `\$`)을 쓰거나, 템플릿과 출력이 맞지 않으면 전처럼 Gradle로 갑니다.
    - **Gradle로 가는 경우:** 빌드 파일(`*.gradle(.kts)`, `gradle.properties`, 버전 카탈로그, wrapper·데몬 JVM 파일,
-     `buildSrc`/`build-logic`), 게임용 JBR, 모드 메타데이터나 액세스 와이드너(`fabric.mod.json`, `mods.toml`, `*.accesswidener`,
-     `*.classtweaker`, `accesstransformer.cfg`)가 바뀌었거나, 컴파일 오류가 있거나, 바로 실행이 실패했을 때. 이유는
+     `buildSrc`/`build-logic`), 게임용 JBR, 액세스 와이드너(`*.accesswidener`, `*.classtweaker`, `accesstransformer.cfg`:
+     Loom이 게임 jar를 다시 리매핑해야 함)가 바뀌었거나, 위처럼 채울 수 없는 메타데이터, 컴파일 오류, 바로 실행이 실패했을 때. 이유는
      `starting through Gradle: …`로 로그에 남습니다. `-Dsulfurframe.quickRelaunch=false`로 끕니다.
    - **Windows 명령줄 길이:** 경로에 ASCII가 아닌 글자가 있으면 Loom이 인자 파일을 쓰지 않아 클래스패스가 통째로
      명령줄에 들어갑니다(다중 프로젝트 모드 32,223자, 한계 32,767자). 넘칠 것 같으면 클래스패스를 `CLASSPATH` 환경 변수로

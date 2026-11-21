@@ -18,10 +18,15 @@
 | 정적 초기화(`<clinit>`)는 클래스당 한 번 | Java (언어 규칙) | 바꿀 수 없음. 바뀌면 재시작 권함(`StartupCode`) |
 | 컴파일 상수가 읽는 쪽에 복사됨 | javac | 이미 우회: 사용처 소스를 다시 컴파일해 함께 보냄 |
 | 새 블록·아이템 등록 | **Minecraft** (시작 뒤 레지스트리를 얼림) | 재시작 → 목표 2 |
-| 모드 메타데이터, 액세스 와이드너 | **우리 구현** (`processResources`, Loom 리매핑을 Gradle에 맡김) | Gradle 경유 재시작 → 목표 1 |
+| 모드 메타데이터 | **우리 구현** | 해결: 지난 빌드의 값으로 직접 채워 Gradle 없이 재시작 (`MetadataTemplate`) |
+| 액세스 와이드너, class tweaker | **우리 구현** (Loom 리매핑을 Gradle에 맡김) | Gradle 경유 재시작 → 목표 1 |
 | 지운 소스·리소스의 출력이 남음, Windows 명령줄 길이 | **우리 구현** (Gradle 없는 재시작) | 다음 Gradle 실행 때 정리, 길면 `CLASSPATH`로 넘김 |
 
-## 목표 1: 메타데이터 변경도 Gradle 없이 (가까움)
+## 목표 1: 메타데이터 변경도 Gradle 없이 (메타데이터는 끝남)
+
+- **끝남:** 모드 메타데이터는 빌드 설정을 읽는 대신, 지난 Gradle 출력과 그 원본을 맞대어 값을 알아낸 뒤 바뀐 원본에
+  채웁니다(`MetadataTemplate`). 자가 테스트: `fabric.mod.json`을 고치고 재시작 → Gradle 없이, 출력에 바뀐 내용과 채워진 버전.
+  아래는 처음 세운 계획입니다.
 
 - `fabric.mod.json`, `quilt.mod.json`, `mods.toml`의 `${...}` 값을 플러그인이 직접 채워 출력 폴더에 씁니다.
   채울 값은 빌드의 `processResources` 설정(`expand`/`filesMatching`)에서 읽습니다. 읽지 못하는 설정이면 지금처럼 Gradle로 갑니다.

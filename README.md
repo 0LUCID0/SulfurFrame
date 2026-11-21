@@ -111,7 +111,7 @@ as one step (its slowest change decides) to counting each changed file as one st
 method bodies and new members (with a JetBrains Runtime, see Install), mixins, and assets or data.
 
 The rest needs a restart (registrations, static initializers, mod metadata). A restart skips Gradle and starts the game
-from the command line it was last started with, unless build files, mod metadata or access wideners changed since.
+from the command line it was last started with, unless build files or access wideners changed since (mod metadata is filled in with the last build's values).
 Code and resources saved in the meantime are compiled and copied first. On the multi-project mod that brought a restart
 from 81 s to 64 s; on the small mod it made almost no difference (32 s to 30 s), because its Gradle is quick. The commit
 sample cannot tell which restarts would skip Gradle, so each range's high end counts commits with every restart

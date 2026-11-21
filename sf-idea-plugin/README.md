@@ -560,10 +560,17 @@ changes, cannot be changed while it runs. The **Restart** button takes care of t
      only what belongs to that run: the agent and launch marker, debug port, dev mods, quick play world.
    - Before starting, sources saved in the meantime are fast-compiled, and changed resources copied to the output
      folder (`Hotswapper.prepareRelaunch`).
+   - **Mod metadata (`MetadataTemplate`):** a changed `fabric.mod.json`, `quilt.mod.json` or `mods.toml` no longer needs
+     Gradle. The values `processResources` fills in, such as `${version}`, are Groovy expressions in the build script
+     that the plugin cannot evaluate, but the last Gradle run left the filled-in file in the output folder. The source
+     (the template) is remembered when the game starts; when it changes, that template is lined up against the output
+     to read each placeholder's value, and the changed source is filled with the same values and written to the output
+     folder. A new placeholder, Groovy beyond `${name}`/`$name` (`${expr}`, `<% %>`, `\$`), or a template that does not
+     line up with the output goes through Gradle as before.
    - **When it goes through Gradle:** when build files (`*.gradle(.kts)`, `gradle.properties`, version catalogs, wrapper
-     and daemon JVM files, `buildSrc`/`build-logic`), the game's JBR, mod metadata or access wideners
-     (`fabric.mod.json`, `mods.toml`, `*.accesswidener`, `*.classtweaker`, `accesstransformer.cfg`) changed, on a
-     compile error, or when starting directly failed. The reason is logged as `starting through Gradle: …`. Turn it off
+     and daemon JVM files, `buildSrc`/`build-logic`), the game's JBR or access wideners (`*.accesswidener`,
+     `*.classtweaker`, `accesstransformer.cfg`: Loom has to remap the game jar) changed, for metadata that cannot be
+     filled in as above, on a compile error, or when starting directly failed. The reason is logged as `starting through Gradle: …`. Turn it off
      with `-Dsulfurframe.quickRelaunch=false`.
    - **Windows command line length:** with non-ASCII characters in the path, Loom does not use an argument file, so the
      whole class path goes onto the command line (32,223 characters on the multi-project mod, limit 32,767). When it

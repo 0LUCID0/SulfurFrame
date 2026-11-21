@@ -298,14 +298,33 @@ final class AutoTest {
         String log = p.logText().substring(Math.min(mark, p.logText().length()));
         check("restart -> started without Gradle", log.contains("started the game without Gradle"),
                 firstLine(log, "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
-        // mod metadata changed on disk: processResources has to run, so this one goes through Gradle again
+        // mod metadata edited: filled in from the last Gradle output (MetadataTemplate), still no Gradle
         if (Files.exists(meta) && QuickRelaunch.enabled()) {
-            Files.setLastModifiedTime(meta, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis()));
-            mark = p.logText().length();
-            restartOnce(p, world, gameLog, "restart after fabric.mod.json changed");
-            log = p.logText().substring(Math.min(mark, p.logText().length()));
-            check("restart after fabric.mod.json changed -> through Gradle", log.contains("starting through Gradle: fabric.mod.json changed") && log.contains("gradlew"),
-                    firstLine(log, "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
+            String original = Files.readString(meta);
+            String edited = original.replaceFirst("\"name\"\\s*:\\s*\"", "\"name\": \"SF-edited ");
+            Path out = t.dir().resolve("build/resources/main/fabric.mod.json");
+            if (!edited.equals(original)) {
+                Files.writeString(meta, edited);
+                mark = p.logText().length();
+                restartOnce(p, world, gameLog, "restart after fabric.mod.json edited");
+                log = p.logText().substring(Math.min(mark, p.logText().length()));
+                String written = Files.exists(out) ? Files.readString(out) : "";
+                check("restart after fabric.mod.json edited -> without Gradle, filled in like processResources",
+                        log.contains("started the game without Gradle") && log.contains("fabric.mod.json filled in without Gradle")
+                                && written.contains("SF-edited ") && !written.contains("${"),
+                        firstLine(log, "filled in", "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
+                Files.writeString(meta, original);
+            }
+            // a build file changed: Gradle has to configure again, so this one goes through Gradle
+            Path props = t.dir().resolve("gradle.properties");
+            if (Files.exists(props)) {
+                Files.setLastModifiedTime(props, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis()));
+                mark = p.logText().length();
+                restartOnce(p, world, gameLog, "restart after gradle.properties changed");
+                log = p.logText().substring(Math.min(mark, p.logText().length()));
+                check("restart after gradle.properties changed -> through Gradle", log.contains("starting through Gradle: build file changed") && log.contains("gradlew"),
+                        firstLine(log, "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
+            }
         }
     }
 

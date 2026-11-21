@@ -121,7 +121,60 @@ final class Hotswapper {
             classBytes.clear();
             for (Path p : snapshot.keySet()) classBytes.put(p, Files.readAllBytes(p));   // a mod's classes: small
         } catch (IOException e) { snapshot = null; }
+        snapshotMetadata(t);
         fast.prepareAsync(t);   // ask Gradle for the class path once, in the background
+    }
+
+    /**
+     * Mod metadata sources as they were when this game started, so a later change can be filled in without Gradle
+     * ({@link MetadataTemplate}): this text is what produced the output the game reads. Found by walking the build,
+     * since the source sets may not be known yet at the first start.
+     */
+    private final Map<Path, String> metadataTemplates = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private void snapshotMetadata(Workspace.Target t) {
+        metadataTemplates.clear();
+        Path root = t.buildRoot();
+        try {
+            Files.walkFileTree(root, EnumSet.noneOf(FileVisitOption.class), 9, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult preVisitDirectory(Path d, java.nio.file.attribute.BasicFileAttributes a) {
+                    String n = d.getFileName() == null ? "" : d.getFileName().toString();
+                    return !d.equals(root) && (n.startsWith(".") || n.equals("build") || n.equals("run") || n.equals("out")
+                            || n.equals("node_modules")) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+                }
+                @Override public FileVisitResult visitFile(Path f, java.nio.file.attribute.BasicFileAttributes a) {
+                    if (MetadataTemplate.isMetadata(f.getFileName().toString()) && f.toString().replace('\\', '/').contains("/resources/"))
+                        try { metadataTemplates.put(f.toAbsolutePath().normalize(), Files.readString(f)); } catch (IOException ignored) { }
+                    return FileVisitResult.CONTINUE;
+                }
+                @Override public FileVisitResult visitFileFailed(Path f, IOException e) { return FileVisitResult.CONTINUE; }
+            });
+        } catch (IOException ignored) { }
+    }
+
+    /**
+     * A changed metadata file filled in from the last Gradle output and written to {@code to} (where the game reads it).
+     * Null when done, else why Gradle has to do it.
+     */
+    private String expandMetadata(Path src, Path to) throws IOException {
+        Path key = src.toAbsolutePath().normalize();
+        String template = metadataTemplates.get(key);
+        if (template == null) return "not seen when the game started";
+        if (!Files.isRegularFile(to)) return "no build output to learn its values from";
+        var values = MetadataTemplate.learn(template, Files.readString(to));
+        if (values == null) return "its placeholders could not be read from the last build";
+        String now = Files.readString(src);
+        String filled = MetadataTemplate.render(now, values);
+        if (filled == null) {
+            var unknown = new ArrayList<>(MetadataTemplate.names(now));
+            unknown.removeAll(values.keySet());
+            return unknown.isEmpty() ? "it uses template syntax beyond ${name}" : "new placeholder(s) " + String.join(", ", unknown);
+        }
+        Files.createDirectories(to.getParent());
+        Files.writeString(to, filled);
+        metadataTemplates.put(key, now);   // the output now comes from this text
+        log.accept("relaunch: " + src.getFileName() + " filled in without Gradle" + (values.isEmpty() ? "" : " (" + String.join(", ", values.keySet()) + ")"));
+        return null;
     }
 
     /** Last swapped bytes of every class file, to see what a change touched (startup code). */
@@ -227,9 +280,16 @@ final class Hotswapper {
                         for (Path f : files.filter(Files::isRegularFile).toList()) {
                             long m = Files.getLastModifiedTime(f).toMillis();
                             if (m <= since) continue;
-                            if (needsGradle(f.getFileName().toString())) return f.getFileName() + " changed";
                             Path to = s.resOut().resolve(srcDir.relativize(f));
                             if (Files.exists(to) && Files.getLastModifiedTime(to).toMillis() >= m) continue;
+                            String name = f.getFileName().toString();
+                            if (MetadataTemplate.isMetadata(name)) {   // filled in the way processResources would
+                                String why = expandMetadata(f, to);
+                                if (why != null) return name + " changed (" + why + ")";
+                                copied++;
+                                continue;
+                            }
+                            if (needsGradle(name)) return name + " changed";
                             Files.createDirectories(to.getParent());
                             Files.copy(f, to, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
                             copied++;

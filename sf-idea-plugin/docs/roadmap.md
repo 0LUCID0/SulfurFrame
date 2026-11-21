@@ -18,10 +18,16 @@ constants + re-applying Mixins). The restarts that remain fall into two groups b
 | Static initialization (`<clinit>`) runs once per class | Java (language rules) | Cannot change. A restart is suggested when it changes (`StartupCode`) |
 | Compile-time constants are copied into the classes that read them | javac | Already worked around: the users' sources are recompiled and sent along |
 | Registering new blocks, items and the like | **Minecraft** (freezes its registries after startup) | Restart → goal 2 |
-| Mod metadata, access wideners | **Our implementation** (`processResources` and Loom remapping are left to Gradle) | Restart through Gradle → goal 1 |
+| Mod metadata | **Our implementation** | Solved: filled in with the last build's values, restart without Gradle (`MetadataTemplate`) |
+| Access wideners, class tweakers | **Our implementation** (Loom remapping is left to Gradle) | Restart through Gradle → goal 1 |
 | Outputs of deleted sources and resources stay behind; Windows command line length | **Our implementation** (restart without Gradle) | Cleaned up on the next Gradle run; a long class path goes through `CLASSPATH` |
 
-## Goal 1: metadata changes without Gradle too (close)
+## Goal 1: metadata changes without Gradle too (metadata done)
+
+- **Done:** instead of reading the build settings, mod metadata is filled in by lining the last Gradle output up
+  against its source to read the values, then filling the changed source (`MetadataTemplate`). Self-test: edit
+  `fabric.mod.json` and restart → no Gradle, the output has the edit and the filled-in version. The original plan
+  follows.
 
 - The plugin fills the `${...}` values of `fabric.mod.json`, `quilt.mod.json` and `mods.toml` itself and writes them to
   the output folder. The values come from the build's `processResources` settings (`expand`/`filesMatching`). Settings
