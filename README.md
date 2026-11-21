@@ -49,8 +49,8 @@ through Gradle, and its low end counts files with every restart skipping it. The
 
 ## Install
 
-- From JetBrains Marketplace (submitted, waiting for JetBrains' review): *Settings → Plugins → Marketplace*, search
-  for **SulfurFrame**.
+- From [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/36205-sulfurframe): *Settings → Plugins →
+  Marketplace*, search for **SulfurFrame**.
 - From a release zip: download `SulfurFrame-<version>.zip` from
   [Releases](https://github.com/0LUCID0/Sulfur_Frame/releases), then *Settings → Plugins → ⚙ → Install Plugin from Disk…*.
 
