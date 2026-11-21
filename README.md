@@ -27,11 +27,22 @@ other versions will follow as that one gets there.
 
 ### Supported versions
 
+| Minecraft | Fabric | Quilt | NeoForge | Forge |
+|---|:-:|:-:|:-:|:-:|
+| 26.3 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 1.21.11 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 1.21.1 | ✅ | ⏳ | 🧪 | ⏳ |
+| 1.20.4 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 1.20.1 | ⏳ | ⏳ | ⏳ | 🧪 |
+| 1.19.2 | ⏳ | ⏳ | ❌ | ⏳ |
+| 1.18.2 | ⏳ | ⏳ | ❌ | ⏳ |
+| 1.16.5 | ⏳ | ⏳ | ❌ | ⏳ |
+
 ✅ supported · 🧪 works in the proof of concept (`poc/embed`), not in the plugin yet · ⏳ not yet · ❌ the loader has no
 release for that version (checked against the official Fabric, Quilt, NeoForge and Forge version lists)
 
-<details open>
-<summary>All 103 Minecraft releases</summary>
+<details>
+<summary>Every release from 1.16.5 on (35)</summary>
 
 | Minecraft | Fabric | Quilt | NeoForge | Forge |
 |---|:-:|:-:|:-:|:-:|
@@ -70,78 +81,12 @@ release for that version (checked against the official Fabric, Quilt, NeoForge a
 | 1.17.1 | ⏳ | ⏳ | ❌ | ⏳ |
 | 1.17 | ⏳ | ⏳ | ❌ | ❌ |
 | 1.16.5 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.16.4 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.16.3 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.16.2 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.16.1 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.16 | ⏳ | ⏳ | ❌ | ❌ |
-| 1.15.2 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.15.1 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.15 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.14.4 | ⏳ | ⏳ | ❌ | ⏳ |
-| 1.14.3 | ⏳ | ❌ | ❌ | ⏳ |
-| 1.14.2 | ⏳ | ❌ | ❌ | ⏳ |
-| 1.14.1 | ⏳ | ❌ | ❌ | ❌ |
-| 1.14 | ⏳ | ❌ | ❌ | ❌ |
-| 1.13.2 | ❌ | ❌ | ❌ | ⏳ |
-| 1.13.1 | ❌ | ❌ | ❌ | ❌ |
-| 1.13 | ❌ | ❌ | ❌ | ❌ |
-| 1.12.2 | ❌ | ❌ | ❌ | 🧪 |
-| 1.12.1 | ❌ | ❌ | ❌ | ⏳ |
-| 1.12 | ❌ | ❌ | ❌ | ⏳ |
-| 1.11.2 | ❌ | ❌ | ❌ | ⏳ |
-| 1.11.1 | ❌ | ❌ | ❌ | ❌ |
-| 1.11 | ❌ | ❌ | ❌ | ⏳ |
-| 1.10.2 | ❌ | ❌ | ❌ | ⏳ |
-| 1.10.1 | ❌ | ❌ | ❌ | ❌ |
-| 1.10 | ❌ | ❌ | ❌ | ⏳ |
-| 1.9.4 | ❌ | ❌ | ❌ | ⏳ |
-| 1.9.3 | ❌ | ❌ | ❌ | ❌ |
-| 1.9.2 | ❌ | ❌ | ❌ | ❌ |
-| 1.9.1 | ❌ | ❌ | ❌ | ❌ |
-| 1.9 | ❌ | ❌ | ❌ | ⏳ |
-| 1.8.9 | ❌ | ❌ | ❌ | ⏳ |
-| 1.8.8 | ❌ | ❌ | ❌ | ⏳ |
-| 1.8.7 | ❌ | ❌ | ❌ | ❌ |
-| 1.8.6 | ❌ | ❌ | ❌ | ❌ |
-| 1.8.5 | ❌ | ❌ | ❌ | ❌ |
-| 1.8.4 | ❌ | ❌ | ❌ | ❌ |
-| 1.8.3 | ❌ | ❌ | ❌ | ❌ |
-| 1.8.2 | ❌ | ❌ | ❌ | ❌ |
-| 1.8.1 | ❌ | ❌ | ❌ | ❌ |
-| 1.8 | ❌ | ❌ | ❌ | ⏳ |
-| 1.7.10 | ❌ | ❌ | ❌ | ⏳ |
-| 1.7.9 | ❌ | ❌ | ❌ | ❌ |
-| 1.7.8 | ❌ | ❌ | ❌ | ❌ |
-| 1.7.7 | ❌ | ❌ | ❌ | ❌ |
-| 1.7.6 | ❌ | ❌ | ❌ | ❌ |
-| 1.7.5 | ❌ | ❌ | ❌ | ❌ |
-| 1.7.4 | ❌ | ❌ | ❌ | ❌ |
-| 1.7.3 | ❌ | ❌ | ❌ | ❌ |
-| 1.7.2 | ❌ | ❌ | ❌ | ⏳ |
-| 1.6.4 | ❌ | ❌ | ❌ | ⏳ |
-| 1.6.2 | ❌ | ❌ | ❌ | ⏳ |
-| 1.6.1 | ❌ | ❌ | ❌ | ⏳ |
-| 1.5.2 | ❌ | ❌ | ❌ | ⏳ |
-| 1.5.1 | ❌ | ❌ | ❌ | ⏳ |
-| 1.4.7 | ❌ | ❌ | ❌ | ⏳ |
-| 1.4.6 | ❌ | ❌ | ❌ | ⏳ |
-| 1.4.5 | ❌ | ❌ | ❌ | ⏳ |
-| 1.4.4 | ❌ | ❌ | ❌ | ⏳ |
-| 1.4.2 | ❌ | ❌ | ❌ | ⏳ |
-| 1.3.2 | ❌ | ❌ | ❌ | ⏳ |
-| 1.3.1 | ❌ | ❌ | ❌ | ❌ |
-| 1.2.5 | ❌ | ❌ | ❌ | ⏳ |
-| 1.2.4 | ❌ | ❌ | ❌ | ⏳ |
-| 1.2.3 | ❌ | ❌ | ❌ | ⏳ |
-| 1.2.2 | ❌ | ❌ | ❌ | ❌ |
-| 1.2.1 | ❌ | ❌ | ❌ | ❌ |
-| 1.1 | ❌ | ❌ | ❌ | ⏳ |
-| 1.0 | ❌ | ❌ | ❌ | ❌ |
 
 </details>
 
-The embedding and the in-game agent were also proven on vanilla 1.7.10, 1.12.2, 1.13.2, 1.16.5, 1.21.1 and 26.3 (`poc/embed`).
+The lower bound is **1.16.5**, the last Java 8 version: older versions are not a target. The embedding and the in-game
+agent still work on them in the proof of concept (vanilla 1.7.10, 1.12.2, 1.13.2 and Forge 1.12.2; also vanilla 1.16.5,
+1.21.1 and 26.3).
 Windows 10/11 and Linux X11 (IntelliJ on XToolkit), IntelliJ IDEA 2026.3 or newer. macOS: not yet.
 
 ## What it saves
