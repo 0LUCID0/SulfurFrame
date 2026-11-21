@@ -7,8 +7,11 @@ java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
 
 repositories { mavenCentral() }
 
-val asm = configurations.create("asm")
-dependencies { asm("org.ow2.asm:asm:9.11.1") }   // keep it the latest
+val asm = configurations.create("asm") { isTransitive = false }
+dependencies {
+    asm("org.ow2.asm:asm:9.11.1")           // keep it the latest
+    asm("org.ow2.asm:asm-commons:9.11.1")   // ClassRemapper (runtime registration's shadow copy); same version
+}
 
 sourceSets {
     main { java.setSrcDirs(listOf("src/agent", "../profile/src")) }

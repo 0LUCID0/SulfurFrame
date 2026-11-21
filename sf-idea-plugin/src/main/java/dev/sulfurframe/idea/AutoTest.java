@@ -533,6 +533,69 @@ final class AutoTest {
                             && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
             Files.writeString(lang, l);
         }
+        newBlockFlow(p, src, gameLog);
+    }
+
+    /**
+     * A new block in the running game (RuntimeRegister): the block class gets a new field and two register lines, and
+     * after the hotswap the block exists on the server (setblock, give) without a restart. Needs JBR (a new field).
+     */
+    private static void newBlockFlow(SulfurPanel p, Path probe, Path gameLog) throws Exception {
+        Path blocks = probe.getParent().resolve("ShowcaseBlocks.java");
+        if (!Files.exists(blocks) || p.embedder.gamePid() <= 0 || Jbr.find(p.selectedTarget().profile().javaMajor()) == null) return;
+        var t = p.selectedTarget();
+        String original = Files.readString(blocks);
+        String anchor = "Registry.register(Registries.ITEM, probe, new BlockItem(PROBE, new Item.Settings()));";
+        String fieldAnchor = "public static final Block PROBE = new Block(AbstractBlock.Settings.create());";
+        if (!original.contains(anchor) || !original.contains(fieldAnchor)) { check("new block registered in the running game", false, "ShowcaseBlocks changed shape"); return; }
+        Path res = t.dir().resolve("src/main/resources/assets/showcase");
+        Path state = res.resolve("blockstates/sf_runtime.json"), item = res.resolve("models/item/sf_runtime.json");
+        try {
+            Files.writeString(state, "{\"variants\": {\"\": {\"model\": \"showcase:block/tile\"}}}\n");
+            Files.writeString(item, "{\"parent\": \"showcase:block/tile\"}\n");
+            p.hotswapper.reloadResources(t, p.embedder.gamePid(), agentJarOf(p), java.util.List.of(state, item));
+            p.hotswapper.lastRegistration = java.util.List.of();
+            int mark = p.logText().length();   // a save-triggered swap may get there first: both count
+            Files.writeString(blocks, original
+                    .replace(fieldAnchor, fieldAnchor + "\n    public static final Block SF_RUNTIME = new Block(AbstractBlock.Settings.create().strength(1.0f));")
+                    .replace(anchor, anchor + "\n        Identifier runtime = Identifier.of(Showcase.ID, \"sf_runtime\");"
+                            + "\n        Registry.register(Registries.BLOCK, runtime, SF_RUNTIME);"
+                            + "\n        Registry.register(Registries.ITEM, runtime, new BlockItem(SF_RUNTIME, new Item.Settings()));"));
+            sleep(1500);
+            swapRetry(p, t);
+            String log = p.logText().substring(Math.min(mark, p.logText().length()));
+            var reg = p.hotswapper.lastRegistration;
+            boolean registered = reg.stream().anyMatch(s -> s.startsWith("registered") && s.contains("block showcase:sf_runtime"))
+                    && reg.stream().anyMatch(s -> s.startsWith("registered") && s.contains("item showcase:sf_runtime"));
+            check("new block registered in the running game, no restart offered", registered && p.hotswapper.lastStartupChanges.isEmpty()
+                    && !log.contains("restart needed"), firstLine(log, "registration", "restart needed") + " " + reg);
+            String set = command(p, "execute as @p at @s run setblock ~2 ~ ~3 showcase:sf_runtime");
+            String give = command(p, "give @p showcase:sf_runtime");
+            check("new block usable on the server (setblock, give)", "done".equals(set) && "done".equals(give)
+                    && waitForLog(gameLog, "Changed the block at", 10) && waitForLog(gameLog, "Gave 1 [", 10), set + ", " + give);
+            command(p, "execute as @p at @s run setblock ~2 ~ ~3 air");
+            command(p, "clear @p showcase:sf_runtime");
+        } finally {
+            Files.writeString(blocks, original);
+            Files.deleteIfExists(state); Files.deleteIfExists(item);
+        }
+        // back to the old code: run again, nothing new, still no restart
+        p.hotswapper.lastRegistration = java.util.List.of();
+        sleep(1500);
+        swapRetry(p, t);
+        check("registration code reverted -> nothing new registered, no restart offered", p.hotswapper.lastStartupChanges.isEmpty()
+                && !p.hotswapper.lastRegistration.isEmpty()
+                && p.hotswapper.lastRegistration.stream().noneMatch(s -> s.startsWith("registered") || s.startsWith("error")), String.valueOf(p.hotswapper.lastRegistration));
+    }
+
+    /** Run a command on the integrated server; "done" or why not. */
+    private static String command(SulfurPanel p, String cmd) throws Exception {
+        long pid = p.embedder.gamePid();
+        Path done = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "autotest-cmd-" + pid + ".txt");
+        Files.deleteIfExists(done);
+        Hotswapper.loadAgent(pid, agentJarOf(p), "cmd=" + WorldSnapshots.b64(cmd) + ",done=" + done);
+        for (int i = 0; i < 100 && !Files.exists(done); i++) sleep(100);
+        return Files.exists(done) ? Files.readString(done).strip() : "no answer";
     }
 
     /** The probe's fully qualified class name, from its package line and file name. */

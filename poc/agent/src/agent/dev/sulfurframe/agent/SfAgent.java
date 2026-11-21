@@ -61,11 +61,13 @@ public final class SfAgent {
         // "redefine=<list file>": hotswap request from the IDE (each request is a fresh attach)
         // "reload=assets+data": resources changed (the IDE copied them into the dev resource dir)
         // "world=<file>": write the open world's folder name; "quit": save and exit (IDE quick restart)
-        String redefine = null, reload = null, world = null, command = null, done = null, look = null, stats = null;
+        // "register=<list file>": run changed registration code again, registering only what is new (RuntimeRegister)
+        String redefine = null, register = null, reload = null, world = null, command = null, done = null, look = null, stats = null;
         boolean quit = false;
         StringBuilder rest = new StringBuilder();
         if (args != null) for (String kv : args.split(",")) {
             if (kv.startsWith("redefine=")) redefine = kv.substring("redefine=".length());
+            else if (kv.startsWith("register=")) register = kv.substring("register=".length());
             else if (kv.startsWith("reload=")) reload = kv.substring("reload=".length());
             else if (kv.startsWith("world=")) world = kv.substring("world=".length());
             else if (kv.equals("quit")) quit = true;
@@ -75,9 +77,10 @@ public final class SfAgent {
             else if (kv.startsWith("stats=")) stats = kv.substring(6);
             else if (!kv.isEmpty()) rest.append(rest.length() == 0 ? "" : ",").append(kv);
         }
-        if (redefine != null || reload != null || world != null || quit || command != null || look != null || stats != null) {
+        if (redefine != null || register != null || reload != null || world != null || quit || command != null || look != null || stats != null) {
             if (!installed) install(rest.toString(), inst, attached);
             if (redefine != null) Hotswap.redefine(inst, redefine);
+            if (register != null) RuntimeRegister.run(inst, register);
             if (reload != null) ResourceReload.reload(inst, reload.contains("assets"), reload.contains("data"));
             if (world != null) GameSession.writeWorld(inst, world);
             if (command != null) GameSession.serverCommand(inst, command, done);
@@ -96,7 +99,7 @@ public final class SfAgent {
         if ("sync".equals(ProfileSync.arg(args, "mode"))) { SfHooks.log("mode=sync: profile sync only, no LWJGL patches"); return; }
         try {
             registerHooks();   // before any class is patched
-            ClassLoader impl = implLoader();
+            ClassLoader impl = impl();
             Class<?> tc = Class.forName("dev.sulfurframe.agent.impl.LwjglTransformer", true, impl);
             Consumer<String> log = SfHooks::log;
             Consumer<ClassLoader> sink = SfHooks::lwjglLoader;
@@ -151,6 +154,14 @@ public final class SfAgent {
         } catch (Throwable t) {
             SfHooks.log("could not write the launch context: " + t);
         }
+    }
+
+    private static ClassLoader impl;
+
+    /** The loader of the nested sf-impl.jar (transformers and their ASM), made once. */
+    static synchronized ClassLoader impl() throws Exception {
+        if (impl == null) impl = implLoader();
+        return impl;
     }
 
     /** Extract the nested sf-impl.jar and load it with the bootstrap loader as parent. */

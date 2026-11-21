@@ -40,6 +40,53 @@ final class StartupCode {
     }
 
     /**
+     * Can this startup change be applied in the running game by running the class's registration code again
+     * (the agent's RuntimeRegister)? Yes when the class registers into a registry itself, and what changed is its
+     * static initializer and/or static no-argument register / initialize methods, not a mod entry point (onInitialize
+     * also hooks events, which a second run would hook twice). Returns the methods to run after the static initializer
+     * (possibly none), or null.
+     */
+    static List<String> rerunMethods(byte[] before, byte[] after) {
+        if (before == null || after == null) return null;
+        Map<String, String> a = startupBodies(before), b = startupBodies(after);
+        var access = new HashMap<String, Integer>();
+        boolean[] registers = {false};
+        new ClassReader(after).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] ex) {
+                access.put(name + desc, acc);
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                        if (registryCall(owner, n)) registers[0] = true;
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (!registers[0]) return null;
+        var run = new ArrayList<String>();
+        boolean any = false;
+        for (var e : b.entrySet()) {
+            if (e.getValue().equals(a.get(e.getKey()))) continue;
+            String nameDesc = e.getKey(), name = nameDesc.substring(0, nameDesc.indexOf('('));
+            any = true;
+            if (name.startsWith("onInitialize")) return null;
+            if (name.equals("<clinit>")) continue;
+            int acc = access.getOrDefault(nameDesc, 0);
+            if ((acc & Opcodes.ACC_STATIC) == 0) return null;          // an instance registrar: no object to run it on
+            if (nameDesc.endsWith("()V")) run.add(name);                 // helpers with arguments run through their callers
+        }
+        return any ? run : null;
+    }
+
+    /**
+     * Registry.register / registerReference (Yarn and Mojang names): the calls the agent's shadow copy bridges so a
+     * second run keeps what is registered. Other routes (vanilla Blocks/Items helpers, a registry's add) would throw
+     * on the ids that are already there, so those changes still ask for a restart.
+     */
+    static boolean registryCall(String owner, String name) {
+        return owner.endsWith("/Registry") && (name.equals("register") || name.equals("registerReference"));
+    }
+
+    /**
      * Did a compile-time constant change (a static final primitive or String with a value: javac copies it into every
      * class that reads it)? Returns the simple names the class is referred to by in source (Outer and Inner for
      * Outer$Inner), or an empty list. The users need recompiling, or they keep the old value after a swap.
