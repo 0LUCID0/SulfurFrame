@@ -48,6 +48,8 @@
 - 아이콘은 `docs/logo/gen-icon.py`로 만듭니다(라이트/다크 테마 모두 WCAG 1.4.11 3:1 이상).
 
 ## 기대 효과 (측정, 2026-11-17)
+같은 PC, 같은 모드에서 수정 하나씩 나란히 찍은 비교 영상(https://youtu.be/G87LOVIu5as)의 장면은 Marketplace 스크린샷으로도 씁니다: [메서드 본문](docs/marketplace/compare-01-vs-part1.png), [Mixin](docs/marketplace/compare-02-vs-part2.png), [새 아이템](docs/marketplace/compare-03-vs-part4.png). 녹화와 편집 도구는 `demo/tools`에 있습니다.
+
 스크립트와 원자료는 `docs/effect-study/`에 있습니다(`fetch.py` → `classify.py` → `model.py`, `sensitivity.py`, 측정 스크립트 3개, `measured-2026-11-17.txt`).
 
 **1. 변경이 실행 중인 게임에 어떻게 반영되는지 (대형 모드 9개, 커밋 1,080개)**
