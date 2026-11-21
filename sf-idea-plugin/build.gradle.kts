@@ -112,14 +112,15 @@ intellijPlatform {
 // The fixture self-tests are plain main() programs (no JUnit): run them as part of `check`.
 tasks.test { enabled = false }
 val selfTests = listOf(
-    "ProfileSelfTest" to "src/test/resources/profiles",
-    "WorkspaceSelfTest" to "src/test/resources/workspaces",
+    "profile.ProfileSelfTest" to "src/test/resources/profiles",
+    "profile.WorkspaceSelfTest" to "src/test/resources/workspaces",
+    "OptionsFileSelfTest" to null,
 ).map { (name, fixtures) ->
-    tasks.register<JavaExec>("run$name") {
+    tasks.register<JavaExec>("run${name.substringAfterLast('.')}") {
         group = "verification"
         classpath = sourceSets.test.get().runtimeClasspath
-        mainClass = "dev.sulfurframe.idea.profile.$name"
-        args(file(fixtures).absolutePath)
+        mainClass = "dev.sulfurframe.idea.$name"
+        if (fixtures != null) args(file(fixtures).absolutePath)
     }
 }
 tasks.check { dependsOn(selfTests) }

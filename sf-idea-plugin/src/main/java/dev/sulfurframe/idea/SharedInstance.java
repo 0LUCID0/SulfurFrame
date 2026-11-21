@@ -97,23 +97,32 @@ final class SharedInstance {
      * Minecraft's first-launch accessibility screen ("Welcome to Minecraft! ... Narrator") holds back --quickPlay*: in
      * a run folder whose options.txt does not say onboardAccessibility:false yet, the game stayed on that screen and
      * "restart into the same world" landed on the title screen. Set it before such a launch (the other options are
-     * left alone; a missing options.txt gets just this line and the game fills in its defaults).
+     * left alone; a missing options.txt gets this line and the game fills in its defaults).
+     *
+     * The file must carry a version: line. Without one the game takes it for data version 0 and runs every options
+     * fixer since 2013 on it: the key bindings the options sync adds (key.keyboard.*) went through the pre-1.13
+     * key-code fixer, failed with NumberFormatException, and the game threw the file away for its defaults, showing
+     * this very screen again. A file this method made earlier without one is repaired too.
      */
-    static void skipAccessibilityOnboarding(Path run, Consumer<String> log) {
+    static void skipAccessibilityOnboarding(Path run, String mc, Consumer<String> log) {
         Path opts = run.resolve("options.txt");
         try {
             var lines = Files.exists(opts) ? new ArrayList<>(Files.readAllLines(opts)) : new ArrayList<String>();
-            boolean found = false;
+            boolean changed = false, onboard = false;
             for (int i = 0; i < lines.size(); i++) {
                 if (!lines.get(i).startsWith("onboardAccessibility:")) continue;
-                if (lines.get(i).equals("onboardAccessibility:false")) return;
-                lines.set(i, "onboardAccessibility:false");
-                found = true;
+                onboard = true;
+                if (!lines.get(i).equals("onboardAccessibility:false")) { lines.set(i, "onboardAccessibility:false"); changed = true; }
             }
-            if (!found) lines.add("onboardAccessibility:false");
+            if (!onboard) { lines.add("onboardAccessibility:false"); changed = true; }
+            boolean versioned = lines.stream().anyMatch(l -> l.startsWith("version:"));
+            int dv = versioned ? -1 : TestWorld.nearestDataVersion(mc);
+            if (dv > 0) { lines.add(0, "version:" + dv); changed = true; }
+            if (!changed) return;
             Files.createDirectories(run);
             Files.write(opts, lines);
-            log.accept("options.txt: first-launch accessibility screen turned off (it keeps quick play from entering the world)");
+            log.accept("options.txt: first-launch accessibility screen turned off (it keeps quick play from entering the world)"
+                    + (dv > 0 ? ", version:" + dv + " added (without it the game resets every option)" : ""));
         } catch (IOException e) {
             log.accept("options.txt not updated: " + e.getMessage());
         }

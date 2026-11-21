@@ -69,7 +69,7 @@ final class GameLauncher {
                 String b64 = Base64.getEncoder().encodeToString(String.join("\n", gameArgs).getBytes(StandardCharsets.UTF_8));
                 cmd.addAll(List.of("--init-script", init.toString(), "-PsfGameArgs=" + b64));
                 log.accept("game arguments: " + String.join(" ", gameArgs));
-                if (gameArgs.stream().anyMatch(a -> a.startsWith("--quickPlay"))) SharedInstance.skipAccessibilityOnboarding(SharedInstance.runDir(target), log);
+                if (gameArgs.stream().anyMatch(a -> a.startsWith("--quickPlay"))) SharedInstance.skipAccessibilityOnboarding(SharedInstance.runDir(target), target.profile().minecraftVersion(), log);
             }
             // Which game is ours: the agent rides along from the start and writes its PID into a file unique to this
             // launch. Only that process's window is embedded, never a Minecraft started meanwhile by something else.
@@ -138,7 +138,7 @@ final class GameLauncher {
             String agentSpec = agentSpec(target);
             if (!gameArgs.isEmpty()) {
                 log.accept("game arguments: " + String.join(" ", gameArgs));
-                if (gameArgs.stream().anyMatch(a -> a.startsWith("--quickPlay"))) SharedInstance.skipAccessibilityOnboarding(SharedInstance.runDir(target), log);
+                if (gameArgs.stream().anyMatch(a -> a.startsWith("--quickPlay"))) SharedInstance.skipAccessibilityOnboarding(SharedInstance.runDir(target), target.profile().minecraftVersion(), log);
             }
             var cmd = QuickRelaunch.command(spec, extraJvmArgs, agentSpec, gameArgs);
             String classpath = QuickRelaunch.moveLongClasspath(cmd);

@@ -18,8 +18,45 @@ import java.util.zip.GZIPOutputStream;
 final class TestWorld {
     /** Data versions of releases (minecraft.wiki); unknown newer versions use the newest known one (upgraded on load). */
     private static final Map<String, Integer> DATA_VERSIONS = Map.ofEntries(
+            Map.entry("1.16.5", 2586), Map.entry("1.17.1", 2730), Map.entry("1.18.2", 2975), Map.entry("1.19.2", 3120),
+            Map.entry("1.19.4", 3337), Map.entry("1.20.1", 3465), Map.entry("1.20.4", 3700),
             Map.entry("1.20.5", 3837), Map.entry("1.20.6", 3839), Map.entry("1.21", 3953), Map.entry("1.21.1", 3955),
             Map.entry("1.21.2", 4080), Map.entry("1.21.3", 4082), Map.entry("1.21.4", 4189));
+
+    /**
+     * The data version to stamp on a file this game reads, or -1 below the table (older than 1.16.5): the exact one, else
+     * the nearest older release in the table (a version between two entries), else the newest (a newer game upgrades
+     * it on load). A file without one counts as data version 0 to the game, which then runs every data fixer since
+     * 2013 on it.
+     */
+    static int nearestDataVersion(String mc) {
+        if (mc == null) return -1;
+        Integer exact = DATA_VERSIONS.get(mc);
+        if (exact != null) return exact;
+        int[] want = parse(mc);
+        if (want == null) return -1;
+        String best = null;
+        int[] bestV = null;
+        for (String k : DATA_VERSIONS.keySet()) {
+            int[] v = parse(k);
+            if (v != null && compare(v, want) <= 0 && (bestV == null || compare(v, bestV) > 0)) { best = k; bestV = v; }
+        }
+        return best != null ? DATA_VERSIONS.get(best) : -1;
+    }
+
+    private static int[] parse(String mc) {
+        String[] p = mc.split("\\.");
+        int[] v = new int[3];
+        try {
+            for (int i = 0; i < Math.min(3, p.length); i++) v[i] = Integer.parseInt(p[i].replaceAll("\\D.*", ""));
+            return v;
+        } catch (NumberFormatException e) { return null; }
+    }
+
+    private static int compare(int[] a, int[] b) {
+        for (int i = 0; i < 3; i++) if (a[i] != b[i]) return Integer.compare(a[i], b[i]);
+        return 0;
+    }
 
     static boolean supported(String mc) {
         if (mc == null) return false;
