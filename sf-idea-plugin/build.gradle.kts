@@ -56,6 +56,22 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <p><b>0.2.0</b></p>
+            <ul>
+              <li>Restarts skip Gradle while the build, JBR, mod metadata and access wideners are unchanged: saved code and
+                  resources are compiled and copied first, then the game starts straight from its last command line.</li>
+              <li>Starts in the background on Windows and Linux (X11): launching the game no longer takes the keyboard focus
+                  or the mouse cursor from the window you are in.</li>
+              <li>One-click JetBrains Runtime download when no matching JBR is found in <code>~/.jdks</code>, so added or
+                  removed methods and fields can hotswap live too.</li>
+              <li>Files edited outside the IDE refresh in open editor tabs as soon as they are hotswapped.</li>
+              <li>Builds that choose their own Gradle JVM (a daemon toolchain or <code>org.gradle.java.home</code>) start
+                  even when <code>JAVA_HOME</code> is Java 8: <code>gradlew</code> itself gets a Java 17+ JDK.</li>
+              <li>Multi-project and Gradle 9 parallel builds: each subproject warms its compile classpaths under its own
+                  lock, custom <code>runDir</code> settings and all mod IDs across multi-module runs are picked up,
+                  subproject build script edits refresh the class path cache, and Java 8 source sets keep higher-Java
+                  outputs off their compile class path.</li>
+            </ul>
             <p><b>0.1.2</b></p>
             <ul>
               <li>No deprecated or experimental IntelliJ API use: the editor tab opens through the stable navigation API.</li>

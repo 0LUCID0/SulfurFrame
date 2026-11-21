@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "dev.sulfurframe.showcase.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["CrosshairMixin", "FogMixin", "GameRendererAccess", "SkyMixin"],
+  "injectors": {"defaultRequire": 1}
+}

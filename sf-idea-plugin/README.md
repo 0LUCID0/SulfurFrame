@@ -43,6 +43,8 @@
   `IDEA_HOME`을 주면 설치된 IDE에 대고 빌드해서 IDE를 내려받지 않습니다.
 - `:agent`(`poc/agent`)가 `sf-agent.jar`(안에 `sf-impl.jar` + ASM)를 만들고, 플러그인 jar에 `/sf-agent.jar`로 들어갑니다.
 - 0.1.0 확인(2026-11-17, IntelliJ 2026.3): Plugin Verifier "Compatible"(폐기 예정 API 2곳), self-test 6/6 + 5/5.
+- 0.2.0 확인(2026-11-21, IntelliJ 2026.3): Plugin Verifier "Compatible"(경고 없음), `check`의 픽스처 테스트 전부 통과, 다중 프로젝트
+  모드의 `runAllModsClient`가 `JAVA_HOME`이 Java 8인 샌드박스에서 게임까지 뜸.
 - 아이콘은 `docs/logo/gen-icon.py`로 만듭니다(라이트/다크 테마 모두 WCAG 1.4.11 3:1 이상).
 
 ## 기대 효과 (측정, 2026-11-17)
@@ -131,6 +133,15 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 
 샌드박스는 `./sf-idea-plugin/sandbox.sh <프로젝트 폴더> [-Dsulfurframe.autotest.pid=<PID>] …`로 띄웁니다. IDE 빌드마다
 `%TEMP%/sf-idea-sandbox-<빌드 번호>`에 따로 만들어서, IDE를 올려도 이전 샌드박스와 섞이지 않습니다.
+
+**자가 테스트용 모드:** 이 저장소의 `demo/showcase-mod`(Fabric 1.21.1)입니다. `demo/tools/test-copy.sh`가 버려도 되는 사본을
+`%TEMP%/sf-showcase-test`에 만들고 샌드박스 명령을 출력합니다:
+```bash
+./sf-idea-plugin/sandbox.sh <사본> -Dsulfurframe.autotest.runclient=true -Dsulfurframe.autotest.hotswap=<사본>/src/main/java/dev/sulfurframe/showcase/SfHotswapProbe.java -Dsulfurframe.autotest.world=SFWorld
+```
+테스트가 소스를 고치고 번역을 추가하므로 항상 사본에서 돌립니다. 아래 기록에 나오는 "lucid 사본"은 이 모드 전에 쓰던 개인 테스트
+모드입니다. 테스트는 이제 모드 이름을 코드에 넣어 두지 않고, 프로브 파일 옆의 `ModInitializer`, 아무 `assets/*/lang/*.json`,
+프로브의 패키지에서 찾습니다.
 
 ### IntelliJ 2026.3(빌드 263) 이전 확인 (2026-11-16)
 - **컴파일:** 2026.3의 jar로 오류 없이 컴파일됩니다. 경고는 `GameTab`의 `FileEditorManager.openFile(VirtualFile, boolean)`
@@ -560,7 +571,7 @@ Windows 회귀 확인(같은 빌드, 2026.3 샌드박스): Run client + 핫스�
 키보드는 되는데 마우스로 시점이 안 돌아가던 문제. GLFW는 `glfwSetInputMode(GLFW_CURSOR_DISABLED)`가 불릴 때 창이 "포커스"인지 `GetActiveWindow()`로 확인하는데, 자식 창은 절대 활성 창이 아닙니다. 그래서 클릭으로 포커스를 받은 뒤에 일어난 마우스 잡기(월드 입장, 메뉴 닫기)는 기록만 되고 적용되지 않아, GLFW가 모든 마우스 이동을 버립니다. GLFW는 `WM_SETFOCUS`를 받을 때는 잡기를 적용하므로, 에이전트가 커서 모드가 DISABLED로 바뀌고 게임이 임베드돼 있고 키보드 포커스를 가진 순간에 게임 창에 `WM_SETFOCUS`를 직접 보냅니다(`GlfwCursorFix.java`, 렌더 스레드 = GLFW 스레드에서 실행). 실제 IDE에서 사용자가 확인했습니다.
 
 ## Gradle과 게임이 쓰는 Java
-- **Gradle 자체의 JDK:** IDE 환경의 `JAVA_HOME`이 게임에 필요한 Java보다 낮으면(26.x용 Loom은 Java 25 Gradle을 요구), 그 버전 이상인 JDK를 찾아 gradlew에 넘깁니다(`GradleJava.java`). 프로젝트가 `org.gradle.java.home`을 정해 두었으면 손대지 않습니다. 클래스패스 스캔과 핫스왑 컴파일도 같은 JDK라 데몬 하나를 같이 씁니다.
+- **Gradle 자체의 JDK:** IDE 환경의 `JAVA_HOME`이 게임에 필요한 Java보다 낮으면(26.x용 Loom은 Java 25 Gradle을 요구), 그 버전 이상인 JDK를 찾아 gradlew에 넘깁니다(`GradleJava.java`). 프로젝트가 Gradle JVM을 직접 정해 두었으면(`org.gradle.java.home`, 또는 `gradle/gradle-daemon-jvm.properties`의 데몬 툴체인) 데몬은 Gradle이 고르지만, gradlew 런처 자체는 여전히 `JAVA_HOME`으로 뜹니다. 그래서 그때도 `JAVA_HOME`이 Java 17보다 낮으면(예: Java 8) 17 이상인 JDK를 넘깁니다. 클래스패스 스캔과 핫스왑 컴파일도 같은 JDK라 데몬 하나를 같이 씁니다.
 - **게임의 JBR:** 실행 태스크의 `javaLauncher`를 툴체인으로 직접 정하는 빌드(예: `javaLauncher.set(javaToolchains.launcherFor { 21 })`)에서는 `executable`만 바꾸면 "Toolchain from `executable` property does not match…", 비우면 "Cannot query … javaLauncher … no value"로 실패합니다. 그래서 JBR이 완전한 JDK(javac 있음)이면 `org.gradle.java.installations.paths`로 알려 주고 `javaLauncher`를 "JetBrains <버전>" 툴체인으로 바꿉니다. init 스크립트는 `afterEvaluate`에서 등록해 빌드 스크립트의 설정보다 나중에 적용됩니다.
 - **실행 태스크:** 빌드 스크립트의 Loom 실행 설정(`runConfigs.create("allModsClient")`, `runs { x { client() } }`)을 읽어 클라이언트 설정마다 목록에 따로 띄웁니다(`[runAllModsClient]`). datagen/gametest 설정은 뺍니다. 모든 init 스크립트는 `-PsfRunTask`로 실행하는 그 태스크에만 붙습니다.
 

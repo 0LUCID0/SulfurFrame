@@ -89,7 +89,8 @@ final class GameLauncher {
             Path gradleJdk = GradleJava.pick(dir, profile.javaMajor(), jbr);
             if (gradleJdk != null) {
                 pb.environment().put("JAVA_HOME", gradleJdk.toString());
-                log.accept("Gradle runs on " + gradleJdk + " (JAVA_HOME " + System.getenv("JAVA_HOME") + " is older than Java " + profile.javaMajor() + ")");
+                log.accept("Gradle runs on " + gradleJdk + " (JAVA_HOME " + System.getenv("JAVA_HOME") + " is older than Java "
+                        + GradleJava.needed(dir, profile.javaMajor()) + ")");
             }
             if (muted()) {
                 // OpenAL Soft's null output: silent, and options.txt keeps its volumes (the options sync shares
@@ -169,7 +170,7 @@ final class GameLauncher {
         // options sync: the IDE knows the run folder and the mods this project builds (their key bindings
         // are left to the code's defaults), and starts the master profile on the first dev run
         Path runDir = SharedInstance.runDir(target);
-        String ownMods = String.join("+", dev.sulfurframe.idea.profile.ModIds.of(target.dir()));
+        String ownMods = String.join("+", dev.sulfurframe.idea.profile.ModIds.of(target));
         log.accept("options sync: run folder " + runDir + (ownMods.isEmpty() ? "" : ", own mod keys left to the code: " + ownMods.replace('+', ' ')));
         return agentJar + "=codingFps=" + Settings.codingFps() + ",launch=" + marker
                 + ",gameDir=" + runDir + ",ownMods=" + ownMods + ",createMaster=true";

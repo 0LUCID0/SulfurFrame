@@ -21,6 +21,25 @@ public final class ModIds {
             "\"id\"\\s*:\\s*\"([a-z0-9_.-]+)\"|modId\\s*=\\s*\"([a-z0-9_.-]+)\"|\"modid\"\\s*:\\s*\"([a-z0-9_.-]+)\"");
     private static final Set<String> FILES = Set.of("fabric.mod.json", "quilt.mod.json", "mods.toml", "neoforge.mods.toml", "mcmod.info");
 
+    public static Set<String> of(Workspace.Target t) {
+        var ids = new TreeSet<>(of(t.dir()));
+        if (!t.task().equals("runClient") || ids.isEmpty()) {
+            try (Stream<Path> s = Files.walk(t.buildRoot(), 4)) {
+                s.filter(Files::isDirectory)
+                 .filter(d -> d.getFileName() != null && d.getFileName().toString().equals("src"))
+                 .filter(d -> {
+                     for (Path part : t.buildRoot().relativize(d)) {
+                         String n = part.toString();
+                         if (n.equals("build") || n.equals("run") || n.equals("out") || n.equals("node_modules") || n.startsWith(".")) return false;
+                     }
+                     return true;
+                 })
+                 .forEach(src -> ids.addAll(of(src.getParent())));
+            } catch (IOException ignored) { }
+        }
+        return ids;
+    }
+
     public static Set<String> of(Path projectDir) {
         var ids = new TreeSet<String>();
         Path src = projectDir.resolve("src");

@@ -12,14 +12,20 @@ import java.util.stream.Stream;
  * The IDE passes its own environment on, so gradlew gets the system JAVA_HOME. That breaks when the system JDK is
  * older than what the build's plugins need: Loom for Minecraft 26.x refuses a Java 21 Gradle ("Dependency requires
  * at least JVM runtime version 25"). So when JAVA_HOME is older than the game's Java (or unset), we hand gradlew a
- * JDK that is new enough. A project that pins its Gradle JVM itself (org.gradle.java.home) is left alone.
+ * JDK that is new enough. A project that pins its Gradle JVM itself (org.gradle.java.home, or a daemon toolchain) gets
+ * its daemon from Gradle, but gradlew's own launcher still starts on JAVA_HOME: that one only has to be able to start
+ * Gradle 9 (Java 17), so a Java 8 JAVA_HOME is replaced there too.
  */
 final class GradleJava {
+    /** The oldest Java that starts the Gradle 9 launcher (gradlew) at all. */
+    static final int LAUNCHER_MIN = 17;
+
     /** JDK home for JAVA_HOME, or null to keep the environment as it is. */
     static Path pick(Path buildRoot, int major, Path jbrJava) {
-        if (pinned(buildRoot)) return null;
+        int need = needed(buildRoot, major);
         String env = System.getenv("JAVA_HOME");
-        if (env != null && !env.isBlank() && version(Path.of(env)) >= major) return null;
+        if (env != null && !env.isBlank() && version(Path.of(env)) >= need) return null;
+        major = need;
         var candidates = new ArrayList<Path>();
         if (jbrJava != null) candidates.add(jbrJava.getParent().getParent());
         addChildren(candidates, Path.of(System.getProperty("user.home"), ".jdks"));
@@ -51,6 +57,10 @@ final class GradleJava {
      * Loom 1.19+ build for Minecraft 1.21.x needs a Java 25 Gradle though its game is Java 21: by the game's version
      * alone we would hand it JDK 21.
      */
+    static int needed(Path root, int major) {
+        return pinned(root) ? LAUNCHER_MIN : major;
+    }
+
     private static boolean pinned(Path root) {
         return property(root, "org.gradle.java.home") != null || Files.isRegularFile(root.resolve("gradle").resolve("gradle-daemon-jvm.properties"));
     }

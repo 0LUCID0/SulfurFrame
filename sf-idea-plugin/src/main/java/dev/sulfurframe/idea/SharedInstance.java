@@ -39,8 +39,28 @@ final class SharedInstance {
 
     static Path forVersion(String mc) { return root().resolve(mc == null || mc.isBlank() ? "unknown" : mc); }
 
-    /** The dev run folder of a target (Loom, ModDevGradle and ForgeGradle all default to "run"). */
-    static Path runDir(dev.sulfurframe.idea.profile.Workspace.Target t) { return t.dir().resolve("run"); }
+    /**
+     * The dev run folder of a target: what the build script sets as runDir / workingDir (Loom runDir = "...",
+     * runDir("..."), or a local val/def variable pointing at it), resolved against the subproject folder; else "run".
+     */
+    static Path runDir(dev.sulfurframe.idea.profile.Workspace.Target t) {
+        for (String name : new String[]{"build.gradle", "build.gradle.kts"}) {
+            Path f = t.dir().resolve(name);
+            if (!Files.isRegularFile(f)) continue;
+            try {
+                String s = dev.sulfurframe.idea.profile.ProjectProfile.stripComments(Files.readString(f));
+                var vars = new HashMap<String, String>();
+                var vm = java.util.regex.Pattern.compile("(?:val|var|def)\\s+(\\w+)\\s*(?::\\s*\\w+\\s*)?=\\s*[\"']([^\"']+)[\"']").matcher(s);
+                while (vm.find()) vars.putIfAbsent(vm.group(1), vm.group(2));
+                var rm = java.util.regex.Pattern.compile("\\b(?:runDir|workingDir)\\s*(?:=\\s*|\\(\\s*)(?:[\"']([^\"']+)[\"']|(\\w+))").matcher(s);
+                if (rm.find()) {
+                    String raw = rm.group(1) != null ? rm.group(1) : vars.get(rm.group(2));
+                    if (raw != null && !raw.isBlank() && !raw.contains("$")) return t.dir().resolve(raw).normalize();
+                }
+            } catch (IOException ignored) { }
+        }
+        return t.dir().resolve("run");
+    }
 
     /** Link the project's run folder to the shared one and bring the shared files in. Before a launch. */
     static void apply(Path run, String mc, String project, Consumer<String> log) throws IOException, InterruptedException {

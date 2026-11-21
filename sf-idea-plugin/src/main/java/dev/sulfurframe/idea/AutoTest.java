@@ -270,14 +270,15 @@ final class AutoTest {
     private static void restartFlow(SulfurPanel p, Path probe, String world) throws Exception {
         var t = p.selectedTarget();
         // onInitialize: hotswap applies it, but it already ran; a restart must be offered
-        Path main = probe.getParent().resolve("LucidsCustomPack.java");
-        if (Files.exists(main)) {
+        Path main = modInitializerNextTo(probe);
+        if (main != null) {
+            String mainClass = main.getFileName().toString().replace(".java", "");
             String src = Files.readString(main);
             Files.writeString(main, src.replaceFirst("public void onInitialize\\(\\) \\{", "public void onInitialize() {\n\t\tLOGGER.info(\"[SF] startup code edited\");"));
             sleep(1500);
             onEdt(p::hotswapAsync);
             for (int i = 0; i < 40 && !p.logText().contains("startup code changed"); i++) sleep(250);
-            check("startup code change -> restart offered", p.hotswapper.lastStartupChanges.contains("LucidsCustomPack.onInitialize") && p.logText().contains("restart needed: startup code changed"),
+            check("startup code change -> restart offered", p.hotswapper.lastStartupChanges.contains(mainClass + ".onInitialize") && p.logText().contains("restart needed: startup code changed"),
                     String.valueOf(p.hotswapper.lastStartupChanges));
             Files.writeString(main, src);
             sleep(1500);
@@ -449,7 +450,7 @@ final class AutoTest {
         }
 
         // Kotlin: the build's own Kotlin compiler, run in the IDE (not Gradle)
-        Path kt = t.dir().resolve("src/main/kotlin/kr/kro/lucid/SfKotlinProbe.kt");
+        Path kt = t.dir().resolve("src/main/kotlin").resolve(probeClassOf(src).replaceFirst("\\.[^.]+$", "").replace('.', '/')).resolve("SfKotlinProbe.kt");
         if (Files.exists(kt) && waitForLog(gameLog, "[SF-KOTLIN] k1", 30)) {
             String k = Files.readString(kt);
             Files.writeString(kt, k.replace("\"k1\"", "\"k2\""));
@@ -463,8 +464,8 @@ final class AutoTest {
         }
 
         // resources: copy into the dev resource dir + client reload (F3+T)
-        Path lang = t.dir().resolve("src/main/resources/assets/lcd/lang/ko_kr.json");
-        if (Files.exists(lang)) {
+        Path lang = langFileOf(t.dir());
+        if (lang != null) {
             String l = Files.readString(lang);
             Files.writeString(lang, l + "\n");
             boolean ok = p.hotswapper.reloadResources(t, p.embedder.gamePid(), agentJarOf(p), java.util.List.of(lang));
@@ -472,6 +473,35 @@ final class AutoTest {
                             && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
             Files.writeString(lang, l);
         }
+    }
+
+    /** The probe's fully qualified class name, from its package line and file name. */
+    private static String probeClassOf(Path probe) {
+        String name = probe.getFileName().toString().replaceFirst("\\.(java|kt)$", "");
+        try {
+            var m = java.util.regex.Pattern.compile("(?m)^\\s*package\\s+([\\w.]+)").matcher(Files.readString(probe));
+            if (m.find()) return m.group(1) + "." + name;
+        } catch (Exception ignored) { }
+        return name;
+    }
+
+    /** The mod's ModInitializer source in the probe's folder (its onInitialize is the startup code the test edits). */
+    private static Path modInitializerNextTo(Path probe) {
+        try (var s = Files.list(probe.getParent())) {
+            for (Path f : s.filter(f -> f.toString().endsWith(".java")).sorted().toList())
+                if (Files.readString(f).contains("implements ModInitializer")) return f;
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    /** A translation file of the mod (any assets/<id>/lang/*.json), the resource the reload test touches. */
+    private static Path langFileOf(Path projectDir) {
+        Path assets = projectDir.resolve("src/main/resources/assets");
+        if (!Files.isDirectory(assets)) return null;
+        try (var w = Files.walk(assets, 3)) {
+            return w.filter(f -> f.getParent() != null && f.getParent().getFileName().toString().equals("lang") && f.toString().endsWith(".json"))
+                    .sorted().findFirst().orElse(null);
+        } catch (Exception e) { return null; }
     }
 
     /** Wait until a game other than {@code before} is embedded and its log says it joined a world. */
@@ -572,7 +602,7 @@ final class AutoTest {
         sleep(1500);
         swapRetry(p, t);
         for (int i = 0; i < 60 && g.lastCrash == null; i++) sleep(500);
-        check("crash: report read, cause and own code frame found", g.lastCrash != null && p.logText().contains("game crashed:") && p.logText().contains("at kr.kro.lucid.SfHotswapProbe"),
+        check("crash: report read, cause and own code frame found", g.lastCrash != null && p.logText().contains("game crashed:") && p.logText().contains("at " + probeClassOf(probe)),
                 String.valueOf(g.lastCrash));
         Files.writeString(probe, src);
         before = p.embedder.gamePid();

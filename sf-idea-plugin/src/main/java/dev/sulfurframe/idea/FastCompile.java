@@ -55,7 +55,9 @@ final class FastCompile {
     synchronized List<SourceSet> sourceSets(Workspace.Target t) {
         Path f = cacheFile(t);
         try {
-            if (!Files.exists(f) || newestBuildFile(t) > Files.getLastModifiedTime(f).toMillis()) { loaded.remove(key(t)); return null; }
+            if (!Files.exists(f)) { loaded.remove(key(t)); return null; }
+            long cachedAt = Files.getLastModifiedTime(f).toMillis();
+            if (newestBuildFile(t) > cachedAt || QuickRelaunch.newerBuildFile(t.buildRoot(), cachedAt) != null) { loaded.remove(key(t)); return null; }
             var sets = loaded.get(key(t));
             if (sets == null) { sets = parse(Files.readAllLines(f, StandardCharsets.UTF_8)); loaded.put(key(t), sets); }
             return sets;
@@ -174,9 +176,26 @@ final class FastCompile {
         return total;
     }
 
+    private static int releaseInt(String r) {
+        if (r == null || r.isEmpty()) return 0;
+        try { return Integer.parseInt(r.startsWith("1.") ? r.substring(2) : r); }
+        catch (NumberFormatException e) { return 0; }
+    }
+
+    private static void addCompatibleOutputs(Set<Path> cp, SourceSet s, List<SourceSet> all) {
+        int sr = releaseInt(s.release());
+        for (SourceSet o : all) {
+            if (o != s && (o.name().equals("test") || o.name().endsWith("Test") || o.name().endsWith(":test"))) continue;
+            int or = releaseInt(o.release());
+            if (sr > 0 && or > sr) continue;   // a Java 8 source set cannot read Java 21 class files (version 65.0)
+            cp.add(o.out());
+            if (o.kotlin() != null) cp.add(o.kotlin().out());
+        }
+    }
+
     private boolean javac(SourceSet s, List<SourceSet> all, List<Path> files) throws IOException, InterruptedException {
         var cp = new LinkedHashSet<Path>();
-        for (SourceSet o : all) { cp.add(o.out()); if (o.kotlin() != null) cp.add(o.kotlin().out()); }   // other sets, and Kotlin output (Java may use it)
+        addCompatibleOutputs(cp, s, all);   // other compatible sets, and Kotlin output (Java may use it)
         cp.addAll(s.classpath());
         var a = new ArrayList<String>();
         a.add("-d"); a.add(q(s.out()));
@@ -190,7 +209,15 @@ final class FastCompile {
             if (s.generated() != null) { Files.createDirectories(s.generated()); a.add("-s"); a.add(q(s.generated())); }
         }
         a.add("-encoding"); a.add(s.encoding().isEmpty() ? "UTF-8" : s.encoding());
-        if (!s.release().isEmpty()) { a.add("--release"); a.add(s.release()); }
+        if (!s.release().isEmpty()) {
+            if (s.javac() != null && s.javac().getParent() != null && s.javac().getParent().getParent() != null
+                    && GradleJava.version(s.javac().getParent().getParent()) == 8) {
+                a.add("-source"); a.add(s.release());
+                a.add("-target"); a.add(s.release());
+            } else {
+                a.add("--release"); a.add(s.release());
+            }
+        }
         for (String x : s.args()) if (keepArg(x, !procs.isEmpty())) a.add(q(x));
         for (Path f : files) a.add(q(f));
         Path argfile = Files.createTempFile(cacheDir, "javac-", ".args");
@@ -418,7 +445,7 @@ final class FastCompile {
         managers.keySet().removeIf(k -> k.name().equals(s.name()));   // a re-read class path replaces the old set
         fm = jc.getStandardFileManager(null, null, StandardCharsets.UTF_8);
         var cp = new LinkedHashSet<Path>();
-        for (SourceSet o : all) { cp.add(o.out()); if (o.kotlin() != null) cp.add(o.kotlin().out()); }
+        addCompatibleOutputs(cp, s, all);
         cp.addAll(s.classpath());
         cp.removeIf(p -> !Files.exists(p));
         fm.setLocationFromPaths(javax.tools.StandardLocation.CLASS_PATH, cp);
@@ -570,8 +597,23 @@ final class FastCompile {
      */
     static final String INIT_SCRIPT = """
             allprojects {
+                tasks.register('sfWarmClasspath') {
+                    def w = project
+                    doLast {
+                        def sets = w.extensions.findByName('sourceSets')
+                        if (sets != null) sets.each { ss ->
+                            try { ss.compileClasspath.files } catch (Throwable ignored) { }
+                            try { w.tasks.findByName(ss.compileJavaTaskName)?.options?.annotationProcessorPath?.files } catch (Throwable ignored) { }
+                            try { w.tasks.findByName(ss.getCompileTaskName('kotlin'))?.libraries?.files } catch (Throwable ignored) { }
+                        }
+                        try { w.configurations.findByName('kotlinCompilerClasspath')?.files } catch (Throwable ignored) { }
+                    }
+                }
                 tasks.register('sfClasspath') {
                     def p = project
+                    if (p.findProperty('sfTask')) {
+                        dependsOn({ p.rootProject.allprojects.findAll { it != p }.collect { it.tasks.named('sfWarmClasspath') } })
+                    }
                     doLast {
                         def lines = ["javahome\\t" + System.getProperty('java.home')]
                         def onRun = new HashSet()

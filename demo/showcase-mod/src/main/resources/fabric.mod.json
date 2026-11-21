@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "showcase",
+  "version": "${version}",
+  "name": "SulfurFrame Showcase",
+  "description": "Demo and test mod for SulfurFrame: things on screen that change visibly when you edit code, mixins, textures and shaders.",
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.sulfurframe.showcase.Showcase"],
+    "client": ["dev.sulfurframe.showcase.client.ShowcaseClient"]
+  },
+  "mixins": [{"config": "showcase.mixins.json", "environment": "client"}],
+  "depends": {"fabricloader": ">=0.16", "minecraft": "~1.21.1", "java": ">=21", "fabric-api": "*"}
+}

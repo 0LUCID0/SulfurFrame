@@ -76,6 +76,17 @@ final class SourceWatcher implements AutoCloseable {
         dirs.put(d.register(ws, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_MODIFY), d);
     }
 
+    /**
+     * Tell IntelliJ the file changed, so an open editor shows the new text now and not only when the IDE window is next
+     * activated (otherwise the game would show an outside edit before the code on screen does).
+     */
+    private static void refreshInIde(Path p) {
+        try {
+            var vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByNioFile(p);
+            if (vf != null) vf.refresh(true, false);
+        } catch (Throwable ignored) { }   // outside the IDE (tests): nothing to refresh
+    }
+
     private void loop(Consumer<Path> changed) {
         try {
             while (true) {
@@ -85,7 +96,7 @@ final class SourceWatcher implements AutoCloseable {
                     if (dir == null || !(ev.context() instanceof Path rel)) continue;
                     Path p = dir.resolve(rel);
                     if (!tree && ev.kind() == StandardWatchEventKinds.ENTRY_CREATE && Files.isDirectory(p)) { try { registerOne(p); } catch (IOException ignored) { } continue; }
-                    if (Files.isRegularFile(p)) changed.accept(p);
+                    if (Files.isRegularFile(p)) { refreshInIde(p); changed.accept(p); }
                 }
                 if (!key.reset()) dirs.remove(key);
             }

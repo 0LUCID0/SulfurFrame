@@ -259,6 +259,7 @@ final class Hotswapper {
         String prefix = t.projectPath().equals(":") ? "" : t.projectPath() + ":";
         var cmd = new ArrayList<>(List.of(wrapper.toString(), prefix + "classes"));
         if (Files.isDirectory(t.dir().resolve("src/client"))) cmd.add(prefix + "clientClasses");
+        if (!t.task().equals("runClient") && !t.projectPath().equals(":")) cmd.add("classes");
         cmd.addAll(List.of("--console=plain", "-q"));
         var p = GradleJava.apply(new ProcessBuilder(cmd).directory(t.buildRoot().toFile()).redirectErrorStream(true), t).start();
         var out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
