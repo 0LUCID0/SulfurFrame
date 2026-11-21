@@ -10,6 +10,7 @@ base {
 }
 
 loom {
+	accessWidenerPath = file("src/main/resources/showcase.accesswidener")
 	// no IDE run configurations from Loom: the game is started from SulfurFrame (its own run configuration)
 	runs.configureEach { ideConfigGenerated(false) }
 }

@@ -104,7 +104,7 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 - 하루 60회 기준(가정): 다중 프로젝트 모드에서 재시작만 하면 약 82분, 기본 HotSwap은 50~57분, JBR + 기본 HotSwap은 39~49분, SulfurFrame은 11~30분 기다립니다.
 - JBR + 기본 HotSwap은 따로 재지 않고 계산했습니다. 기본 HotSwap과 같은 Gradle 컴파일을 쓰고, 멤버 추가·삭제도 바로 반영되는 점만 다릅니다(재정의 자체는 어느 쪽이든 1초 미만). Mixin은 바뀐 클래스는 재정의되지만 대상 클래스에 다시 적용되지 않아서(Mixin의 hotswap 에이전트가 필요하고, SulfurFrame은 이걸 붙임) 재시작으로 쳤습니다. IntelliJ 자체 빌더로 컴파일하면 이 줄은 더 짧아질 수 있습니다(재지 않음).
 - 불리한 쪽 끝(`sensitivity.py`)에서도 절감은 남습니다. 가장 빠른 재시작, 느린 리로드(5초), 첫 교체(2.5초)를 쓰고 Mixin을 재시작으로 쳐도 재시작 대비 40~63%, 기본 HotSwap 대비 11~40%입니다.
-- 재시작은 빌드 파일, 모드 메타데이터, 액세스 와이드너가 그대로면 Gradle을 건너뜁니다(아래 "빠른 재시작"). 커밋 표본으로는 어떤 재시작이 여기에 해당하는지 나눌 수 없어서, 범위의 큰 쪽 끝은 커밋 단위에 모든 재시작을 Gradle 경유로, 작은 쪽 끝은 파일 단위에 모든 재시작을 Gradle 없이로 계산했습니다(`model.py`의 `sulfur`와 `sulfur+relaunch`).
+- 재시작은 빌드 파일이 그대로면 Gradle을 건너뜁니다(아래 "빠른 재시작"). 커밋 표본으로는 어떤 재시작이 여기에 해당하는지 나눌 수 없어서, 범위의 큰 쪽 끝은 커밋 단위에 모든 재시작을 Gradle 경유로, 작은 쪽 끝은 파일 단위에 모든 재시작을 Gradle 없이로 계산했습니다(`model.py`의 `sulfur`와 `sulfur+relaunch`).
 - 그래도 재시작에서 줄어드는 것은 Gradle 몫뿐입니다. 게임 자체의 시작과 월드 진입(다중 프로젝트 모드 64초)은 그대로라, 효과는 대부분 바로 반영되는 변경에서 나옵니다. Gradle이 느린 프로젝트일수록 효과가 커집니다.
 
 **시간에 영향을 주는 요소**
@@ -438,9 +438,14 @@ PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (게임 로�
      지난 Gradle 실행이 채운 결과가 출력 폴더에 있습니다. 게임이 시작할 때 원본(템플릿)을 기억해 두었다가, 바뀌면 그
      템플릿과 출력을 맞대어 각 자리의 값을 알아내고, 바뀐 원본에 같은 값을 채워 출력 폴더에 씁니다. 새 자리 표시가 생겼거나,
      `${name}`/`$name`이 아닌 Groovy 문법(`${식}`, `<% %>`, `\$`)을 쓰거나, 템플릿과 출력이 맞지 않으면 전처럼 Gradle로 갑니다.
+   - **액세스 와이드너 (`AwOverlay`):** `*.accesswidener`, `*.classtweaker`가 바뀌어도 Gradle 없이 갑니다. 게임에서는
+     Fabric Loader가 시작할 때 모드의 와이드너를 직접 적용하므로 출력 폴더에 복사하면 됩니다. 남는 문제는 컴파일입니다.
+     Loom의 Minecraft jar에는 옛 와이드너가 적용되어 있어서 새로 연 멤버를 쓰는 코드를 javac가 거부합니다. 그래서 와이드너가
+     건드리는 클래스만 접근을 바꿔 따로 써 두고 빠른 컴파일의 클래스패스 맨 앞에 둡니다(컴파일 전용, 다음 Gradle 실행 때 지움).
+     재시작하기 전에는 새로 연 멤버를 쓰는 코드의 hotswap 컴파일이 실패합니다. 와이드너가 아직 게임에 없으니 맞는 동작입니다.
    - **Gradle로 가는 경우:** 빌드 파일(`*.gradle(.kts)`, `gradle.properties`, 버전 카탈로그, wrapper·데몬 JVM 파일,
-     `buildSrc`/`build-logic`), 게임용 JBR, 액세스 와이드너(`*.accesswidener`, `*.classtweaker`, `accesstransformer.cfg`:
-     Loom이 게임 jar를 다시 리매핑해야 함)가 바뀌었거나, 위처럼 채울 수 없는 메타데이터, 컴파일 오류, 바로 실행이 실패했을 때. 이유는
+     `buildSrc`/`build-logic`), 게임용 JBR, `accesstransformer.cfg`(NeoForge는 시작할 때 적용하지 않음)가 바뀌었거나, 읽을 수 없는
+     액세스 와이드너, 위처럼 채울 수 없는 메타데이터, 컴파일 오류, 바로 실행이 실패했을 때. 이유는
      `starting through Gradle: …`로 로그에 남습니다. `-Dsulfurframe.quickRelaunch=false`로 끕니다.
    - **Windows 명령줄 길이:** 경로에 ASCII가 아닌 글자가 있으면 Loom이 인자 파일을 쓰지 않아 클래스패스가 통째로
      명령줄에 들어갑니다(다중 프로젝트 모드 32,223자, 한계 32,767자). 넘칠 것 같으면 클래스패스를 `CLASSPATH` 환경 변수로

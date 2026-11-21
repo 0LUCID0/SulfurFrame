@@ -1,0 +1,4 @@
+accessWidener v2 named
+
+# SulfurFrame self-test: it widens a field here and restarts the game without Gradle (Fabric Loader applies the
+# widener as the game starts; SulfurFrame widens the classes for compiling itself).

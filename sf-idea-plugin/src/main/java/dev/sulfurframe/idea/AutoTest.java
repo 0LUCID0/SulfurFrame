@@ -320,6 +320,7 @@ final class AutoTest {
                         firstLine(log, "filled in", "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
                 Files.writeString(meta, original);
             }
+            accessWidenerRestart(p, probe, world, gameLog);
             // a build file changed: Gradle has to configure again, so this one goes through Gradle
             Path props = t.dir().resolve("gradle.properties");
             if (Files.exists(props)) {
@@ -330,6 +331,40 @@ final class AutoTest {
                 check("restart after gradle.properties changed -> through Gradle", log.contains("starting through Gradle: build file changed") && log.contains("gradlew"),
                         firstLine(log, "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
             }
+        }
+    }
+
+    /**
+     * The mod's access widener widens a Minecraft field and the probe reads it directly: that compiles only with the
+     * widened class (AwOverlay), and runs only because Fabric Loader applies the new widener at start. No Gradle.
+     */
+    private static void accessWidenerRestart(SulfurPanel p, Path probe, String world, Path gameLog) throws Exception {
+        var t = p.selectedTarget();
+        Path aw;
+        try (var s = Files.list(t.dir().resolve("src/main/resources"))) {
+            aw = s.filter(f -> Hotswapper.isWidener(f.getFileName().toString())).findFirst().orElse(null);
+        }
+        if (aw == null) return;
+        String awOriginal = Files.readString(aw), probeOriginal = Files.readString(probe);
+        String probeEdited = probeOriginal.replaceFirst("static String message\\(\\) \\{[^}]*}",
+                "static String message() { return \"aw\" + (net.minecraft.client.MinecraftClient.currentFps >= 0 ? \"-ok\" : \"\"); }");
+        if (probeEdited.equals(probeOriginal)) { check("access widener restart", false, "probe has no message()"); return; }
+        onEdt(() -> p.setSwapOnSave(false));   // a hotswap of the probe alone cannot compile: the widener is not applied yet
+        try {
+            Files.writeString(aw, awOriginal.stripTrailing() + "\naccessible field net/minecraft/client/MinecraftClient currentFps I\n");
+            Files.writeString(probe, probeEdited);
+            int mark = p.logText().length();
+            restartOnce(p, world, gameLog, "restart after access widener edited");
+            String log = p.logText().substring(Math.min(mark, p.logText().length()));
+            check("restart after access widener edited -> without Gradle, widened field used by the mod",
+                    log.contains("started the game without Gradle") && log.contains("applied by Fabric Loader at start")
+                            && waitForLog(gameLog, "[SF-PROBE] aw-ok", 30),
+                    firstLine(log, "applied by Fabric Loader", "could not apply", "starting through Gradle", "started ")
+                            + ", window after " + p.launcherWindowMillis() / 1000 + " s");
+        } finally {
+            Files.writeString(aw, awOriginal);
+            Files.writeString(probe, probeOriginal);
+            onEdt(() -> p.setSwapOnSave(true));
         }
     }
 

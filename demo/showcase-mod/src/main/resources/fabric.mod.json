@@ -10,6 +10,7 @@
     "main": ["dev.sulfurframe.showcase.Showcase"],
     "client": ["dev.sulfurframe.showcase.client.ShowcaseClient"]
   },
+  "accessWidener": "showcase.accesswidener",
   "mixins": [{"config": "showcase.mixins.json", "environment": "client"}],
   "depends": {"fabricloader": ">=0.16", "minecraft": "~1.21.1", "java": ">=21", "fabric-api": "*"}
 }

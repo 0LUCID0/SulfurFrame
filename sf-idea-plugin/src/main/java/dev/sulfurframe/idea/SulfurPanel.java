@@ -223,6 +223,7 @@ final class SulfurPanel extends JPanel {
                 if (why == null) why = hotswapper.prepareRelaunch(t, spec.capturedAt());
                 if (spec != null && why == null && launcher.relaunch(spec, t, gameArgs, onWindow, onEnd)) return;
                 if (spec != null) { log("starting through Gradle: " + (why != null ? why : "the direct start failed")); launcher.forget(t); }
+                hotswapper.clearAwOverlay(t);   // Loom applies the current access widener to its jar again
                 launcher.runClient(t, gameArgs, onWindow, onEnd);
             } finally {
                 launching.set(false);

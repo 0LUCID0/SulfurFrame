@@ -249,7 +249,13 @@ final class Hotswapper {
         }
     }
 
-    /** Files processResources expands or Loom remaps the game for: only a Gradle build applies them. */
+    /** Fabric/Quilt access wideners and class tweakers: Loader applies them as the game starts, Loom only for compiling. */
+    static boolean isWidener(String fileName) { return fileName.endsWith(".accesswidener") || fileName.endsWith(".classtweaker"); }
+
+    /** A Gradle build applied the current widener to Loom's jar: the compile overlay goes. */
+    void clearAwOverlay(Workspace.Target t) { fast.clearAwOverlay(t); }
+
+    /** Files read only when the game starts (a running game cannot take them): restart to apply. */
     static boolean needsGradle(String fileName) {
         return fileName.equals("fabric.mod.json") || fileName.equals("quilt.mod.json") || fileName.endsWith("mods.toml")
                 || fileName.endsWith(".accesswidener") || fileName.endsWith(".classtweaker") || fileName.equals("accesstransformer.cfg");
@@ -272,6 +278,7 @@ final class Hotswapper {
         if (!got) return "a hotswap is still running after 15 s";
         try {
             int copied = 0;
+            var wideners = new ArrayList<Path>();
             for (var s : sets) {
                 if (s.name().equals("test") || s.name().endsWith("Test") || s.name().endsWith(":test")) continue;
                 if (s.resOut() == null) continue;
@@ -290,7 +297,8 @@ final class Hotswapper {
                                 copied++;
                                 continue;
                             }
-                            if (needsGradle(name)) return name + " changed";
+                            if (isWidener(name)) wideners.add(f);   // Loader applies it at start; compile needs the overlay
+                            else if (needsGradle(name)) return name + " changed";
                             Files.createDirectories(to.getParent());
                             Files.copy(f, to, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
                             copied++;
@@ -299,6 +307,15 @@ final class Hotswapper {
                 }
             }
             if (copied > 0) log.accept("relaunch: " + copied + " resource file(s) copied");
+            if (!wideners.isEmpty()) {
+                var cp = new LinkedHashSet<Path>();
+                for (var s : sets) cp.addAll(s.classpath());
+                int classes = AwOverlay.build(wideners, new ArrayList<>(cp), fast.awOverlayDir(t));
+                if (classes < 0) return wideners.get(0).getFileName() + " changed (could not apply it for compiling)";
+                fast.invalidateManagers();
+                log.accept("relaunch: " + wideners.stream().map(w -> w.getFileName().toString()).toList()
+                        + " applied by Fabric Loader at start, no Loom remap (" + classes + " class(es) widened for compiling)");
+            }
             long started = System.currentTimeMillis();
             int[] n = {0};
             var r = fast.compile(t, sourcesSince - 1000, n);

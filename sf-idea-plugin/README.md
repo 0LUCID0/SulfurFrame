@@ -132,7 +132,7 @@ nothing depends on is the best case for Gradle. The game ran muted during the me
   measured).
 - The savings remain at the unfavourable end too (`sensitivity.py`). With the fastest restart, a slow reload (5 s), the
   first swap (2.5 s) and Mixins counted as restarts, it is still 40–63% vs restarting and 11–40% vs stock HotSwap.
-- A restart skips Gradle as long as the build files, mod metadata and access wideners are unchanged ("Quick restart"
+- A restart skips Gradle as long as the build files are unchanged ("Quick restart"
   below). The commit sample cannot tell which restarts fall under that, so the high end of the range counts commits
   with every restart through Gradle, and the low end counts files with every restart without Gradle (`sulfur` and
   `sulfur+relaunch` in `model.py`).
@@ -586,9 +586,16 @@ changes, cannot be changed while it runs. The **Restart** button takes care of t
      to read each placeholder's value, and the changed source is filled with the same values and written to the output
      folder. A new placeholder, Groovy beyond `${name}`/`$name` (`${expr}`, `<% %>`, `\$`), or a template that does not
      line up with the output goes through Gradle as before.
+   - **Access wideners (`AwOverlay`):** a changed `*.accesswidener` or `*.classtweaker` no longer needs Gradle. In the
+     game, Fabric Loader applies the mod's widener itself as it starts, so copying it to the output folder is enough.
+     What remains is compiling: Loom's Minecraft jar has the old widener applied, so javac rejects code that uses a newly
+     widened member. The classes the widener touches are therefore written with the new access into a separate folder
+     that goes first on fast compile's class path (compile only, removed on the next Gradle run). Before the restart, a
+     hotswap of code using a newly widened member fails to compile; that is right, since the game does not have the
+     widener yet.
    - **When it goes through Gradle:** when build files (`*.gradle(.kts)`, `gradle.properties`, version catalogs, wrapper
-     and daemon JVM files, `buildSrc`/`build-logic`), the game's JBR or access wideners (`*.accesswidener`,
-     `*.classtweaker`, `accesstransformer.cfg`: Loom has to remap the game jar) changed, for metadata that cannot be
+     and daemon JVM files, `buildSrc`/`build-logic`), the game's JBR or `accesstransformer.cfg` (NeoForge does not apply
+     it at start) changed, for an access widener that cannot be read, for metadata that cannot be
      filled in as above, on a compile error, or when starting directly failed. The reason is logged as `starting through Gradle: …`. Turn it off
      with `-Dsulfurframe.quickRelaunch=false`.
    - **Windows command line length:** with non-ASCII characters in the path, Loom does not use an argument file, so the

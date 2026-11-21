@@ -114,6 +114,7 @@ final class FastCompile {
      */
     Result compile(Workspace.Target t, long since, int[] compiled) throws IOException, InterruptedException {
         modes.clear();
+        useOverlayOf(t);
         var sets = sourceSets(t);
         if (sets == null) return Result.UNAVAILABLE;
         int total = 0;
@@ -182,6 +183,35 @@ final class FastCompile {
         catch (NumberFormatException e) { return 0; }
     }
 
+    // ---------------------------------------------------------------- access widener overlay (AwOverlay)
+
+    /** Where the classes a changed access widener touches go, with its access applied (compile class path, first). */
+    Path awOverlayDir(Workspace.Target t) { return cacheDir.resolve("aw-overlay-" + Integer.toHexString(key(t).hashCode())); }
+
+    /** The overlay on the class path of the current compile (null: none), and the file managers made with it. */
+    private volatile Path overlay;
+
+    private void useOverlayOf(Workspace.Target t) {
+        Path d = awOverlayDir(t);
+        boolean has;
+        try (var s = Files.isDirectory(d) ? Files.list(d) : null) { has = s != null && s.findAny().isPresent(); }
+        catch (IOException e) { has = false; }
+        Path now = has ? d : null;
+        if (!Objects.equals(now, overlay)) { overlay = now; invalidateManagers(); }
+    }
+
+    /** Drop the cached file managers: their class path is fixed when they are made (the overlay changed). */
+    synchronized void invalidateManagers() {
+        for (var fm : managers.values()) try { fm.close(); } catch (IOException ignored) { }
+        managers.clear();
+    }
+
+    /** A build through Gradle applied the current widener to Loom's jar: the overlay is no longer needed (or right). */
+    void clearAwOverlay(Workspace.Target t) {
+        try { AwOverlay.clear(awOverlayDir(t)); } catch (IOException ignored) { }
+        if (overlay != null) { overlay = null; invalidateManagers(); }
+    }
+
     private static void addCompatibleOutputs(Set<Path> cp, SourceSet s, List<SourceSet> all) {
         int sr = releaseInt(s.release());
         for (SourceSet o : all) {
@@ -195,6 +225,7 @@ final class FastCompile {
 
     private boolean javac(SourceSet s, List<SourceSet> all, List<Path> files) throws IOException, InterruptedException {
         var cp = new LinkedHashSet<Path>();
+        if (overlay != null) cp.add(overlay);   // ahead of Loom's Minecraft jar
         addCompatibleOutputs(cp, s, all);   // other compatible sets, and Kotlin output (Java may use it)
         cp.addAll(s.classpath());
         var a = new ArrayList<String>();
@@ -445,6 +476,7 @@ final class FastCompile {
         managers.keySet().removeIf(k -> k.name().equals(s.name()));   // a re-read class path replaces the old set
         fm = jc.getStandardFileManager(null, null, StandardCharsets.UTF_8);
         var cp = new LinkedHashSet<Path>();
+        if (overlay != null) cp.add(overlay);   // ahead of Loom's Minecraft jar
         addCompatibleOutputs(cp, s, all);
         cp.addAll(s.classpath());
         cp.removeIf(p -> !Files.exists(p));
