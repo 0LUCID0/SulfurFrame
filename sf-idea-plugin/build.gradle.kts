@@ -56,6 +56,13 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <p><b>0.2.1</b></p>
+            <ul>
+              <li>The first quick-play launch in a new run folder joins the world: the options.txt SulfurFrame prepares
+                  now carries the game's <code>version:</code>. Without it Minecraft read the file as a very old one, reset
+                  every option and showed the first-launch accessibility screen, so "Restart into the Same World" landed
+                  on the title screen. Files left without it by 0.2.0 are repaired on the next start.</li>
+            </ul>
             <p><b>0.2.0</b></p>
             <ul>
               <li>Restarts skip Gradle while the build, JBR, mod metadata and access wideners are unchanged: saved code and
