@@ -252,6 +252,11 @@ final class AutoTest {
         check("game sized to the canvas (16:9 fit)", game != 0 && fits(game, canvas),
                 "game " + NativeWindows.clientSize(game) + ", canvas " + NativeWindows.clientSize(canvas));
         snapshot(p, "sulfurframe-autotest-runclient");
+        // a new user without a JetBrains Runtime (-Dsulfurframe.noJbr=true): the game still runs, and the download is offered
+        int major = p.profile == null ? 0 : p.profile.javaMajor();
+        if (Jbr.find(major) == null && JbrDownloader.available(major) && !Boolean.getBoolean("sulfurframe.noJbrOffer"))
+            check("no JetBrains Runtime -> download offered", JbrDownloader.wasOffered(major) && p.logText().contains("a download is offered"),
+                    "Java " + major + ", " + firstLine(p.logText(), "no JetBrains Runtime"));
         String probe = System.getProperty("sulfurframe.autotest.hotswap");
         if (probe != null) {
             try { hotswapFlow(p, Path.of(probe)); } catch (Exception ex) { check("hotswap flow", false, ex.toString()); }
@@ -417,7 +422,8 @@ final class AutoTest {
         long ms6 = System.currentTimeMillis() - t1;
         check("hotswap compiled in the IDE (warm), whole swap fast", "javac in the IDE".equals(p.hotswapper.lastCompiler) && ms6 < 2500
                         && waitForLog(gameLog, "[SF-PROBE] v6", 20), p.hotswapper.lastCompiler + ", " + ms6 + " ms");
-        check("in-game message after a swap", waitForLog(gameLog, "in-game message shown: Hotswap", 10), "agent log line");
+        // shown on the game's next tick: with the frame rate capped while the editor has focus that can take a while
+        check("in-game message after a swap", waitForLog(gameLog, "in-game message shown: Hotswap", 30), "agent log line");
         Files.writeString(src, original);
 
         // a compile-time constant: javac copied it into the probe, which fast compile did not touch; its users must be

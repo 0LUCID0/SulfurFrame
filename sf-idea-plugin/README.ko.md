@@ -126,6 +126,11 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 패널 로그를 `~/.sulfurframe/logs/sulfurframe-<날짜>.log`에도 날짜·시각·프로젝트와 함께 남깁니다(14일 보관, 내 PC에만 쓰고 어디로도 보내지 않음, 자가 테스트 줄은 `autotest:` 표시).
 `idea.log`는 다른 플러그인 경고로 몇 분 만에 넘어가 쓸 수 없었습니다. `python docs/effect-study/usage.py`는 실제로 있었던 교체, 리소스 반영, 재시작의 수와 시간을 셉니다.
 커밋되지 않은 수정까지 포함되므로, 위 1의 범위가 실제로 어디쯤인지 이 기록으로 확인합니다.
+- 세는 것: 교체(`hotswap (컴파일러, N class file(s), M ms)`), 리소스 반영, Run client와 재시작(Gradle 경유와 Gradle 없이를 나눠서, 게임 창이
+  뜰 때까지). 창 줄의 `N s after start`를 그대로 씁니다. 창이 뜨지 않은 실행(빌드 실패, 중지)은 버리고, 나중 창과 짝짓지 않습니다.
+- 빼는 것: 자가 테스트(`autotest:`), 임시 폴더에서만 돈 프로젝트(`Temp`, `/tmp`: 데모 녹화, 테스트 사본; `--include-temp`로 보임),
+  `--exclude=프로젝트,...`로 지정한 프로젝트(예: 데모 모드 `showcase-mod`).
+- 2026-11-21 기준 실제 프로젝트 기록은 Run client 2번뿐이라, 위 범위를 채우기에는 아직 모자랍니다.
 
 ## 빠른 빌드와 테스트 (Gradle 없이, 설치된 IDE 사용)
 ```bash
@@ -148,6 +153,15 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 테스트가 소스를 고치고 번역을 추가하므로 항상 사본에서 돌립니다. 아래 기록에 나오는 "lucid 사본"은 이 모드 전에 쓰던 개인 테스트
 모드입니다. 테스트는 이제 모드 이름을 코드에 넣어 두지 않고, 프로브 파일 옆의 `ModInitializer`, 아무 `assets/*/lang/*.json`,
 프로브의 패키지에서 찾습니다.
+
+**릴리스 전 확인 (`./sf-idea-plugin/release-check.sh`):** 따뜻한 개발 환경만이 아니라 새 사용자가 처음 겪는 경로까지 한 번에
+돌립니다(약 30분, 게임 무음). 결과는 `%TEMP%/sf-release-check/summary.txt`에 모이고, 하나라도 실패하면 종료 코드 1입니다.
+- gradle: `buildPlugin`, `check`(fixture), `verifyPlugin`(`--quick`이면 건너뜀)
+- A 새 사용자: 새 사본, `run/options.txt` 없음, JetBrains Runtime 없음(`-Dsulfurframe.noJbr=true`: 다운로드 제안, 본문만 교체, 구조 변경은 재시작 안내)
+- B 일반: 새 사본, JetBrains Runtime 사용(구조 변경 교체, Gradle 없는/있는 재시작)
+- C Linux: WSL의 `xvfb-test.sh runclient`(`--no-linux`로 건너뜀)
+- `--worlds`: 공유 월드 흐름도(실제 `~/.sulfurframe` 공유 폴더에 사본을 연결함), `--download`: JBR 실제 다운로드(약 280 MB)도
+0.2.1의 `options.txt` 버그는 빈 run 폴더에서만 드러났습니다. A가 그 경우입니다.
 
 ### IntelliJ 2026.3(빌드 263) 이전 확인 (2026-11-16)
 - **컴파일:** 2026.3의 jar로 오류 없이 컴파일됩니다. 경고는 `GameTab`의 `FileEditorManager.openFile(VirtualFile, boolean)`

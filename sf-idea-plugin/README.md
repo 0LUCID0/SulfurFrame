@@ -167,6 +167,13 @@ written only on your PC and sent nowhere; self-test lines are marked `autotest:`
 from other plugins' warnings, so it was no use. `python docs/effect-study/usage.py` counts the swaps, resource updates
 and restarts that really happened, and how long they took. Uncommitted edits are included, so this record shows where
 in range 1 reality actually lies.
+- Counted: swaps (`hotswap (<compiler>, N class file(s), M ms)`), resource updates, Run client and restarts (through
+  Gradle and without it, separately, until the game window). The window line's `N s after start` is used as is. A run
+  whose window never appeared (failed build, stopped) is dropped, not paired with a later window.
+- Left out: self-tests (`autotest:`), projects that only ran from a temporary folder (`Temp`, `/tmp`: demo recordings,
+  test copies; `--include-temp` shows them), and projects named with `--exclude=project,...` (such as the demo mod
+  `showcase-mod`).
+- As of 2026-11-21 the real project has only 2 Run clients on record, not yet enough to fill in the range above.
 
 ## Quick build and test (no Gradle, uses an installed IDE)
 ```bash
@@ -196,6 +203,18 @@ copy in `%TEMP%/sf-showcase-test` and prints the sandbox command:
 The test edits sources and adds translations, so always run it on a copy. The "lucid copy" in the records below is a
 personal test mod used before this one. The test no longer has mod names in its code; it finds them from the
 `ModInitializer` next to the probe file, any `assets/*/lang/*.json`, and the probe's package.
+
+**Before a release (`./sf-idea-plugin/release-check.sh`):** runs, in one go, the paths a new user hits first, not only a
+warm developer setup (about 30 minutes, the game muted). The results land in `%TEMP%/sf-release-check/summary.txt`, and
+the exit code is 1 if anything failed.
+- gradle: `buildPlugin`, `check` (fixtures), `verifyPlugin` (skipped with `--quick`)
+- A new user: fresh copy, no `run/options.txt`, no JetBrains Runtime (`-Dsulfurframe.noJbr=true`: the download is
+  offered, method bodies swap, structural changes ask for a restart)
+- B regular: fresh copy, JetBrains Runtime used (structural swaps, restarts without and through Gradle)
+- C Linux: `xvfb-test.sh runclient` in WSL (`--no-linux` skips it)
+- `--worlds` adds the shared-worlds flow (it links the copy into your real `~/.sulfurframe` shared folder), `--download`
+  the real JBR download (about 280 MB)
+0.2.1's `options.txt` bug only showed in an empty run folder; run A is that case.
 
 ### Checks before moving to IntelliJ 2026.3 (build 263) (2026-11-16)
 - **Compile:** compiles against the 2026.3 jars without errors. The one warning is the deprecation of

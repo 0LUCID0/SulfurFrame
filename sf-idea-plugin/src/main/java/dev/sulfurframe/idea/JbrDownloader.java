@@ -43,6 +43,9 @@ final class JbrDownloader {
 
     private static final Set<Integer> offered = ConcurrentHashMap.newKeySet();
 
+    /** Was the download offered for this Java version in this IDE session (self-test)? */
+    static boolean wasOffered(int major) { return offered.contains(major); }
+
     /**
      * Run client found no JBR for the game: offer to download one, once per Java version and IDE session.
      * @param restart starts the game again (the new runtime applies from the next start), or null

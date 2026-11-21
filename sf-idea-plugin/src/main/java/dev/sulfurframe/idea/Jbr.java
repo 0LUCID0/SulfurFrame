@@ -20,6 +20,8 @@ import java.util.stream.Stream;
 final class Jbr {
     /** java(.exe) of a JBR with exactly this feature version, or null. */
     static Path find(int major) {
+        // a new user's machine: no JBR anywhere (the release check runs the self-test this way on a machine that has one)
+        if (Boolean.getBoolean("sulfurframe.noJbr")) return null;
         var candidates = new ArrayList<Path>();
         Path jdks = Path.of(System.getProperty("user.home"), ".jdks");
         if (Files.isDirectory(jdks)) {
