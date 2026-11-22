@@ -89,6 +89,23 @@ final class StartupCode {
         return new Rerun(statics, entries, entries.isEmpty() ? Set.of() : calledByEntry);
     }
 
+    /** Superclass and interfaces (internal names) that were added or removed between the two versions. */
+    static Set<String> supertypeChanges(byte[] before, byte[] after) {
+        if (before == null || after == null) return Set.of();
+        Set<String> a = supertypes(before), b = supertypes(after);
+        var out = new TreeSet<String>();
+        for (String s : a) if (!b.contains(s)) out.add(s);
+        for (String s : b) if (!a.contains(s)) out.add(s);
+        return out;
+    }
+
+    private static Set<String> supertypes(byte[] cls) {
+        var r = new ClassReader(cls);
+        var out = new HashSet<String>(Arrays.asList(r.getInterfaces()));
+        if (r.getSuperName() != null) out.add(r.getSuperName());
+        return out;
+    }
+
     static boolean entryPoint(String name, String desc) {
         return desc.equals("()V") && (name.equals("onInitialize") || name.equals("onInitializeClient") || name.equals("onInitializeServer"));
     }

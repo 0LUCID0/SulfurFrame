@@ -326,38 +326,53 @@ final class AutoTest {
      * onInitialize gets a server tick listener (every 40 ticks), then the listener changes (every 20), then goes again:
      * each time the entry point runs again in the game (RuntimeRegister / EntryRerun), no restart is offered, a tick is
      * never logged twice (the old listener was taken out), and after the revert no tick is logged at all.
+     * The same for onInitializeClient with a client tick listener, next to the demo's own reload listener (an anonymous
+     * class, which Fabric refuses to take twice).
      */
     private static void entryRerunFlow(SulfurPanel p, Path main, Path gameLog) throws Exception {
-        String cls = main.getFileName().toString().replace(".java", "");
-        String src = Files.readString(main);
-        String head = "public void onInitialize() {";
+        entryRerun(p, main, gameLog, "onInitialize", "LOGGER", "SF-INIT",
+                "net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(s -> {"
+                        + " if (s.getTicks() % EVERY == 0) LOGGER.info(\"[SF-INIT] tick \" + s.getTicks()); });");
+        Path client = main.getParent().resolve("client/" + main.getFileName().toString().replace(".java", "Client.java"));
+        String logger = probeClassOf(main) + ".LOGGER";
+        if (Files.exists(client))
+            entryRerun(p, client, gameLog, "onInitializeClient", logger, "SF-CLIENT",
+                    // its own counter (client world time is corrected by the server and can repeat): two listeners -> each number twice
+                    "java.util.concurrent.atomic.AtomicInteger sfTicks = new java.util.concurrent.atomic.AtomicInteger();"
+                            + " net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(c -> {"
+                            + " int n = sfTicks.incrementAndGet(); if (n % EVERY == 0) " + logger + ".info(\"[SF-CLIENT] tick \" + n); });");
+    }
+
+    private static void entryRerun(SulfurPanel p, Path file, Path gameLog, String method, String logger, String tag, String listener) throws Exception {
+        String cls = file.getFileName().toString().replace(".java", "");
+        String src = Files.readString(file);
+        String head = "public void " + method + "() {";
         if (!src.contains(head)) return;
         java.util.function.IntFunction<String> withListener = every -> src.replace(head, head
-                + "\n\t\tLOGGER.info(\"[SF] startup code edited " + every + "\");"
-                + "\n\t\tnet.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(s -> {"
-                + " if (s.getTicks() % " + every + " == 0) LOGGER.info(\"[SF-INIT] tick \" + s.getTicks()); });");
+                + "\n\t\t" + logger + ".info(\"[SF] " + method + " edited " + every + "\");"
+                + "\n\t\t" + listener.replace("EVERY", String.valueOf(every)));
         try {
             for (int every : new int[]{40, 20}) {
-                Files.writeString(main, withListener.apply(every));
+                Files.writeString(file, withListener.apply(every));
                 String ran = rerunOnce(p);
                 String log = Files.exists(gameLog) ? Files.readString(gameLog) : "";
-                boolean edited = waitForLog(gameLog, "[SF] startup code edited " + every, 10);
+                boolean edited = waitForLog(gameLog, "[SF] " + method + " edited " + every, 10);
                 sleep(10000);   // 200 ticks: a few listener runs, even after a slow reload
-                var ticks = ticksLogged(gameLog, log.length());
+                var ticks = ticksLogged(gameLog, log.length(), tag);
                 boolean once = ticks.stream().distinct().count() == ticks.size() && !ticks.isEmpty() && ticks.stream().allMatch(n -> n % every == 0);
-                check("onInitialize changed (listener every " + every + " ticks) -> ran again in the game, listener once, no restart",
-                        ran.contains(cls + ".onInitialize again") && p.hotswapper.lastStartupChanges.isEmpty() && edited && once,
+                check(method + " changed (listener every " + every + " ticks) -> ran again in the game, listener once, no restart",
+                        ran.contains(cls + "." + method + " again") && p.hotswapper.lastStartupChanges.isEmpty() && edited && once,
                         ran + ", ticks " + ticks);
             }
         } finally {
-            Files.writeString(main, src);
+            Files.writeString(file, src);
         }
         String ran = rerunOnce(p);
         sleep(1000);
         int from = Files.exists(gameLog) ? Files.readString(gameLog).length() : 0;
         sleep(4000);
-        var ticks = ticksLogged(gameLog, from);
-        check("onInitialize reverted -> listener gone", ran.contains(cls + ".onInitialize again") && ticks.isEmpty(), ran + ", ticks " + ticks);
+        var ticks = ticksLogged(gameLog, from, tag);
+        check(method + " reverted -> listener gone", ran.contains(cls + "." + method + " again") && ticks.isEmpty(), ran + ", ticks " + ticks);
     }
 
     /** Save-path hotswap (as when the editor saves); the registration answer, or why there is none. */
@@ -369,11 +384,11 @@ final class AutoTest {
         return String.join(" | ", p.hotswapper.lastRegistration);
     }
 
-    /** "[SF-INIT] tick N" numbers in the game log after {@code from}. */
-    private static java.util.List<Integer> ticksLogged(Path gameLog, int from) throws Exception {
+    /** "[tag] tick N" numbers in the game log after {@code from}. */
+    private static java.util.List<Integer> ticksLogged(Path gameLog, int from, String tag) throws Exception {
         var out = new java.util.ArrayList<Integer>();
         String log = Files.readString(gameLog);
-        var m = java.util.regex.Pattern.compile("\\[SF-INIT] tick (\\d+)").matcher(log.substring(Math.min(from, log.length())));
+        var m = java.util.regex.Pattern.compile("\\[" + tag + "] tick (\\d+)").matcher(log.substring(Math.min(from, log.length())));
         while (m.find()) out.add(Integer.parseInt(m.group(1)));
         return out;
     }
@@ -577,7 +592,53 @@ final class AutoTest {
                             && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
             Files.writeString(lang, l);
         }
+        hierarchyFlow(p, src, gameLog);
         newBlockFlow(p, src, gameLog);
+    }
+
+    /**
+     * The probe gets an interface, then a superclass, while the game runs (JetBrains Runtime's enhanced redefinition):
+     * each must apply without a restart and show in the game (the probe reports what it is assignable to).
+     */
+    private static void hierarchyFlow(SulfurPanel p, Path probe, Path gameLog) throws Exception {
+        var t = p.selectedTarget();
+        Path base = probe.getParent().resolve("SfProbeBase.java");
+        if (!Files.exists(base) || Jbr.find(t.profile().javaMajor()) == null) return;
+        String original = Files.readString(probe);
+        String decl = "public final class SfHotswapProbe {";
+        if (!original.contains(decl) || !original.contains("static String message() {")) { check("hierarchy change", false, "probe changed shape"); return; }
+        String report = "static String message() { return \"h\" + (SfProbeFace.class.isAssignableFrom(SfHotswapProbe.class) ? \"-iface\" : \"\")"
+                + " + (SfProbeBase.class.isAssignableFrom(SfHotswapProbe.class) ? \"-super\" : \"\"); }";
+        String body = original.replaceFirst("static String message\\(\\) \\{[^}]*}", java.util.regex.Matcher.quoteReplacement(report));
+        try {
+            // a project interface: a JDK one (Supplier) made JBR null unrelated Supplier fields in Minecraft, and the game crashed
+            Files.writeString(probe, body.replace(decl, "public final class SfHotswapProbe implements SfProbeFace {"));
+            sleep(1500);
+            swapRetry(p, t);
+            check("hierarchy (JBR): interface added, applied without restart", redefinedAny(p.hotswapper.lastResult)
+                    && p.hotswapper.lastResult.stream().noneMatch(s -> s.startsWith("restart needed")) && waitForLog(gameLog, "[SF-PROBE] h-iface ", 15),
+                    String.valueOf(p.hotswapper.lastResult));
+            Files.writeString(probe, body.replace(decl, "public final class SfHotswapProbe extends SfProbeBase {"));
+            sleep(1500);
+            swapRetry(p, t);
+            check("hierarchy (JBR): superclass changed, interface removed, applied without restart", redefinedAny(p.hotswapper.lastResult)
+                    && p.hotswapper.lastResult.stream().noneMatch(s -> s.startsWith("restart needed")) && waitForLog(gameLog, "[SF-PROBE] h-super ", 15),
+                    String.valueOf(p.hotswapper.lastResult));
+            // a JDK interface: held back (restart needed) instead of crashing the game
+            Files.writeString(probe, body.replace(decl, "public final class SfHotswapProbe extends SfProbeBase implements java.util.function.Supplier<String> {"
+                    + "\n    public String get() { return \"s\"; }"));
+            sleep(1500);
+            swapRetry(p, t);
+            long pid = p.embedder.gamePid();
+            sleep(3000);
+            check("hierarchy: a JDK interface added -> not swapped, restart needed, game still running",
+                    p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed") && s.contains("java.util.function.Supplier"))
+                            && ProcessHandle.of(pid).isPresent() && p.embedder.attached(), String.valueOf(p.hotswapper.lastResult));
+        } finally {
+            Files.writeString(probe, original);
+            sleep(1500);
+            swapRetry(p, t);
+        }
     }
 
     /**

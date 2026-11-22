@@ -104,16 +104,26 @@ final class Hotswapper {
      * Registration code changed and the classes were redefined: have the agent run it again in the game, registering
      * only what is new (RuntimeRegister). The startup changes it covered no longer ask for a restart.
      */
+    /** Internal names of the project's own classes (everything under the class roots). */
+    private Set<String> ownClasses(Workspace.Target t) throws IOException {
+        var own = new HashSet<String>();
+        for (Path root : classRoots(t))
+            if (Files.isDirectory(root))
+                try (Stream<Path> s = Files.walk(root)) {
+                    s.filter(f -> f.toString().endsWith(".class")).forEach(f -> own.add(root.relativize(f).toString().replace('\\', '/').replaceFirst("\\.class$", "")));
+                }
+        return own;
+    }
+
+    /** Classes whose superclass / interfaces changed to or from a type outside the project, with that type: not sent. */
+    private final Map<Path, Set<String>> foreignHierarchy = new LinkedHashMap<>();
+    private final Map<Path, byte[]> bytesBefore = new HashMap<>();   // to put back for a class that is held
+
     /** The list for the agent's register= request (RuntimeRegister), from the classes in {@link #rerunnable}. */
     private Path registerList(Workspace.Target t, Path agentJar) throws IOException {
         Path list = agentJar.getParent().resolve("register-" + ProcessHandle.current().pid() + "-" + (++counter) + ".txt");
         var lines = new ArrayList<String>();
-        var ownClasses = new HashSet<String>();   // internal names of the project's classes: the only possible owners
-        for (Path root : classRoots(t))
-            if (Files.isDirectory(root))
-                try (Stream<Path> s = Files.walk(root)) {
-                    s.filter(f -> f.toString().endsWith(".class")).forEach(f -> ownClasses.add(root.relativize(f).toString().replace('\\', '/').replaceFirst("\\.class$", "")));
-                }
+        var ownClasses = ownClasses(t);   // the only possible owners
         for (var e : rerunnable.entrySet()) {
             var plan = e.getValue().plan();
             var owners = plan.called().stream().filter(ownClasses::contains).map(c -> c.replace('/', '.')).toList();
@@ -263,6 +273,7 @@ final class Hotswapper {
             var startup = new ArrayList<String>();
             rerunnable.clear();
             var constantOwners = new LinkedHashSet<String>();
+            foreignHierarchy.clear();
             collectChanged(changed, startup, constantOwners, t);
             // A changed compile-time constant (static final int/float/String...) is copied into every class that reads
             // it; fast compile only rebuilt the edited file, so the readers would go on with the old value. Recompile
@@ -276,7 +287,25 @@ final class Hotswapper {
                 }
             }
             lastStartupChanges = List.copyOf(startup);
-            if (changed.isEmpty()) { log.accept("hotswap: no class changed"); lastResult = List.of("redefined 0"); return true; }
+            // A superclass / interface change is fine for the JetBrains Runtime between the project's own types, but adding
+            // a JDK interface (Supplier) to one class made it null unrelated Supplier fields in Minecraft, and the game
+            // crashed. Those classes are not sent; they need a restart.
+            var held = new ArrayList<String>();
+            if (!foreignHierarchy.isEmpty()) {
+                var own = ownClasses(t);
+                for (var e : foreignHierarchy.entrySet()) {
+                    var foreign = e.getValue().stream().filter(s -> !own.contains(s) && !s.equals("java/lang/Object")).map(s -> s.replace('/', '.')).toList();
+                    if (foreign.isEmpty()) continue;
+                    changed.remove(e.getKey());
+                    classBytes.put(e.getKey(), bytesBefore.get(e.getKey()));   // the game still runs the old one
+                    held.add("restart needed: " + binaryName(t, e.getKey()) + " (superclass or interfaces changed: " + String.join(", ", foreign) + ")");
+                }
+            }
+            if (changed.isEmpty()) {
+                lastResult = held.isEmpty() ? List.of("redefined 0") : List.copyOf(held);
+                log.accept(held.isEmpty() ? "hotswap: no class changed" : "hotswap: " + String.join("; ", held));
+                return true;
+            }
 
             Path dir = agentJar.getParent();
             Path list = dir.resolve("hotswap-" + ProcessHandle.current().pid() + "-" + (++counter) + ".txt");
@@ -298,6 +327,7 @@ final class Hotswapper {
             for (int i = 0; i < (register == null ? 100 : 300) && !Files.exists(result); i++) Thread.sleep(100);   // with register: on the render thread
             if (!Files.exists(result)) { log.accept("hotswap: no answer from the game"); return false; }
             lastResult = Files.readAllLines(result, StandardCharsets.UTF_8);
+            if (!held.isEmpty()) { var all = new ArrayList<>(lastResult); all.addAll(held); lastResult = List.copyOf(all); }
             Files.deleteIfExists(list); Files.deleteIfExists(result);
             String summary = String.join(", ", lastResult.stream().filter(s -> !s.startsWith("ms ")).toList());
             log.accept("hotswap (" + lastCompiler + ", " + changed.size() + " class file(s), " + (System.currentTimeMillis() - t0) + " ms): " + summary);
@@ -456,6 +486,10 @@ final class Hotswapper {
                 else rerunnable.remove(c);
             } catch (Throwable ignored) { }
             try { constantOwners.addAll(StartupCode.constantOwnerNames(old, after)); } catch (Throwable ignored) { }
+            try {
+                var sup = StartupCode.supertypeChanges(old, after);
+                if (!sup.isEmpty()) { foreignHierarchy.put(c, sup); bytesBefore.put(c, old); }
+            } catch (Throwable ignored) { }
             classBytes.put(c, after);
             if (!changed.contains(c)) changed.add(c);
         }
