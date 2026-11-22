@@ -48,16 +48,24 @@ final class StartupCode {
      *            entry point object after what they hooked up before is taken out
      *   called   classes the entry points call (internal names), whose earlier registrations are taken out as well
      *            (the caller keeps only the project's own classes)
+     *   mode     "" (registration code: renamed copy), "enum" (new constants from the changed static initializer) or
+     *            "switchmap" (javac's holder of a switch over an enum: its arrays computed again), see the agent's
+     *            ClinitReplay
      */
-    record Rerun(List<String> statics, List<String> entries, Set<String> called) {}
+    record Rerun(List<String> statics, List<String> entries, Set<String> called, String mode) {}
 
     static Rerun rerunPlan(byte[] before, byte[] after) {
         if (before == null || after == null) return null;
         Map<String, String> a = startupBodies(before), b = startupBodies(after);
         var access = new HashMap<String, Integer>();
         var calledByEntry = new LinkedHashSet<String>();
-        boolean[] registers = {false};
+        boolean[] registers = {false}, isEnum = {false}, switchMap = {false};
         new ClassReader(after).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public void visit(int v, int acc, String name, String sig, String sup, String[] ifs) { isEnum[0] = (acc & Opcodes.ACC_ENUM) != 0; }
+            @Override public FieldVisitor visitField(int acc, String name, String desc, String sig, Object value) {
+                if ((acc & Opcodes.ACC_STATIC) != 0 && name.startsWith("$SwitchMap$")) switchMap[0] = true;
+                return null;
+            }
             @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] ex) {
                 access.put(name + desc, acc);
                 boolean entry = entryPoint(name, desc);
@@ -69,6 +77,10 @@ final class StartupCode {
                 };
             }
         }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (!b.getOrDefault("<clinit>()V", "").equals(a.getOrDefault("<clinit>()V", ""))) {
+            if (isEnum[0]) return new Rerun(List.of("<clinit>"), List.of(), Set.of(), "enum");
+            if (switchMap[0]) return new Rerun(List.of("<clinit>"), List.of(), Set.of(), "switchmap");
+        }
         var statics = new ArrayList<String>();
         var entries = new ArrayList<String>();
         boolean staticChange = false;
@@ -86,7 +98,7 @@ final class StartupCode {
             statics.add(0, "<clinit>");
         }
         if (statics.isEmpty() && entries.isEmpty()) return null;
-        return new Rerun(statics, entries, entries.isEmpty() ? Set.of() : calledByEntry);
+        return new Rerun(statics, entries, entries.isEmpty() ? Set.of() : calledByEntry, "");
     }
 
     /** Superclass and interfaces (internal names) that were added or removed between the two versions. */

@@ -120,6 +120,58 @@ public final class RegistryPatch {
         };
     }
 
+    /**
+     * A class to define as a hidden nestmate of {@code cls}'s class: its static fields (same names and types) and its
+     * static initializer, which fills those copies instead of the real ones. Methods the initializer calls on the class
+     * itself stay calls into the real class, except the enum's $values(), which is copied too (it reads the copies).
+     * Being a nestmate, the copy may call the real class's private constructor: that is how new enum constants are
+     * made (reflection refuses to create enum objects). Used for enums and for javac's switch map holders, whose
+     * static initializers already ran with the old set of constants.
+     */
+    public static byte[] clinitCopy(byte[] cls, final String copyName) {
+        final ClassReader r = new ClassReader(cls);
+        final String real = r.getClassName();
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        final List<String> statics = new ArrayList<String>();
+        final int[] version = {Opcodes.V17};
+        r.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public void visit(int v, int access, String name, String sig, String sup, String[] ifs) { version[0] = v; }
+            @Override public FieldVisitor visitField(int access, String name, String desc, String sig, Object value) {
+                if ((access & Opcodes.ACC_STATIC) != 0) statics.add(name + ":" + desc);
+                return null;
+            }
+        }, ClassReader.SKIP_CODE);
+        w.visit(version[0], Opcodes.ACC_FINAL | Opcodes.ACC_SUPER | Opcodes.ACC_SYNTHETIC, copyName, null, "java/lang/Object", null);
+        for (String f : statics) {
+            int c = f.indexOf(':');
+            w.visitField(Opcodes.ACC_STATIC | Opcodes.ACC_PUBLIC, f.substring(0, c), f.substring(c + 1), null, null).visitEnd();
+        }
+        final ClassWriter out = w;
+        r.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                boolean values = name.equals("$values") && (access & Opcodes.ACC_STATIC) != 0;
+                if (!name.equals("<clinit>") && !values) return null;
+                MethodVisitor mv = out.visitMethod(name.equals("<clinit>") ? Opcodes.ACC_STATIC : Opcodes.ACC_STATIC | Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC,
+                        name, desc, null, ex);
+                return new MethodVisitor(Opcodes.ASM9, mv) {
+                    @Override public void visitFieldInsn(int op, String owner, String n, String d) {
+                        boolean own = owner.equals(real) && statics.contains(n + ":" + d) && (op == Opcodes.GETSTATIC || op == Opcodes.PUTSTATIC);
+                        super.visitFieldInsn(op, own ? copyName : owner, n, d);
+                    }
+                    @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                        boolean own = op == Opcodes.INVOKESTATIC && owner.equals(real) && n.equals("$values");
+                        super.visitMethodInsn(op, own ? copyName : owner, n, d, itf && !own);
+                    }
+                    @Override public void visitFrame(int type, int nLocal, Object[] local, int nStack, Object[] stack) {
+                        super.visitFrame(type, nLocal, local, nStack, stack);   // types of the real class stay valid
+                    }
+                };
+            }
+        }, 0);
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
     /** Registry.register(registry, id-or-key, value) and Registry.registerReference(...): three objects in, one out. */
     static boolean bridgeable(String owner, String name, String desc) {
         if (!owner.endsWith("/Registry") || !(name.equals("register") || name.equals("registerReference"))) return false;

@@ -592,8 +592,40 @@ final class AutoTest {
                             && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
             Files.writeString(lang, l);
         }
-        hierarchyFlow(p, src, gameLog);
+        enumFlow(p, src, gameLog);
         newBlockFlow(p, src, gameLog);
+        hierarchyFlow(p, src, gameLog);   // last: the way back to Object needs a restart (JBR refuses it), which comes next
+    }
+
+    /**
+     * A constant is added to an enum (SfProbeKind) while the game runs, with the case for it in the probe's switch:
+     * values(), valueOf, the switch (javac's table, filled once) and EnumSet must all see it, without a restart.
+     */
+    private static void enumFlow(SulfurPanel p, Path probe, Path gameLog) throws Exception {
+        var t = p.selectedTarget();
+        Path kindFile = probe.getParent().resolve("SfProbeKind.java");
+        if (!Files.exists(kindFile) || Jbr.find(t.profile().javaMajor()) == null) return;
+        String kind = Files.readString(kindFile), original = Files.readString(probe);
+        if (!kind.contains("    BETA,") || !original.contains("case BETA -> \"b\";")) { check("enum constant added", false, "demo changed shape"); return; }
+        String report = "static String message() { return \"e-\" + SfProbeKind.values().length + \"-\" + kind(SfProbeKind.valueOf(\"GAMMA\"))"
+                + " + \"-\" + java.util.EnumSet.allOf(SfProbeKind.class).size(); }";
+        try {
+            Files.writeString(kindFile, kind.replace("    BETA,", "    BETA,\n    GAMMA,"));
+            Files.writeString(probe, original.replaceFirst("static String message\\(\\) \\{[^}]*}", java.util.regex.Matcher.quoteReplacement(report))
+                    .replace("case BETA -> \"b\";", "case BETA -> \"b\";\n            case GAMMA -> \"g\";"));
+            sleep(1500);
+            p.hotswapper.lastRegistration = java.util.List.of();
+            swapRetry(p, t);
+            var reg = p.hotswapper.lastRegistration;
+            check("enum constant added -> values, valueOf, switch and EnumSet see it, no restart",
+                    reg.stream().anyMatch(s -> s.contains("SfProbeKind (enum: new GAMMA)")) && waitForLog(gameLog, "[SF-PROBE] e-3-g-3 ", 15)
+                            && p.hotswapper.lastStartupChanges.isEmpty(), reg + " " + p.hotswapper.lastResult);
+        } finally {
+            Files.writeString(kindFile, kind);
+            Files.writeString(probe, original);
+            sleep(1500);
+            swapRetry(p, t);   // GAMMA removed again: that one asks for a restart (the constant object is still out there)
+        }
     }
 
     /**
@@ -639,6 +671,10 @@ final class AutoTest {
             sleep(1500);
             swapRetry(p, t);
         }
+        // back to Object: JBR refuses that direction; it must come back as a restart, the game still running
+        check("hierarchy: superclass back to Object -> restart needed (JBR refuses), game still running",
+                p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed") && s.contains("superclass or interfaces changed"))
+                        && p.embedder.attached(), String.valueOf(p.hotswapper.lastResult));
     }
 
     /**

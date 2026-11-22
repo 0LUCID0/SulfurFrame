@@ -124,11 +124,14 @@ final class Hotswapper {
         Path list = agentJar.getParent().resolve("register-" + ProcessHandle.current().pid() + "-" + (++counter) + ".txt");
         var lines = new ArrayList<String>();
         var ownClasses = ownClasses(t);   // the only possible owners
-        for (var e : rerunnable.entrySet()) {
+        // enums first (their new constants), switch maps last (computed against the enums as they are now)
+        var order = new ArrayList<>(rerunnable.entrySet());
+        order.sort(Comparator.comparingInt(e -> switch (e.getValue().plan().mode()) { case "enum" -> 0; case "switchmap" -> 2; default -> 1; }));
+        for (var e : order) {
             var plan = e.getValue().plan();
             var owners = plan.called().stream().filter(ownClasses::contains).map(c -> c.replace('/', '.')).toList();
             lines.add(String.join("\t", binaryName(t, e.getKey()), e.getKey().toString(), String.join(";", plan.statics()),
-                    String.join(";", plan.entries()), String.join(",", owners)));
+                    String.join(";", plan.entries()), String.join(",", owners), plan.mode()));
         }
         Files.write(list, lines, StandardCharsets.UTF_8);
         Files.deleteIfExists(Path.of(list + ".result"));
@@ -150,6 +153,14 @@ final class Hotswapper {
         var registered = answer.stream().filter(s -> s.startsWith("registered ")).map(s -> s.substring("registered ".length())).toList();
         if (!errors.isEmpty()) { log.accept("registration failed in the game: " + String.join("; ", errors) + " (restart to apply)"); return; }
         if (answer.contains("skipped static code: the classes could not all be redefined")) return;   // the restart offer stays
+        var restart = answer.stream().filter(s -> s.startsWith("restart needed")).toList();
+        if (!restart.isEmpty()) {   // e.g. an enum constant removed: the panel offers the restart like a failed redefinition
+            var all = new ArrayList<>(lastResult);
+            all.addAll(restart);
+            lastResult = List.copyOf(all);
+            log.accept("registration: " + String.join("; ", restart));
+            return;
+        }
         var covered = new ArrayList<String>();
         for (var r : rerunnable.values()) covered.addAll(r.startupChanges());
         var rest = new ArrayList<>(lastStartupChanges);

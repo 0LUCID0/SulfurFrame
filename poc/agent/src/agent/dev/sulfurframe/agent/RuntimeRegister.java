@@ -168,7 +168,9 @@ final class RuntimeRegister {
             for (String[] c : classes) {
                 Class<?> real = loadedClass(inst, c[0]);
                 if (real == null) { out.add("skipped " + c[0] + " (not loaded)"); continue; }
-                if (redefined && c.length > 2 && !c[2].isEmpty()) shadowRun(real, c, out);
+                String mode = c.length > 5 ? c[5] : "";
+                if (redefined && (mode.equals("enum") || mode.equals("switchmap"))) ClinitReplay.run(real, c[1], mode, out);
+                else if (redefined && c.length > 2 && !c[2].isEmpty()) shadowRun(real, c, out);
                 if (entries.containsKey(c)) EntryRerun.run(entries.get(c), out);
             }
         } finally {

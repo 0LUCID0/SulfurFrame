@@ -43,7 +43,10 @@ final class Hotswap {
             } catch (UnsupportedOperationException | ClassFormatError | VerifyError e) {
                 for (ClassDefinition d : defs) {      // one by one: apply what can be applied, name what cannot
                     try { inst.redefineClasses(d); ok++; }
-                    catch (Throwable t) { restart.add(d.getDefinitionClass().getName() + " (" + reason(t) + ")"); }
+                    catch (Throwable t) {
+                        restart.add(d.getDefinitionClass().getName() + " (" + reason(t) + ")");
+                        SfHooks.log("hotswap: " + d.getDefinitionClass().getName() + " not redefined: " + t);   // the JVM's own words
+                    }
                 }
             }
             out.add("redefined " + ok);
@@ -63,6 +66,9 @@ final class Hotswap {
 
     static String reason(Throwable t) {
         String m = String.valueOf(t.getMessage());
+        if (m.contains("superclass or interfaces")) return "superclass or interfaces changed";   // JBR too: back to Object
+        if (m.contains("NestHost") || m.contains("NestMembers") || m.contains("Record") || m.contains("PermittedSubclasses"))
+            return "nested classes or record components changed";
         if (m.contains("add a method") || m.contains("delete a method") || m.contains("schema") || m.contains("attempted"))
             return "methods or fields added/removed";
         return t.getClass().getSimpleName() + ": " + m;
