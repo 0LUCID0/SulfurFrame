@@ -123,10 +123,11 @@ val selfTests = listOf(
     "profile.WorkspaceSelfTest" to "src/test/resources/workspaces",
     "OptionsFileSelfTest" to null,
     "MetadataTemplateSelfTest" to null,
+    "StartupCodeSelfTest" to null,
 ).map { (name, fixtures) ->
     tasks.register<JavaExec>("run${name.substringAfterLast('.')}") {
         group = "verification"
-        classpath = sourceSets.test.get().runtimeClasspath
+        classpath = sourceSets.test.get().runtimeClasspath + sourceSets.main.get().compileClasspath   // + the IDE's jars (ASM, Gson)
         mainClass = "dev.sulfurframe.idea.$name"
         if (fixtures != null) args(file(fixtures).absolutePath)
     }

@@ -144,7 +144,7 @@ final class EntryRerun {
         } catch (Throwable t) { return null; }
     }
 
-    private static boolean mine(String key, String modId) {
+    static boolean mine(String key, String modId) {
         return modId != null && (key.contains("." + modId + ".") || key.endsWith("." + modId) || key.startsWith(modId + "."));
     }
 

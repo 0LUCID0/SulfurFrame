@@ -199,20 +199,10 @@ final class Hotswapper {
             if (loaded == null || !Files.exists(loaded)) return name + " changed (the game's copy was not found)";
             var before = com.google.gson.JsonParser.parseString(Files.readString(loaded)).getAsJsonObject();
             var after = com.google.gson.JsonParser.parseString(Files.readString(json)).getAsJsonObject();
-            var lists = List.of("mixins", "client", "server");
-            var keys = new HashSet<>(before.keySet());
-            keys.addAll(after.keySet());
-            for (String k : keys)
-                if (!lists.contains(k) && !Objects.equals(before.get(k), after.get(k))) return name + " changed (" + k + "): only added mixins apply while the game runs";
             var hot = hotMixins.computeIfAbsent(json.toAbsolutePath().normalize().resolveSibling(name + "@" + gamePid), k -> new HashSet<>());   // per game
             var added = new LinkedHashMap<String, List<String>>();
-            for (String list : lists) {
-                var was = names(before, list);
-                var now = names(after, list);
-                for (String m : was) if (!now.contains(m)) return name + " changed (mixin " + m + " removed): restart to apply";
-                var add = now.stream().filter(m -> !was.contains(m) && !hot.contains(list + ":" + m)).toList();
-                if (!add.isEmpty()) added.put(list, add);
-            }
+            String refused = mixinsAdded(before, after, hot, added);
+            if (refused != null) return name + " changed (" + refused + ")";
             if (added.isEmpty()) return null;
             // the new classes compiled (and anything else saved with them swapped)
             boolean compiled = false;
@@ -229,7 +219,7 @@ final class Hotswapper {
                     targets.addAll(StartupCode.mixinTargets(Files.readAllBytes(cls)));
                 }
             var config = after.deepCopy();
-            for (String list : lists) config.remove(list);
+            for (String list : MIXIN_LISTS) config.remove(list);
             for (var e : added.entrySet()) {
                 var arr = new com.google.gson.JsonArray();
                 e.getValue().forEach(arr::add);
@@ -259,6 +249,35 @@ final class Hotswapper {
         } catch (Exception e) {
             return name + " changed (" + e + ")";
         }
+    }
+
+    static final List<String> MIXIN_LISTS = List.of("mixins", "client", "server");
+
+    /**
+     * What a mixins.json change adds, per list ("mixins", "client", "server"), into {@code added}; null if it is only
+     * that, else why it needs a restart. {@code hot}: "list:Class" already added to this game.
+     */
+    static String mixinsAdded(com.google.gson.JsonObject before, com.google.gson.JsonObject after, Set<String> hot, Map<String, List<String>> added) {
+        var keys = new HashSet<>(before.keySet());
+        keys.addAll(after.keySet());
+        for (String k : keys)
+            if (!MIXIN_LISTS.contains(k) && !Objects.equals(before.get(k), after.get(k))) return k + ": only added mixins apply while the game runs";
+        for (String list : MIXIN_LISTS) {
+            var was = names(before, list);
+            var now = names(after, list);
+            for (String m : was) if (!now.contains(m)) return "mixin " + m + " removed: restart to apply";
+            var add = now.stream().filter(m -> !was.contains(m) && !hot.contains(list + ":" + m)).toList();
+            if (!add.isEmpty()) added.put(list, add);
+        }
+        return null;
+    }
+
+    /**
+     * Supertypes (internal names) a class gained or lost that are not the project's own and not java/lang/Object,
+     * dotted: such a class is held back (JBR nulled unrelated fields after a JDK interface was added).
+     */
+    static List<String> foreignSupertypes(Set<String> changes, Set<String> own) {
+        return changes.stream().filter(s -> !own.contains(s) && !s.equals("java/lang/Object")).map(s -> s.replace('/', '.')).sorted().toList();
     }
 
     private static List<String> names(com.google.gson.JsonObject o, String list) {
@@ -401,7 +420,7 @@ final class Hotswapper {
             if (!foreignHierarchy.isEmpty()) {
                 var own = ownClasses(t);
                 for (var e : foreignHierarchy.entrySet()) {
-                    var foreign = e.getValue().stream().filter(s -> !own.contains(s) && !s.equals("java/lang/Object")).map(s -> s.replace('/', '.')).toList();
+                    var foreign = foreignSupertypes(e.getValue(), own);
                     if (foreign.isEmpty()) continue;
                     changed.remove(e.getKey());
                     classBytes.put(e.getKey(), bytesBefore.get(e.getKey()));   // the game still runs the old one

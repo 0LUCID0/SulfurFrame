@@ -330,6 +330,23 @@ final class AutoTest {
      * class, which Fabric refuses to take twice).
      */
     private static void entryRerunFlow(SulfurPanel p, Path main, Path gameLog) throws Exception {
+        if (Jbr.find(p.selectedTarget().profile().javaMajor()) == null) {
+            // without JBR a new lambda (a new method) cannot be redefined: the old code runs again (its listeners back)
+            // and a restart is offered
+            String src = Files.readString(main), head = "public void onInitialize() {";
+            if (!src.contains(head)) return;
+            try {
+                Files.writeString(main, src.replace(head, head + "\n\t\tRunnable sfNew = () -> LOGGER.info(\"[SF] new lambda\"); sfNew.run();"));
+                String ran = rerunOnce(p);
+                check("onInitialize changed with a new lambda, no JBR -> restart offered, old code ran again",
+                        ran.contains("skipped static code") && ran.contains(".onInitialize again")
+                                && p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed")), ran + " " + p.hotswapper.lastResult);
+            } finally {
+                Files.writeString(main, src);
+                rerunOnce(p);
+            }
+            return;
+        }
         entryRerun(p, main, gameLog, "onInitialize", "LOGGER", "SF-INIT",
                 "net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(s -> {"
                         + " if (s.getTicks() % EVERY == 0) LOGGER.info(\"[SF-INIT] tick \" + s.getTicks()); });"

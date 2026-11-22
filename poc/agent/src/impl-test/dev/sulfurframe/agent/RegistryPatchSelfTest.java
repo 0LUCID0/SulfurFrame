@@ -1,0 +1,173 @@
+package dev.sulfurframe.agent;
+
+import dev.sulfurframe.agent.impl.RegistryPatch;
+
+import javax.tools.*;
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
+import java.lang.invoke.MethodHandles;
+import java.lang.reflect.Field;
+import java.net.URI;
+import java.util.*;
+import java.util.function.Function;
+
+/**
+ * The bytecode RegistryPatch writes, loaded into this JVM (its verifier checks the frames) and run: the load-time
+ * Registry and key binding hooks, the renamed registration copy with its bridged Registry.register calls, and the enum
+ * initializer copy defined as a hidden nestmate (the new constant made through the private constructor). Plus the
+ * rules that say which listener or key binding belongs to a mod. Stand-in classes carry the names the patches look for.
+ *   ./gradlew :agent:runRegistryPatchSelfTest
+ */
+public class RegistryPatchSelfTest {
+    static final List<String> failures = new ArrayList<>();
+    static final List<String> hookCalls = new ArrayList<>();
+
+    static final String REGISTRY = "package net.minecraft.registry; public interface Registry<T> {"
+            + " static <T> T register(Registry<? super T> r, String id, T v) { return v; } }";
+
+    public static void main(String[] a) throws Throwable {
+        // ---- Registry hook, patched as the class loads
+        var reg = compile(REGISTRY);
+        byte[] hooked = RegistryPatch.loadTimeHooks(s -> { }).transform(null, "net/minecraft/registry/Registry", null, null, reg.get("net/minecraft/registry/Registry"));
+        expect("Registry.register patched as it loads", hooked != null, true);
+        var l1 = new Loader(Map.of("net.minecraft.registry.Registry", hooked));
+        var register = l1.loadClass("net.minecraft.registry.Registry").getMethod("register",
+                l1.loadClass("net.minecraft.registry.Registry"), String.class, Object.class);
+        expect("no hook: registers as before", register.invoke(null, null, "x", "v"), "v");
+        withHook(() -> {
+            expect("hook: an id that is there -> the existing entry", register.invoke(null, null, "old", "new object"), "existing");
+            expect("hook: a new id -> registered as before", register.invoke(null, null, "new", "fresh"), "fresh");
+            return null;
+        });
+
+        // ---- key binding hook: Fabric refuses once the options exist; while a run lasts the hook takes the binding
+        var kb = compile("package net.fabricmc.fabric.impl.client.keybinding; public class KeyBindingRegistryImpl {"
+                + " public static Object registerKeyBinding(Object b) { throw new IllegalStateException(\"GameOptions has already been initialised\"); } }");
+        String kbName = "net/fabricmc/fabric/impl/client/keybinding/KeyBindingRegistryImpl";
+        var l2 = new Loader(Map.of(kbName.replace('/', '.'), RegistryPatch.loadTimeHooks(s -> { }).transform(null, kbName, null, null, kb.get(kbName))));
+        var registerKey = l2.loadClass(kbName.replace('/', '.')).getMethod("registerKeyBinding", Object.class);
+        String refused;
+        try { registerKey.invoke(null, "k"); refused = "taken"; } catch (java.lang.reflect.InvocationTargetException e) { refused = e.getCause().getMessage(); }
+        expect("no hook: Fabric's refusal stays", refused, "GameOptions has already been initialised");
+        System.getProperties().put(RegistryPatch.KEY_HOOK, (Function<Object, Object>) b -> b + " taken");
+        try { expect("hook: binding taken", registerKey.invoke(null, "k"), "k taken"); }
+        finally { System.getProperties().remove(RegistryPatch.KEY_HOOK); }
+
+        // ---- renamed registration copy: its Registry.register calls go through a bridge that asks the hook
+        var holder = compile("package t; import net.minecraft.registry.Registry; public class Holder {"
+                + " public static final Object A = Registry.register(null, \"old\", new Object());"
+                + " public static final Object B = Registry.register(null, \"new\", \"fresh\");"
+                + " static Object helper(String id) { return Registry.register(null, id, \"h\"); } }", REGISTRY);
+        byte[] shadow = RegistryPatch.shadow(holder.get("t/Holder"), "t/Holder$SfRegister1");
+        var l3 = new Loader(Map.of("net.minecraft.registry.Registry", reg.get("net/minecraft/registry/Registry"), "t.Holder$SfRegister1", shadow));
+        withHook(() -> {
+            Class<?> c = Class.forName("t.Holder$SfRegister1", true, l3);
+            expect("copy: an id that is there -> the existing entry", c.getField("A").get(null), "existing");
+            expect("copy: a new id -> registered", c.getField("B").get(null), "fresh");
+            expect("copy: both calls asked the hook", new ArrayList<>(hookCalls), List.of("register old", "register new"));
+            return null;
+        });
+
+        // ---- enum: the changed initializer in a hidden nestmate copy makes the new constant with the private constructor
+        var oldKind = compile("package t; public enum Kind { A, B }");
+        var newKind = compile("package t; public enum Kind { A, B, C }");
+        var l4 = new Loader(Map.of("t.Kind", oldKind.get("t/Kind")));
+        Class<?> kind = l4.loadClass("t.Kind");
+        Class<?> copy = hiddenNestmate(kind, RegistryPatch.clinitCopy(newKind.get("t/Kind"), "t/Kind$SfInit1"));
+        Object c = staticOf(copy, "C");   // the copy is not public: read like ClinitReplay does
+        expect("enum copy: new constant made, of the real enum class", c != null && c.getClass() == kind, true);
+        expect("enum copy: its name and declared ordinal", ((Enum<?>) c).name() + " " + ((Enum<?>) c).ordinal(), "C 2");
+        Object[] values = (Object[]) staticOf(copy, "$VALUES");
+        expect("enum copy: its own $VALUES (via its copied $values)", values.length, 3);
+
+        // ---- whose listener / key binding is it
+        Runnable lambda = () -> { };
+        expect("a lambda belongs to the class it was written in", EntryRerun.owned(lambda, List.of(RegistryPatchSelfTest.class.getName())), true);
+        expect("a lambda does not belong to a class with a shorter name", EntryRerun.owned(lambda, List.of("dev.sulfurframe.agent.Registry")), false);
+        expect("anonymous class belongs to its outer class", EntryRerun.owned(new Object() { }, List.of(RegistryPatchSelfTest.class.getName())), true);
+        expect("key binding id with the mod id", EntryRerun.mine("key.showcase.sf_test", "showcase"), true);
+        expect("category with the mod id", EntryRerun.mine("category.showcase", "showcase"), true);
+        expect("another mod whose id starts the same", EntryRerun.mine("key.showcasey.x", "showcase"), false);
+
+        if (failures.isEmpty()) System.out.println("registry patch checks passed");
+        else { failures.forEach(f -> System.out.println("FAIL " + f)); System.exit(1); }
+    }
+
+    interface Body { Object run() throws Throwable; }
+
+    /** With the registration hook in place: "old" is there (answered "existing"), anything else is new. */
+    private static void withHook(Body body) throws Throwable {
+        hookCalls.clear();
+        System.getProperties().put(RegistryPatch.HOOK_KEY, (Function<Object[], Object>) call -> {
+            hookCalls.add(call[0] + " " + call[2]);
+            return "old".equals(call[2]) ? "existing" : null;
+        });
+        try { body.run(); } finally { System.getProperties().remove(RegistryPatch.HOOK_KEY); }
+    }
+
+    /** As the agent does it: the JDK's trusted lookup narrowed to the class (privateLookupIn cannot define hidden classes). */
+    private static Class<?> hiddenNestmate(Class<?> host, byte[] bytes) throws Throwable {
+        Class<?> uc = Class.forName("sun.misc.Unsafe");
+        Field uf = uc.getDeclaredField("theUnsafe");
+        uf.setAccessible(true);
+        Object u = uf.get(null);
+        Field impl = MethodHandles.Lookup.class.getDeclaredField("IMPL_LOOKUP");
+        Object base = uc.getMethod("staticFieldBase", Field.class).invoke(u, impl);
+        long off = (Long) uc.getMethod("staticFieldOffset", Field.class).invoke(u, impl);
+        MethodHandles.Lookup trusted = (MethodHandles.Lookup) uc.getMethod("getObject", Object.class, long.class).invoke(u, base, off);
+        return trusted.in(host).defineHiddenClass(bytes, true, MethodHandles.Lookup.ClassOption.NESTMATE).lookupClass();
+    }
+
+    private static Object staticOf(Class<?> c, String name) throws Exception {
+        Field f = c.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(null);
+    }
+
+    private static void expect(String what, Object got, Object want) {
+        if (Objects.equals(got, want)) System.out.println("PASS " + what + " -> " + got);
+        else failures.add(what + ": got " + got + ", want " + want);
+    }
+
+    /** Defines the given classes itself (its own copies), everything else from the parent. */
+    static final class Loader extends ClassLoader {
+        final Map<String, byte[]> classes;
+        Loader(Map<String, byte[]> classes) { super(RegistryPatchSelfTest.class.getClassLoader()); this.classes = classes; }
+        @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            synchronized (getClassLoadingLock(name)) {
+                Class<?> c = findLoadedClass(name);
+                if (c == null && classes.containsKey(name)) { byte[] b = classes.get(name); c = defineClass(name, b, 0, b.length); }
+                if (c == null) c = super.loadClass(name, false);
+                return c;
+            }
+        }
+    }
+
+    /** Compile the sources in memory; internal name -> class bytes. */
+    static Map<String, byte[]> compile(String... sources) {
+        var javac = ToolProvider.getSystemJavaCompiler();
+        var out = new HashMap<String, ByteArrayOutputStream>();
+        var units = new ArrayList<JavaFileObject>();
+        for (String src : sources) {
+            var m = java.util.regex.Pattern.compile("package\\s+([\\w.]+);.*?(?:class|interface|enum)\\s+(\\w+)", java.util.regex.Pattern.DOTALL).matcher(src);
+            if (!m.find()) throw new IllegalArgumentException(src);
+            String name = m.group(1) + "." + m.group(2);
+            units.add(new SimpleJavaFileObject(URI.create("string:///" + name.replace('.', '/') + ".java"), JavaFileObject.Kind.SOURCE) {
+                @Override public CharSequence getCharContent(boolean ignore) { return src; }
+            });
+        }
+        var fm = new ForwardingJavaFileManager<>(javac.getStandardFileManager(null, null, null)) {
+            @Override public JavaFileObject getJavaFileForOutput(Location l, String className, JavaFileObject.Kind k, FileObject sibling) {
+                return new SimpleJavaFileObject(URI.create("mem:///" + className.replace('.', '/') + ".class"), k) {
+                    @Override public OutputStream openOutputStream() { var b = new ByteArrayOutputStream(); out.put(className.replace('.', '/'), b); return b; }
+                };
+            }
+        };
+        var diag = new DiagnosticCollector<JavaFileObject>();
+        if (!javac.getTask(null, fm, diag, List.of("--release", "21", "-proc:none"), null, units).call())
+            throw new IllegalStateException("compile failed: " + diag.getDiagnostics());
+        var bytes = new HashMap<String, byte[]>();
+        out.forEach((k, v) -> bytes.put(k, v.toByteArray()));
+        return bytes;
+    }
+}

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Linux auto test on a real X window manager: Xvfb (:99, 1920x1080) + openbox, instead of WSLg.
 #   xvfb-test.sh f11                      vanilla 1.21.1 attached by pid: embed, float, hide, F11 in/out, editor tab
-#   xvfb-test.sh runclient [hotswap-file]  the plugin's own Run client in ~/sfproj; with a probe file also hotswap + restart (world SFWorld)
+#   xvfb-test.sh runclient [hotswap-file]  the plugin's own Run client in $SF_PROJ (default ~/sfproj); with a probe file also hotswap + restart (world SFWorld)
 # Needs: ~/idea (IntelliJ Linux), ~/sfs (sandbox config: idea.properties, idea64.vmoptions with -Dawt.toolkit.name=XToolkit),
 #   ~/sf (poc/embed sources incl. McFetch.java), ~/sfproj (a Fabric project), and sudo apt install xvfb openbox xdotool x11-apps imagemagick
 set -uo pipefail
 MODE="${1:-f11}"
+PROJ="${SF_PROJ:-$HOME/sfproj}"   # the release check passes a fresh copy of demo/showcase-mod
 REPO="$(cd "$(dirname "$0")/.." && pwd)"   # this repository (run from WSL: /mnt/c/...)
 J25=/usr/lib/jvm/java-25-openjdk-amd64/bin/java
 export DISPLAY=:99
@@ -38,7 +39,7 @@ else
 ' "$2" >> ~/sfs/idea64.vmoptions
 fi
 rm -f /tmp/sulfurframe-autotest.txt /tmp/sulfurframe-autotest-*.png
-IDEA_PROPERTIES=~/sfs/idea.properties IDEA_VM_OPTIONS=~/sfs/idea64.vmoptions setsid nohup ~/idea/bin/idea ~/sfproj >/tmp/sf-idea.log 2>&1 < /dev/null &
+IDEA_PROPERTIES=~/sfs/idea.properties IDEA_VM_OPTIONS=~/sfs/idea64.vmoptions setsid nohup ~/idea/bin/idea "$PROJ" >/tmp/sf-idea.log 2>&1 < /dev/null &
 sleep 15
 for i in $(seq 1 400); do [ -f /tmp/sulfurframe-autotest.txt ] && break; pgrep -f "$HOME/idea/bin/idea" >/dev/null || break; sleep 3; done
 sleep 2

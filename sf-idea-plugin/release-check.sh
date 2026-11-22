@@ -80,19 +80,22 @@ run_sandbox A-new-user -Dsulfurframe.noJbr=true
 extraB=(); [ $WORLDS = 1 ] && extraB+=(-Dsulfurframe.autotest.worlds=true); [ $DOWNLOAD = 1 ] && extraB+=(-Dsulfurframe.autotest.jbrdownload=true)
 run_sandbox B-regular "${extraB[@]}"
 
-# ---- Linux (WSL, Xvfb + openbox): the plugin's own Run client with hotswap and restart on the WSL test project
+# ---- Linux (WSL, Xvfb + openbox): the plugin's own Run client with every scenario, on a fresh copy of the demo mod
 if [ $LINUX = 1 ]; then
-  if MSYS_NO_PATHCONV=1 wsl bash -lc 'test -d ~/idea && test -d ~/sfproj' 2>/dev/null; then
+  if MSYS_NO_PATHCONV=1 wsl bash -lc 'test -d ~/idea' 2>/dev/null; then
     WREPO=$(MSYS_NO_PATHCONV=1 wsl wslpath -a "$(cygpath -w "$REPO" | sed 's/\\/\//g')" | tr -d '\r')
-    MSYS_NO_PATHCONV=1 wsl bash "$WREPO/sf-idea-plugin/xvfb-test.sh" runclient /home/$(MSYS_NO_PATHCONV=1 wsl whoami | tr -d '\r')/sfproj/src/main/java/kr/kro/lucid/SfHotswapProbe.java > "$OUT/C-linux.txt" 2>&1
+    WCOPY=/home/$(MSYS_NO_PATHCONV=1 wsl whoami | tr -d '\r')/sf-showcase-test
+    # Gradle daemons go first: one started before a JDK update cannot start the game ("Failed to exec spawn helper").
+    MSYS_NO_PATHCONV=1 wsl bash -lc "pkill -f GradleDaemon; bash $WREPO/demo/tools/test-copy.sh $WCOPY && chmod +x $WCOPY/gradlew" >/dev/null 2>&1
+    MSYS_NO_PATHCONV=1 wsl env SF_PROJ="$WCOPY" bash "$WREPO/sf-idea-plugin/xvfb-test.sh" runclient "$WCOPY/src/main/java/dev/sulfurframe/showcase/SfHotswapProbe.java" > "$OUT/C-linux.txt" 2>&1
     # the game may have been restarted without Gradle: match the test project's path too, not only Loom's dev launch
-    MSYS_NO_PATHCONV=1 wsl bash -lc 'pkill -f "$HOME/idea/bin/idea"; pkill -f "fabric.dli.config|$HOME/sfproj"; sleep 2; pkill -9 -f "fabric.dli.config|$HOME/sfproj"' >/dev/null 2>&1
+    MSYS_NO_PATHCONV=1 wsl bash -lc 'pkill -f "$HOME/idea/bin/idea"; pkill -f "fabric.dli.config|$HOME/sf-showcase-test"; sleep 2; pkill -9 -f "fabric.dli.config|$HOME/sf-showcase-test"' >/dev/null 2>&1
     pass=$(grep -c '^PASS' "$OUT/C-linux.txt"); fail=$(grep -c '^FAIL' "$OUT/C-linux.txt")
     say "C-linux: $pass passed, $fail failed"
     grep '^FAIL' "$OUT/C-linux.txt" | sed 's/^/  /' | tee -a "$SUM"
     grep -q '^failures: 0' "$OUT/C-linux.txt" || FAILED=1
   else
-    say "C-linux: skipped (no ~/idea or ~/sfproj in WSL, see xvfb-test.sh)"
+    say "C-linux: skipped (no ~/idea in WSL, see xvfb-test.sh)"
   fi
 fi
 
