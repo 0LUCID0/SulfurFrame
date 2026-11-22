@@ -332,7 +332,10 @@ final class AutoTest {
     private static void entryRerunFlow(SulfurPanel p, Path main, Path gameLog) throws Exception {
         entryRerun(p, main, gameLog, "onInitialize", "LOGGER", "SF-INIT",
                 "net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(s -> {"
-                        + " if (s.getTicks() % EVERY == 0) LOGGER.info(\"[SF-INIT] tick \" + s.getTicks()); });");
+                        + " if (s.getTicks() % EVERY == 0) LOGGER.info(\"[SF-INIT] tick \" + s.getTicks()); });"
+                        // a command: the server builds its tree at start and on /reload, which the re-run asks for
+                        + " net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((d, a, e) -> d.register("
+                        + "net.minecraft.server.command.CommandManager.literal(\"sftest\").executes(c -> { LOGGER.info(\"[SF-CMD] every EVERY\"); return 1; })));");
         Path client = main.getParent().resolve("client/" + main.getFileName().toString().replace(".java", "Client.java"));
         String logger = probeClassOf(main) + ".LOGGER";
         if (Files.exists(client))
@@ -340,7 +343,10 @@ final class AutoTest {
                     // its own counter (client world time is corrected by the server and can repeat): two listeners -> each number twice
                     "java.util.concurrent.atomic.AtomicInteger sfTicks = new java.util.concurrent.atomic.AtomicInteger();"
                             + " net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(c -> {"
-                            + " int n = sfTicks.incrementAndGet(); if (n % EVERY == 0) " + logger + ".info(\"[SF-CLIENT] tick \" + n); });");
+                            + " int n = sfTicks.incrementAndGet(); if (n % EVERY == 0) " + logger + ".info(\"[SF-CLIENT] tick \" + n); });"
+                            // the same key binding id each run: Fabric refuses a second one unless the old one is taken out
+                            + " net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper.registerKeyBinding(new net.minecraft.client.option.KeyBinding("
+                            + "\"key.showcase.sf_test\", org.lwjgl.glfw.GLFW.GLFW_KEY_K, \"category.showcase\"));");
     }
 
     private static void entryRerun(SulfurPanel p, Path file, Path gameLog, String method, String logger, String tag, String listener) throws Exception {
@@ -363,6 +369,11 @@ final class AutoTest {
                 check(method + " changed (listener every " + every + " ticks) -> ran again in the game, listener once, no restart",
                         ran.contains(cls + "." + method + " again") && p.hotswapper.lastStartupChanges.isEmpty() && edited && once,
                         ran + ", ticks " + ticks);
+                if (listener.contains("\"sftest\"")) {
+                    String done = command(p, "sftest");
+                    check("command added in onInitialize (every " + every + ") -> the new one runs", "done".equals(done)
+                            && waitForLog(gameLog, "[SF-CMD] every " + every, 10) && ran.contains("commands changed"), done + ", " + ran);
+                }
             }
         } finally {
             Files.writeString(file, src);

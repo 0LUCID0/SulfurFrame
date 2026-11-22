@@ -26,17 +26,132 @@ final class EntryRerun {
      */
     static Object[] prepare(Class<?> real, String[] methods, List<String> owners) throws Throwable {
         String modId = (String) find(real, methods[0])[1];
-        int removed = purge(real.getClassLoader(), owners, modId);
-        return new Object[]{real, methods, removed};
+        ClassLoader l = real.getClassLoader();
+        int commandsBefore = commandListeners(l, owners);
+        List<Object> oldKeys = takeKeyBindings(l, modId);
+        int removed = purge(l, owners, modId) + oldKeys.size();
+        return new Object[]{real, methods, removed, owners, modId, commandsBefore, oldKeys};
     }
 
     /** Run the entry point methods again (the class is redefined by now). */
+    @SuppressWarnings("unchecked")
     static void run(Object[] prepared, List<String> out) throws Throwable {
         Class<?> real = (Class<?>) prepared[0];
-        for (String method : (String[]) prepared[1]) {
-            real.getMethod(method).invoke(find(real, method)[0]);
-            out.add("ran " + real.getName() + "." + method + " again (" + prepared[2] + " earlier registration(s) replaced)");
+        ClassLoader l = real.getClassLoader();
+        // Fabric refuses key bindings once the options exist: while the run lasts, they go straight into its list
+        final List<Object> modded = moddedKeyBindings(l);
+        if (modded != null)
+            System.getProperties().put("dev.sulfurframe.keyBinding", new java.util.function.Function<Object, Object>() {
+                public Object apply(Object binding) { if (!modded.contains(binding)) modded.add(binding); return binding; }
+            });
+        try {
+            for (String method : (String[]) prepared[1]) {
+                real.getMethod(method).invoke(find(real, method)[0]);
+                out.add("ran " + real.getName() + "." + method + " again (" + prepared[2] + " earlier registration(s) replaced)");
+            }
+        } finally {
+            System.getProperties().remove("dev.sulfurframe.keyBinding");
         }
+        // commands: the server builds its command tree when it starts and on /reload; Fabric's callback runs then
+        if ((Integer) prepared[5] > 0 || commandListeners(l, (List<String>) prepared[3]) > 0) out.add("commands changed");
+        try { keyBindingsBack(l, (String) prepared[4], (List<Object>) prepared[6]); }
+        catch (Throwable t) { out.add("warning key bindings: " + t); }
+    }
+
+    /** Listeners of Fabric's command registration callback (v2, and v1 if present) that came from the owners. */
+    private static int commandListeners(ClassLoader l, List<String> owners) {
+        int n = 0;
+        for (String c : new String[]{"net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback", "net.fabricmc.fabric.api.command.v1.CommandRegistrationCallback"}) {
+            try {
+                Object event = Class.forName(c, false, l).getField("EVENT").get(null);
+                Class<?> phaseData = Class.forName("net.fabricmc.fabric.impl.base.event.EventPhaseData", false, l);
+                for (Object phase : (List<?>) field(event.getClass(), "sortedPhases").get(event))
+                    for (Object o : (Object[]) field(phaseData, "listeners").get(phase)) if (owned(o, owners)) n++;
+            } catch (Throwable ignored) { }
+        }
+        return n;
+    }
+
+    // client key bindings: Yarn / Mojang names
+    private static final String[][] KEYS = {
+            {"net.minecraft.client.option.KeyBinding", "translationKey", "category", "boundKey", "net.minecraft.client.MinecraftClient", "options", "allKeys", "updateKeysByCode"},
+            {"net.minecraft.client.KeyMapping", "name", "category", "key", "net.minecraft.client.Minecraft", "options", "keyMappings", "resetMapping"},
+    };
+
+    /**
+     * Fabric refuses a second key binding with an id it has ("two key bindings with equal ID"): the mod's own (its id
+     * in the binding's id or category) come out of Fabric's list before the run. Returned, to hand their keys on.
+     */
+    private static List<Object> takeKeyBindings(ClassLoader l, String modId) {
+        List<Object> out = new ArrayList<Object>();
+        try {
+            List<?> modded = (List<?>) field(Class.forName("net.fabricmc.fabric.impl.client.keybinding.KeyBindingRegistryImpl", false, l), "MODDED_KEY_BINDINGS").get(null);
+            for (String[] k : KEYS) {
+                Class<?> kb;
+                try { kb = Class.forName(k[0], false, l); } catch (ClassNotFoundException e) { continue; }
+                Field id = field(kb, k[1]), category = field(kb, k[2]);
+                for (Iterator<?> it = modded.iterator(); it.hasNext(); ) {
+                    Object b = it.next();
+                    if (mine(String.valueOf(id.get(b)), modId) || mine(String.valueOf(category.get(b)), modId)) { out.add(b); it.remove(); }
+                }
+            }
+        } catch (Throwable ignored) { }
+        return out;
+    }
+
+    /**
+     * After the run: a new binding with an old one's id gets the key the player chose and its place in the controls
+     * list (options keeps the array it built at startup); new ones are added there; then the key code table again.
+     */
+    private static void keyBindingsBack(ClassLoader l, String modId, List<Object> old) throws Throwable {
+        List<?> modded = (List<?>) field(Class.forName("net.fabricmc.fabric.impl.client.keybinding.KeyBindingRegistryImpl", false, l), "MODDED_KEY_BINDINGS").get(null);
+        for (String[] k : KEYS) {
+            Class<?> kb;
+            try { kb = Class.forName(k[0], false, l); } catch (ClassNotFoundException e) { continue; }
+            Field id = field(kb, k[1]), category = field(kb, k[2]), bound = field(kb, k[3]);
+            List<Object> fresh = new ArrayList<Object>();
+            for (Object b : modded) if (mine(String.valueOf(id.get(b)), modId) || mine(String.valueOf(category.get(b)), modId)) fresh.add(b);
+            if (fresh.isEmpty() && old.isEmpty()) continue;
+            Class<?> mcClass = Class.forName(k[4], false, l);
+            Object options = field(mcClass, k[5]).get(mcClass.getMethod("getInstance").invoke(null));
+            Field allField = field(options.getClass(), k[6]);
+            Object[] all = (Object[]) allField.get(options);
+            List<Object> next = new ArrayList<Object>(Arrays.asList(all));
+            for (Object b : fresh) {
+                Object before = null;
+                for (Object o : old) if (id.get(o).equals(id.get(b))) before = o;
+                if (before != null) bound.set(b, bound.get(before));   // the key the player chose
+                int at = before == null ? -1 : next.indexOf(before);
+                if (at >= 0) next.set(at, b); else if (!next.contains(b)) next.add(b);
+            }
+            if (!next.equals(Arrays.asList(all))) {
+                Object[] a = (Object[]) java.lang.reflect.Array.newInstance(all.getClass().getComponentType(), next.size());
+                Object unsafeObj = unsafe();
+                Class<?> uc = unsafeObj.getClass();
+                long off = (Long) uc.getMethod("objectFieldOffset", Field.class).invoke(unsafeObj, allField);
+                uc.getMethod("putObjectVolatile", Object.class, long.class, Object.class).invoke(unsafeObj, options, off, next.toArray(a));   // final field
+            }
+            Method update = kb.getDeclaredMethod(k[7]);
+            update.setAccessible(true);
+            update.invoke(null);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Object> moddedKeyBindings(ClassLoader l) {
+        try {
+            return (List<Object>) field(Class.forName("net.fabricmc.fabric.impl.client.keybinding.KeyBindingRegistryImpl", false, l), "MODDED_KEY_BINDINGS").get(null);
+        } catch (Throwable t) { return null; }
+    }
+
+    private static boolean mine(String key, String modId) {
+        return modId != null && (key.contains("." + modId + ".") || key.endsWith("." + modId) || key.startsWith(modId + "."));
+    }
+
+    private static Object unsafe() throws Exception {
+        Field u = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe");
+        u.setAccessible(true);
+        return u.get(null);
     }
 
     /** {entry point object, mod id} of this class for this entry point method. */

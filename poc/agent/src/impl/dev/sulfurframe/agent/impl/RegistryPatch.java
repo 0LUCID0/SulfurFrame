@@ -68,6 +68,7 @@ public final class RegistryPatch {
     public static ClassFileTransformer loadTimeHooks(final java.util.function.Consumer<String> log) {
         return new ClassFileTransformer() {
             @Override public byte[] transform(ClassLoader loader, String name, Class<?> redefined, ProtectionDomain pd, byte[] bytes) {
+                if (redefined == null && KEY_BINDINGS.equals(name)) return keyBindingHook(bytes, log);
                 if (redefined != null || name == null || !(name.equals("net/minecraft/registry/Registry") || name.equals("net/minecraft/core/Registry"))) return null;
                 try {
                     ClassReader r = new ClassReader(bytes);
@@ -170,6 +171,55 @@ public final class RegistryPatch {
         }, 0);
         w.visitEnd();
         return w.toByteArray();
+    }
+
+    static final String KEY_BINDINGS = "net/fabricmc/fabric/impl/client/keybinding/KeyBindingRegistryImpl";
+    public static final String KEY_HOOK = "dev.sulfurframe.keyBinding";
+
+    /**
+     * Fabric's KeyBindingRegistryImpl.registerKeyBinding refuses a binding once the game options exist. While a client
+     * entry point runs again, it first asks a hook (a JDK Function in a system property) that takes the binding.
+     */
+    private static byte[] keyBindingHook(byte[] bytes, java.util.function.Consumer<String> log) {
+        try {
+            ClassReader r = new ClassReader(bytes);
+            ClassWriter w = new ClassWriter(r, ClassWriter.COMPUTE_MAXS);
+            final int[] patched = {0};
+            r.accept(new ClassVisitor(Opcodes.ASM9, w) {
+                @Override public MethodVisitor visitMethod(int access, String m, final String desc, String sig, String[] ex) {
+                    MethodVisitor mv = super.visitMethod(access, m, desc, sig, ex);
+                    Type[] a = Type.getArgumentTypes(desc);
+                    if (!m.equals("registerKeyBinding") || (access & Opcodes.ACC_STATIC) == 0 || a.length != 1 || a[0].getSort() != Type.OBJECT) return mv;
+                    patched[0]++;
+                    final String argType = a[0].getInternalName(), retType = Type.getReturnType(desc).getInternalName();
+                    return new MethodVisitor(Opcodes.ASM9, mv) {
+                        @Override public void visitCode() {
+                            super.visitCode();
+                            Label skip = new Label();
+                            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperties", "()Ljava/util/Properties;", false);
+                            mv.visitLdcInsn(KEY_HOOK);
+                            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/Properties", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+                            mv.visitInsn(Opcodes.DUP);
+                            mv.visitJumpInsn(Opcodes.IFNULL, skip);
+                            mv.visitTypeInsn(Opcodes.CHECKCAST, "java/util/function/Function");
+                            mv.visitVarInsn(Opcodes.ALOAD, 0);
+                            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/Function", "apply", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+                            mv.visitTypeInsn(Opcodes.CHECKCAST, retType);
+                            mv.visitInsn(Opcodes.ARETURN);
+                            mv.visitLabel(skip);
+                            mv.visitFrame(Opcodes.F_FULL, 1, new Object[]{argType}, 1, new Object[]{"java/lang/Object"});
+                            mv.visitInsn(Opcodes.POP);
+                        }
+                    };
+                }
+            }, 0);
+            if (patched[0] == 0) return null;
+            log.accept("runtime registration: Fabric's registerKeyBinding hooked as it loaded");
+            return w.toByteArray();
+        } catch (Throwable t) {
+            log.accept("runtime registration: could not hook registerKeyBinding: " + t);
+            return null;
+        }
     }
 
     /** Registry.register(registry, id-or-key, value) and Registry.registerReference(...): three objects in, one out. */
