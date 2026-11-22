@@ -15,12 +15,13 @@ constants + re-applying Mixins). The restarts that remain fall into two groups b
 | Cause | Whose part | Now |
 |---|---|---|
 | A frame that is already running keeps the old code until it returns | JVM (redefinition rules) | Cannot change. A change inside an endless loop applies when the loop ends |
-| Static initialization (`<clinit>`) runs once per class | Java (language rules) | Cannot change. A restart is suggested when it changes (`StartupCode`) |
+| Static initialization (`<clinit>`) runs once per class | Java (language rules) | Cannot change in general (a restart is suggested, `StartupCode`). Registration code and enum constants run again (`RuntimeRegister`, `ClinitReplay`) |
 | Compile-time constants are copied into the classes that read them | javac | Already worked around: the users' sources are recompiled and sent along |
-| Registering new blocks, items and the like | **Minecraft** (freezes its registries after startup) | Restart → goal 2 |
+| Registering new blocks, items and the like | **Minecraft** (freezes its registries after startup) | Solved (Fabric 1.21.1): the registries are unfrozen for a moment and the registration code runs again → goal 2 |
 | Mod metadata | **Our implementation** | Solved: filled in with the last build's values, restart without Gradle (`MetadataTemplate`) |
 | Access wideners, class tweakers | **Our implementation** | Solved: Fabric Loader applies them at start, only the classes for compiling are widened here, restart without Gradle (`AwOverlay`) |
 | Outputs of deleted sources and resources stay behind; Windows command line length | **Our implementation** (restart without Gradle) | Cleaned up on the next Gradle run; a long class path goes through `CLASSPATH` |
+| A JDK or Minecraft type added to or removed from the hierarchy, a superclass back to `Object` | **JBR** (adding one nulled unrelated fields and crashed; going back is refused) | A restart is suggested |
 
 ## Goal 1: metadata changes without Gradle too (done)
 
@@ -41,16 +42,19 @@ constants + re-applying Mixins). The restarts that remain fall into two groups b
 - Check: the self-test's "fabric.mod.json change → through Gradle" becomes "without Gradle, and the changed value shows
   in the game".
 
-## Goal 2: registering while the game runs (far, research first)
+## Goal 2: registering while the game runs (done on Fabric 1.21.1, 0.3.0)
 
-- Unfreeze the registries → register the new entries → reload models, tags and translations → sync client and server.
-- Scope: single-player dev clients only. Multiplayer and release builds are out of scope.
-- Safety net: a snapshot of the open world is taken automatically before starting (`WorldSnapshots`). On failure the
-  game restarts from that snapshot.
-- Registry internals differ between Minecraft versions, so like loader and version support, this goes together with
-  the multi-version work of the bigger mod developed alongside.
-- First step: register one block at runtime on Fabric 1.21.1 and list what breaks (item groups, block states, render
-  layers, network sync IDs).
+- **Done:** new blocks and items (every registry), a changed `onInitialize`/`onInitializeClient` (event and reload
+  listeners, payload types, renderers, screens, commands and key bindings, none hooked up twice), new enum constants,
+  hierarchy changes between the project's own types, and mixins added to a `*mixins.json` apply without a restart
+  (`RuntimeRegister`, `EntryRerun`, `ClinitReplay`, `MixinAdd`). What broke in the first experiment was the item model (the
+  item renderer lists items at startup) and the creative tabs (cached). How it works and its limits: "Startup code in the
+  running game too" in the plugin README.
+- Scope: single-player dev clients. Multiplayer and release builds are out of scope.
+- Other Minecraft versions and loaders (the Mojang mapping names are in the tables but untested) go together with the
+  multi-version work of the bigger mod developed alongside, like loader and version support.
+- The safety net of the original plan (a world snapshot taken automatically before a run, a restart from it on failure)
+  is not there yet; on failure a restart is offered.
 
 ## Other candidates
 

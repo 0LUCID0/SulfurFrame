@@ -81,6 +81,9 @@ repositories' raw diffs are not kept in the repository, only the tallies (`mix.j
   changes to the inheritance structure
 - Commits that only changed build files (version bumps and the like) are not part of the dev loop and were left out;
   build files changed together with code did not count as restarts.
+- This sorting and the numbers below are as of 0.2.x. Since 0.3.0, registration code, `onInitialize`, enum constants,
+  added mixins and hierarchy changes between the project's own types apply live too ("Startup code in the running game
+  too" below), but the effect range was not measured again.
 - The sorting is done by regular expressions. 12 samples were checked by hand, which fixed local variable declarations
   inside methods being counted as "structural changes".
 
@@ -563,9 +566,58 @@ PASS hotswap with an annotation processor (Lombok)        [javac in the IDE]
 PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (game log "[SF-KOTLIN] k2")
 ```
 
+### Startup code in the running game too (0.3.0)
+On Fabric 1.21.1, changes to code that runs at startup apply without a restart too, except where the JVM forbids it. This
+works when the game was started by SulfurFrame's Run client (the agent is there from the start); what needs the JetBrains
+Runtime (new fields) needs it here too.
+
+- **New blocks and items (every registry, `RuntimeRegister`):** when a block class's static initializer or static
+  `register`/`initialize` methods (calling `Registry.register`) change, the registries are unfrozen for a moment and the
+  code runs again in a renamed copy of the changed class. Ids that are already there get the existing entry; only new ids
+  are registered. Static fields the hotswap added take the copy's values. Then the registries are frozen again, new items
+  get their model id (the item renderer lists them once, at startup), the creative tabs rebuild and resources reload. The
+  integrated server is paused meanwhile. Block state ids and block items are Fabric's own work.
+- **`onInitialize` / `onInitializeClient` / `onInitializeServer` (`EntryRerun`):** run again on the entry point object
+  Fabric Loader made. First, what the class and the project classes it calls hooked up before is taken out: Fabric event
+  listeners, resource reload listeners, network payload types, builtin item and armor renderers, container screens, key
+  bindings. Where a listener came from is read from its class name (a lambda is `Owner$$Lambda`, an anonymous class
+  `Owner$1`). So hooking up again does not hook up twice, and a removed listener is gone. Registries keep what is there as
+  above (the `Registry` register methods are hooked as the class loads). Taking out happens before the classes are
+  redefined: an old listener calling a lambda the new class no longer had crashed the game on the next tick.
+  - Commands: if the command registration callback had or now has listeners from these classes, the run ends with
+    `/reload` (the server builds its command tree again).
+  - Key bindings: Fabric refuses a binding once the options exist, and a second one with the same id; while the run lasts
+    they go straight into Fabric's list through a hook. A new binding takes the key the player chose and the old one's
+    place in the controls list.
+- **New enum constants (`ClinitReplay`):** the changed static initializer runs in a hidden class in the enum's nest (it
+  may call the private constructor), and only the new constants are taken from it. Their ordinals follow the existing
+  ones, they go to the end of `$VALUES`, and the JDK's enum caches are cleared: `values()`, `valueOf` and `EnumSet` see
+  them. Switches over the enum (a table javac fills once) are computed again.
+- **Class hierarchy:** a superclass or interface change between the project's own types is applied by JBR as is.
+- **New mixins (`MixinAdd`):** if mixin classes were only added to a `*mixins.json`, an extra config with just them is
+  added to Mixin (`Mixins.addConfiguration`), and target classes that are already loaded are redefined from their
+  original bytes; Mixin's hotswap agent then applies every mixin again.
+
+Limits (a restart is offered):
+- Adding or removing a JDK or Minecraft type as superclass or interface: adding a JDK interface (`Supplier`) made JBR null
+  unrelated `Supplier` fields in Minecraft and the game crashed, so such a class is not sent. JBR refuses a superclass
+  going back to `Object`.
+- Removing an enum constant, removing a mixin or changing anything else in a `*mixins.json`, `accesstransformer.cfg`.
+- Whatever `onInitialize` does besides registering (starting a thread, writing a file) happens once more. Writing that
+  code so it runs once is the safe way.
+- Dynamic registries from world data (world generation, enchantments...) need the world opened again.
+- JVM rules: a method frame that is already running finishes with the old code, and a new instance field starts at its
+  default value in objects that already exist.
+
+Self-tests (sandbox run B): a new block (a field and two register lines) → `setblock` and `give` work, reverting
+registers nothing; a tick listener added, changed and removed in `onInitialize` (no tick logged twice) and a command (the
+new one answers); a tick listener and the same key binding id in `onInitializeClient`; `GAMMA` added to an enum →
+`values`, `valueOf`, the switch, `EnumSet`; a project interface and superclass, a JDK interface held for a restart; a new
+mixin applied to its target, which is already loaded.
+
 ### Quick restart (changes hotswap cannot do)
-Things the game only reads at startup, such as registering new blocks and items, mod metadata, access wideners and build
-changes, cannot be changed while it runs. The **Restart** button takes care of those.
+Mod metadata, build changes and the limits above cannot change while the game runs. The **Restart** button takes care of
+those.
 1. Asks the agent for the folder name of the open world (Mojang `storageSource.getLevelId()` / Yarn
    `session.getDirectoryName()`, found through the server fields) and requests a normal quit. Waits until the game has
    saved the world and exited (forced after 90 s).

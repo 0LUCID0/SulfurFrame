@@ -62,6 +62,8 @@ Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farme
 - 바로 반영: 메서드 본문, 멤버 추가·삭제(JBR), Mixin, `assets/`(리소스 리로드), `data/`(`/reload`)
 - 재시작: 등록 코드, static 초기화, `fabric.mod.json`/`mods.toml`, 액세스 와이드너, `*mixins.json`, 상속 구조 변경
 - 빌드 파일만 바뀐 커밋(버전 올림 등)은 개발 루프가 아니라서 뺐고, 코드와 함께 바뀐 빌드 파일은 재시작으로 치지 않았습니다.
+- 이 분류와 아래 숫자는 0.2.x 기준입니다. 0.3.0부터는 등록 코드, `onInitialize`, enum 상수, 추가된 Mixin, 프로젝트 타입끼리의
+  상속 변경도 바로 반영되지만(아래 "시작할 때만 도는 코드도 실행 중에"), 효과 범위는 다시 재지 않았습니다.
 - 분류는 정규식입니다. 표본 12건을 직접 보고, 메서드 안 지역 변수 선언까지 "구조 변경"으로 잡던 것을 고쳤습니다.
 
 | 집계 | 본문 | 구조 | Mixin | assets | data | 재시작 |
@@ -423,8 +425,49 @@ PASS hotswap with an annotation processor (Lombok)        [javac in the IDE]
 PASS hotswap of a Kotlin file, compiled by the warm Kotlin server   (게임 로그 "[SF-KOTLIN] k2")
 ```
 
+### 시작할 때만 도는 코드도 실행 중에 (0.3.0)
+Fabric 1.21.1에서, JVM이 막는 경우만 빼고 시작 코드의 변경도 재시작 없이 들어갑니다. 게임을 SulfurFrame의 Run client로
+띄웠을 때(에이전트가 처음부터 붙어 있을 때) 동작하고, JBR이 필요한 것(새 필드)은 JBR에서만 됩니다.
+
+- **새 블록·아이템(레지스트리 전부, `RuntimeRegister`):** 블록 클래스의 static 초기화나 static `register`/`initialize`
+  메서드(`Registry.register`를 부르는)가 바뀌면, 레지스트리를 잠시 풀고 바뀐 클래스의 이름만 바꾼 사본으로 그 코드를 다시
+  돌립니다. 이미 있는 id는 기존 것을 돌려주고 새 id만 등록합니다. hotswap이 더한 static 필드는 사본의 값을 받습니다. 그다음
+  레지스트리를 다시 얼리고, 새 아이템의 모델 id(아이템 렌더러는 시작할 때 한 번 목록을 만듦)와 크리에이티브 탭을 고치고,
+  리소스를 다시 읽습니다. 통합 서버는 그동안 멈춰 둡니다. 블록 상태 id와 BlockItem 연결은 Fabric이 알아서 합니다.
+- **`onInitialize` / `onInitializeClient` / `onInitializeServer` (`EntryRerun`):** Fabric Loader가 만든 그 엔트리포인트
+  객체에서 다시 실행합니다. 먼저 그 클래스와 그 클래스가 부르는 프로젝트 클래스가 전에 건 것을 뺍니다: Fabric 이벤트 리스너,
+  리소스 리로드 리스너, 네트워크 payload 타입, 빌트인 아이템·방어구 렌더러, 컨테이너 화면, 키 바인딩. 리스너가 어느
+  클래스에서 왔는지는 클래스 이름으로 봅니다(람다는 `Owner$$Lambda`, 익명 클래스는 `Owner$1`). 그래서 다시 걸어도 두 번 걸리지
+  않고, 지운 리스너는 사라집니다. 레지스트리는 위와 같이 이미 있는 것은 유지합니다(`Registry`의 등록 메서드를 클래스가 로드될
+  때 훅으로 바꿔 둠). 빼는 일은 클래스를 다시 정의하기 전에 합니다: 새 클래스에 없는 람다를 부르는 옛 리스너가 다음 틱에
+  게임을 죽였습니다.
+  - 명령어: 명령어 등록 콜백에 리스너가 있었거나 생기면 끝에 `/reload`를 합니다(서버가 명령어 목록을 다시 만듦).
+  - 키 바인딩: Fabric은 옵션이 생긴 뒤의 등록과 같은 id를 거부하므로, 다시 실행하는 동안은 훅으로 Fabric 목록에 바로
+    넣습니다. 새 바인딩은 플레이어가 고른 키와 컨트롤 목록의 자리를 물려받습니다.
+- **enum 상수 추가 (`ClinitReplay`):** 바뀐 static 초기화를 같은 nest의 히든 클래스에서 돌려(private 생성자를 부를 수 있음)
+  새 상수만 가져옵니다. ordinal은 기존 상수 뒤로 이어지고 `$VALUES` 끝에 붙으며, JDK의 enum 캐시를 비웁니다. `values()`,
+  `valueOf`, `EnumSet`이 새 상수를 봅니다. enum에 대한 switch(javac가 한 번 채우는 표)도 다시 계산합니다.
+- **상속 구조:** 프로젝트 자기 타입끼리 부모 클래스나 인터페이스를 바꾸는 것은 JBR이 그대로 반영합니다.
+- **새 Mixin (`MixinAdd`):** `*mixins.json`에 Mixin 클래스를 더하기만 했으면, 그 Mixin만 담은 설정을 따로 만들어 Mixin에
+  더하고(`Mixins.addConfiguration`), 이미 로드된 대상 클래스는 원래 바이트로 다시 정의합니다. Mixin의 hotswap 에이전트가 그때
+  모든 Mixin을 다시 적용합니다.
+
+한계(재시작을 권함):
+- JDK나 Minecraft 타입을 부모·인터페이스로 더하거나 빼기: JDK 인터페이스(`Supplier`)를 더하자 JBR이 Minecraft의 무관한
+  `Supplier` 필드를 null로 만들고 게임이 죽었습니다. 그래서 그 클래스는 보내지 않습니다. 부모를 `Object`로 되돌리는 것은 JBR이
+  거부합니다.
+- enum 상수 삭제, Mixin 삭제나 `*mixins.json`의 다른 설정 변경, `accesstransformer.cfg`.
+- `onInitialize` 안에서 등록 말고 다른 일(스레드 시작, 파일 쓰기)은 한 번 더 일어납니다. 한 번만 하도록 써 두는 게 안전합니다.
+- 월드 데이터의 동적 레지스트리(월드 생성, 인챈트 등)는 월드를 다시 열어야 합니다.
+- JVM 규칙: 이미 돌고 있는 메서드 프레임은 옛 코드로 끝나고, 이미 있는 객체의 새 인스턴스 필드는 기본값에서 시작합니다.
+
+자가 테스트(샌드박스 B): 새 블록(필드와 등록 두 줄) → `setblock`·`give` 동작, 되돌리면 새로 등록된 것 없음; `onInitialize`의
+틱 리스너 추가·변경·삭제(같은 틱이 두 번 찍히지 않음)와 명령어(새 버전이 응답); `onInitializeClient`의 틱 리스너와 같은 id의
+키 바인딩; enum에 `GAMMA` 추가 → `values`, `valueOf`, switch, `EnumSet`; 프로젝트 인터페이스와 부모 클래스, JDK 인터페이스는
+재시작; 새 Mixin이 이미 로드된 대상에 적용.
+
 ### 빠른 재시작 (핫스왑이 못 하는 변경)
-새 블록·아이템 등록, 모드 메타데이터, 액세스 와이드너, 빌드 변경처럼 게임이 시작할 때만 읽는 것은 실행 중에 바꿀 수 없습니다. 그래서 **Restart** 버튼이 그 부분을 맡습니다.
+모드 메타데이터, 빌드 변경, 그리고 위의 한계처럼 실행 중에 바꿀 수 없는 것은 **Restart** 버튼이 맡습니다.
 1. 에이전트에게 열린 월드의 폴더 이름을 묻고(Mojang `storageSource.getLevelId()` / Yarn `session.getDirectoryName()`, 서버 필드에서 찾음), 정상 종료를 요청합니다. 게임이 월드를 저장하고 꺼질 때까지 기다립니다(90초가 넘으면 강제 종료).
 2. 게임을 `--quickPlaySingleplayer <월드>`(1.20+)로 다시 띄웁니다. 새 게임은 툴윈도우에 다시 붙고 같은 월드로 바로 들어갑니다.
    - **Gradle 없이 (`QuickRelaunch.java`):** Gradle로 실행한 게임의 명령줄을 실행 중인 프로세스에서 읽어 둡니다
