@@ -44,8 +44,14 @@ final class RuntimeRegister {
                     "net.minecraft.client.resources.model.ModelResourceLocation", "inventory", "net.minecraft.world.item.CreativeModeTabs", "CACHED_PARAMETERS", "location"},
     };
     private static int shadows;
+    /** Registries whose entries are intrusive holders, seen the first time (by identity). */
+    private static final Map<Object, Boolean> INTRUSIVE = new IdentityHashMap<Object, Boolean>();
 
-    static void run(final Instrumentation inst, final String listFile) {
+    /**
+     * @param redefineList the hotswap's own list, or null: redefined here, after the entry points' old listeners are
+     *                     out (a listener whose lambda method the new class no longer has would crash the next tick)
+     */
+    static void run(final Instrumentation inst, final String listFile, final String redefineList) {
         final List<String> out = new ArrayList<String>();
         try {
             final List<String[]> classes = new ArrayList<String[]>();
@@ -66,10 +72,12 @@ final class RuntimeRegister {
                     CountDownLatch release = new CountDownLatch(1);
                     try {
                         parkServer(mcClass, client, release);
-                        registerAll(inst, mcClass, client, n, classes, out);
+                        registerAll(inst, mcClass, client, n, classes, redefineList, out);
                     } catch (Throwable t) {
                         out.add("error " + cause(t));
-                        SfHooks.log("runtime registration failed: " + cause(t));
+                        java.io.StringWriter trace = new java.io.StringWriter();
+                        unwrap(t).printStackTrace(new java.io.PrintWriter(trace));
+                        SfHooks.log("runtime registration failed: " + trace);
                     } finally {
                         release.countDown();
                     }
@@ -104,7 +112,8 @@ final class RuntimeRegister {
         if (!parked.await(5, TimeUnit.SECONDS)) SfHooks.log("runtime registration: server did not pause, going on");
     }
 
-    private static void registerAll(Instrumentation inst, Class<?> mc, Object client, String[] n, List<String[]> classes, List<String> out) throws Throwable {
+    private static void registerAll(Instrumentation inst, Class<?> mc, Object client, String[] n, List<String[]> classes, String redefineList,
+                                    List<String> out) throws Throwable {
         ClassLoader gameLoader = mc.getClassLoader();
         Class<?> simple = Class.forName(n[3], false, gameLoader);
         final Field frozen = field(simple, n[4]), intrusive = field(simple, n[5]), keyToEntry = field(simple, n[6]);
@@ -115,10 +124,11 @@ final class RuntimeRegister {
         final List<Object> unfrozen = new ArrayList<Object>();
         for (Object reg : (Iterable<?>) field(rootHolder, n[2]).get(null)) {
             if (!simple.isInstance(reg) || !frozen.getBoolean(reg)) continue;
-            frozen.setBoolean(reg, false);
-            if (intrusive(reg, keyToEntry, n[7])) intrusive.set(reg, new IdentityHashMap<Object, Object>());
+            if (!INTRUSIVE.containsKey(reg)) INTRUSIVE.put(reg, intrusive(reg, keyToEntry, n[7]));
             unfrozen.add(reg);
         }
+        reopen(unfrozen, frozen, intrusive, false);
+        SfHooks.log("runtime registration: " + unfrozen.size() + " registries unfrozen");
         final List<Object[]> added = new ArrayList<Object[]>();   // {registry, "namespace:path"}
         final int[] kept = {0};
         // {"register" | "registerReference", registry, id (Identifier, RegistryKey or String), value} -> existing or null
@@ -131,6 +141,7 @@ final class RuntimeRegister {
                         kept[0]++;
                         return "registerReference".equals(call[0]) ? ref : ref.getClass().getMethod("value").invoke(ref);
                     }
+                    for (Object[] a : added) if (a[0] == call[1] && a[1].equals(id)) return null;   // bridge and Registry hook both ask
                     added.add(new Object[]{call[1], id});
                 } catch (Throwable t) { SfHooks.log("runtime registration: hook: " + t); }
                 return null;
@@ -138,8 +149,28 @@ final class RuntimeRegister {
         };
         System.getProperties().put("dev.sulfurframe.registry", hook);
         try {
-            // 2.-3. shadow runs, adopt new static fields
-            for (String[] c : classes) rerun(inst, c, out);
+            // entry points: their old registrations out, before the classes change under them
+            Map<String[], Object[]> entries = new LinkedHashMap<String[], Object[]>();
+            for (String[] c : classes) {
+                if (c.length < 4 || c[3].isEmpty()) continue;
+                Class<?> real = loadedClass(inst, c[0]);
+                if (real == null) continue;
+                List<String> owners = new ArrayList<String>(Arrays.asList(c.length > 4 && !c[4].isEmpty() ? c[4].split(",") : new String[0]));
+                if (!owners.contains(c[0])) owners.add(c[0]);
+                entries.put(c, EntryRerun.prepare(real, c[3].split(";"), owners));
+            }
+            boolean redefined = true;   // not all classes changed: the old static code stays, entry points still run (listeners back)
+            if (redefineList != null)
+                for (String r : Hotswap.redefine(inst, redefineList)) if (r.startsWith("restart needed") || r.startsWith("error")) redefined = false;
+            if (!redefined) out.add("skipped static code: the classes could not all be redefined");
+            reopen(unfrozen, frozen, intrusive, true);   // seen frozen again before the code ran (a new item had no holder map)
+            // 2.-3. shadow runs (new static fields take their values), entry points run again
+            for (String[] c : classes) {
+                Class<?> real = loadedClass(inst, c[0]);
+                if (real == null) { out.add("skipped " + c[0] + " (not loaded)"); continue; }
+                if (redefined && c.length > 2 && !c[2].isEmpty()) shadowRun(real, c, out);
+                if (entries.containsKey(c)) EntryRerun.run(entries.get(c), out);
+            }
         } finally {
             System.getProperties().remove("dev.sulfurframe.registry");
             // 4. freeze again; holders made for objects that were not registered (the shadow's copies of existing ones) go
@@ -154,24 +185,40 @@ final class RuntimeRegister {
             }
         }
         out.add("kept " + kept[0]);
+        boolean entries = false;
+        for (String[] c : classes) entries |= c.length > 3 && !c[3].isEmpty();
         Set<String> shortIds = new LinkedHashSet<String>();
         for (Object[] a : added) {
             out.add("registered " + registryName(rootHolder, a[0]) + " " + a[1]);
             shortIds.add((String) a[1]);
         }
         SfHooks.log("runtime registration: " + added.size() + " new " + shortIds + ", " + kept[0] + " already there");
-        if (added.isEmpty()) return;
-        fixUpClient(mc, client, n, rootHolder, keyToEntry, added, out);
-        ResourceReload.reload(inst, true, true);   // models, translations (client); loot tables, tags (server)
-        GameMessage.show(inst, "§aRegistered " + added.size() + " new: " + String.join(", ", shortIds));
+        if (added.isEmpty() && !entries) return;
+        if (!added.isEmpty()) fixUpClient(mc, client, n, rootHolder, keyToEntry, added, out);
+        boolean clientEntry = false;
+        for (String[] c : classes) clientEntry |= c.length > 3 && c[3].contains("onInitializeClient");
+        // new entries: models, translations (client) and loot tables, tags (server); init code alone: renderers and
+        // the like (client), and no /reload, which holds the server for seconds
+        if (!added.isEmpty()) ResourceReload.reload(inst, true, true);
+        else if (clientEntry) ResourceReload.reload(inst, true, false);
+        GameMessage.show(inst, added.isEmpty() ? "§aInit code ran again" : "§aRegistered " + added.size() + " new: " + String.join(", ", shortIds));
     }
 
-    /** Run one class's shadow and copy what it made into the real class's new (still null) static fields. */
-    private static void rerun(Instrumentation inst, String[] line, List<String> out) throws Throwable {
+    /** Unfrozen, and intrusive ones with a holder map (new blocks and items need one in their constructor). */
+    private static void reopen(List<Object> regs, Field frozen, Field intrusive, boolean report) throws IllegalAccessException {
+        int again = 0;
+        for (Object reg : regs) {
+            boolean was = frozen.getBoolean(reg);
+            frozen.setBoolean(reg, false);
+            if (Boolean.TRUE.equals(INTRUSIVE.get(reg)) && intrusive.get(reg) == null) { intrusive.set(reg, new IdentityHashMap<Object, Object>()); was = true; }
+            if (was) again++;
+        }
+        if (report && again > 0) SfHooks.log("runtime registration: " + again + " registries were frozen again in between, opened again");
+    }
+
+    /** The shadow copy runs the static initializer and the listed static methods; new static fields take its values. */
+    private static void shadowRun(Class<?> real, String[] line, List<String> out) throws Throwable {
         String name = line[0];
-        Class<?> real = null;
-        for (Class<?> c : inst.getAllLoadedClasses()) if (c.getName().equals(name) && c.getClassLoader() != null) { real = c; break; }
-        if (real == null) { out.add("skipped " + name + " (not loaded)"); return; }
         byte[] bytes = Files.readAllBytes(Paths.get(line[1]));
         String shadowName = name.replace('.', '/') + "$SfRegister" + (++shadows);
         Class<?> patch = Class.forName("dev.sulfurframe.agent.impl.RegistryPatch", true, SfAgent.impl());
@@ -180,8 +227,8 @@ final class RuntimeRegister {
                 .invoke(null, real, MethodHandles.lookup());
         Class<?> shadow = (Class<?>) lookup.getClass().getMethod("defineClass", byte[].class).invoke(lookup, shadowBytes);
         Class.forName(shadow.getName(), true, real.getClassLoader());   // its static initializer
-        if (line.length > 2 && !line[2].isEmpty())
-            for (String m : line[2].split(";")) {
+        for (String m : line[2].split(";")) {
+                if (m.equals("<clinit>")) continue;
                 Method method = shadow.getDeclaredMethod(m);
                 if (!Modifier.isStatic(method.getModifiers())) continue;
                 method.setAccessible(true);
@@ -284,9 +331,16 @@ final class RuntimeRegister {
         throw new NoSuchFieldException(name);
     }
 
-    private static String cause(Throwable t) {
+    private static String cause(Throwable t) { return unwrap(t).toString(); }
+
+    private static Throwable unwrap(Throwable t) {
         while (t.getCause() != null && (t instanceof java.lang.reflect.InvocationTargetException || t instanceof ExceptionInInitializerError)) t = t.getCause();
-        return t.toString();
+        return t;
+    }
+
+    private static Class<?> loadedClass(Instrumentation inst, String name) {
+        for (Class<?> c : inst.getAllLoadedClasses()) if (c.getName().equals(name) && c.getClassLoader() != null) return c;
+        return null;
     }
 
     private RuntimeRegister() {}

@@ -79,8 +79,9 @@ public final class SfAgent {
         }
         if (redefine != null || register != null || reload != null || world != null || quit || command != null || look != null || stats != null) {
             if (!installed) install(rest.toString(), inst, attached);
-            if (redefine != null) Hotswap.redefine(inst, redefine);
-            if (register != null) RuntimeRegister.run(inst, register);
+            // with init code to run again, the redefinition happens inside that run (old listeners out first)
+            if (register != null) RuntimeRegister.run(inst, register, redefine);
+            else if (redefine != null) Hotswap.redefine(inst, redefine);
             if (reload != null) ResourceReload.reload(inst, reload.contains("assets"), reload.contains("data"));
             if (world != null) GameSession.writeWorld(inst, world);
             if (command != null) GameSession.serverCommand(inst, command, done);
@@ -106,6 +107,10 @@ public final class SfAgent {
             Constructor<?> ctor = tc.getConstructor(Consumer.class, Consumer.class);
             ClassFileTransformer t = (ClassFileTransformer) ctor.newInstance(log, sink);
             inst.addTransformer(t, true);
+            if (!attached) {   // before Minecraft loads: lets changed init code run again (RuntimeRegister)
+                Class<?> rp = Class.forName("dev.sulfurframe.agent.impl.RegistryPatch", true, impl);
+                inst.addTransformer((ClassFileTransformer) rp.getMethod("loadTimeHooks", Consumer.class).invoke(null, log), false);
+            }
             SfHooks.log("installed (" + (attached ? "attached" : "premain") + ", Java " + System.getProperty("java.version")
                     + "), coding fps cap " + SfHooks.codingFps);
 

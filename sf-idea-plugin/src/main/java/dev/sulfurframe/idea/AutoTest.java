@@ -269,25 +269,13 @@ final class AutoTest {
     }
 
     /**
-     * Startup code (onInitialize) and mod metadata changes must offer a restart; the restart must save, quit, start again
-     * and land back in the same world, embedded.
+     * A changed onInitialize runs again in the game (its event listeners replaced, not added twice); mod metadata changes
+     * offer a restart; the restart must save, quit, start again and land back in the same world, embedded.
      */
     private static void restartFlow(SulfurPanel p, Path probe, String world) throws Exception {
         var t = p.selectedTarget();
-        // onInitialize: hotswap applies it, but it already ran; a restart must be offered
         Path main = modInitializerNextTo(probe);
-        if (main != null) {
-            String mainClass = main.getFileName().toString().replace(".java", "");
-            String src = Files.readString(main);
-            Files.writeString(main, src.replaceFirst("public void onInitialize\\(\\) \\{", "public void onInitialize() {\n\t\tLOGGER.info(\"[SF] startup code edited\");"));
-            sleep(1500);
-            onEdt(p::hotswapAsync);
-            for (int i = 0; i < 40 && !p.logText().contains("startup code changed"); i++) sleep(250);
-            check("startup code change -> restart offered", p.hotswapper.lastStartupChanges.contains(mainClass + ".onInitialize") && p.logText().contains("restart needed: startup code changed"),
-                    String.valueOf(p.hotswapper.lastStartupChanges));
-            Files.writeString(main, src);
-            sleep(1500);
-        }
+        if (main != null) entryRerunFlow(p, main, t.dir().resolve("run/logs/latest.log"));
         // mod metadata: read only at launch
         Path meta = t.dir().resolve("src/main/resources/fabric.mod.json");
         if (Files.exists(meta)) {
@@ -332,6 +320,62 @@ final class AutoTest {
                         firstLine(log, "starting through Gradle", "started ") + ", window after " + p.launcherWindowMillis() / 1000 + " s");
             }
         }
+    }
+
+    /**
+     * onInitialize gets a server tick listener (every 40 ticks), then the listener changes (every 20), then goes again:
+     * each time the entry point runs again in the game (RuntimeRegister / EntryRerun), no restart is offered, a tick is
+     * never logged twice (the old listener was taken out), and after the revert no tick is logged at all.
+     */
+    private static void entryRerunFlow(SulfurPanel p, Path main, Path gameLog) throws Exception {
+        String cls = main.getFileName().toString().replace(".java", "");
+        String src = Files.readString(main);
+        String head = "public void onInitialize() {";
+        if (!src.contains(head)) return;
+        java.util.function.IntFunction<String> withListener = every -> src.replace(head, head
+                + "\n\t\tLOGGER.info(\"[SF] startup code edited " + every + "\");"
+                + "\n\t\tnet.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(s -> {"
+                + " if (s.getTicks() % " + every + " == 0) LOGGER.info(\"[SF-INIT] tick \" + s.getTicks()); });");
+        try {
+            for (int every : new int[]{40, 20}) {
+                Files.writeString(main, withListener.apply(every));
+                String ran = rerunOnce(p);
+                String log = Files.exists(gameLog) ? Files.readString(gameLog) : "";
+                boolean edited = waitForLog(gameLog, "[SF] startup code edited " + every, 10);
+                sleep(10000);   // 200 ticks: a few listener runs, even after a slow reload
+                var ticks = ticksLogged(gameLog, log.length());
+                boolean once = ticks.stream().distinct().count() == ticks.size() && !ticks.isEmpty() && ticks.stream().allMatch(n -> n % every == 0);
+                check("onInitialize changed (listener every " + every + " ticks) -> ran again in the game, listener once, no restart",
+                        ran.contains(cls + ".onInitialize again") && p.hotswapper.lastStartupChanges.isEmpty() && edited && once,
+                        ran + ", ticks " + ticks);
+            }
+        } finally {
+            Files.writeString(main, src);
+        }
+        String ran = rerunOnce(p);
+        sleep(1000);
+        int from = Files.exists(gameLog) ? Files.readString(gameLog).length() : 0;
+        sleep(4000);
+        var ticks = ticksLogged(gameLog, from);
+        check("onInitialize reverted -> listener gone", ran.contains(cls + ".onInitialize again") && ticks.isEmpty(), ran + ", ticks " + ticks);
+    }
+
+    /** Save-path hotswap (as when the editor saves); the registration answer, or why there is none. */
+    private static String rerunOnce(SulfurPanel p) {
+        sleep(1500);
+        p.hotswapper.lastRegistration = java.util.List.of();
+        onEdt(p::hotswapAsync);
+        for (int i = 0; i < 80 && p.hotswapper.lastRegistration.isEmpty(); i++) sleep(250);
+        return String.join(" | ", p.hotswapper.lastRegistration);
+    }
+
+    /** "[SF-INIT] tick N" numbers in the game log after {@code from}. */
+    private static java.util.List<Integer> ticksLogged(Path gameLog, int from) throws Exception {
+        var out = new java.util.ArrayList<Integer>();
+        String log = Files.readString(gameLog);
+        var m = java.util.regex.Pattern.compile("\\[SF-INIT] tick (\\d+)").matcher(log.substring(Math.min(from, log.length())));
+        while (m.find()) out.add(Integer.parseInt(m.group(1)));
+        return out;
     }
 
     /**

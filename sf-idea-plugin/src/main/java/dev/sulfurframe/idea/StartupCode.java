@@ -40,41 +40,57 @@ final class StartupCode {
     }
 
     /**
-     * Can this startup change be applied in the running game by running the class's registration code again
-     * (the agent's RuntimeRegister)? Yes when the class registers into a registry itself, and what changed is its
-     * static initializer and/or static no-argument register / initialize methods, not a mod entry point (onInitialize
-     * also hooks events, which a second run would hook twice). Returns the methods to run after the static initializer
-     * (possibly none), or null.
+     * How a startup change can be applied in the running game (the agent's RuntimeRegister), or null if it cannot:
+     *   statics  the static initializer ("&lt;clinit&gt;") and changed static no-argument register / initialize methods, run
+     *            again in a renamed copy; only for a class that calls Registry.register itself (the copy keeps what
+     *            is registered and adds what is new)
+     *   entries  changed entry points (onInitialize, onInitializeClient, onInitializeServer), run again on the mod's
+     *            entry point object after what they hooked up before is taken out
+     *   called   classes the entry points call (internal names), whose earlier registrations are taken out as well
+     *            (the caller keeps only the project's own classes)
      */
-    static List<String> rerunMethods(byte[] before, byte[] after) {
+    record Rerun(List<String> statics, List<String> entries, Set<String> called) {}
+
+    static Rerun rerunPlan(byte[] before, byte[] after) {
         if (before == null || after == null) return null;
         Map<String, String> a = startupBodies(before), b = startupBodies(after);
         var access = new HashMap<String, Integer>();
+        var calledByEntry = new LinkedHashSet<String>();
         boolean[] registers = {false};
         new ClassReader(after).accept(new ClassVisitor(Opcodes.ASM9) {
             @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] ex) {
                 access.put(name + desc, acc);
+                boolean entry = entryPoint(name, desc);
                 return new MethodVisitor(Opcodes.ASM9) {
                     @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
                         if (registryCall(owner, n)) registers[0] = true;
+                        if (entry) calledByEntry.add(owner);
                     }
                 };
             }
         }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        if (!registers[0]) return null;
-        var run = new ArrayList<String>();
-        boolean any = false;
+        var statics = new ArrayList<String>();
+        var entries = new ArrayList<String>();
+        boolean staticChange = false;
         for (var e : b.entrySet()) {
             if (e.getValue().equals(a.get(e.getKey()))) continue;
             String nameDesc = e.getKey(), name = nameDesc.substring(0, nameDesc.indexOf('('));
-            any = true;
-            if (name.startsWith("onInitialize")) return null;
-            if (name.equals("<clinit>")) continue;
             int acc = access.getOrDefault(nameDesc, 0);
-            if ((acc & Opcodes.ACC_STATIC) == 0) return null;          // an instance registrar: no object to run it on
-            if (nameDesc.endsWith("()V")) run.add(name);                 // helpers with arguments run through their callers
+            if (entryPoint(name, nameDesc.substring(name.length())) && (acc & Opcodes.ACC_STATIC) == 0) { entries.add(name); continue; }
+            if ((acc & Opcodes.ACC_STATIC) == 0) return null;            // an instance registrar: no object to run it on
+            staticChange = true;
+            if (!name.equals("<clinit>") && nameDesc.endsWith("()V")) statics.add(name);   // helpers with arguments run through their callers
         }
-        return any ? run : null;
+        if (staticChange) {
+            if (!registers[0]) return null;
+            statics.add(0, "<clinit>");
+        }
+        if (statics.isEmpty() && entries.isEmpty()) return null;
+        return new Rerun(statics, entries, entries.isEmpty() ? Set.of() : calledByEntry);
+    }
+
+    static boolean entryPoint(String name, String desc) {
+        return desc.equals("()V") && (name.equals("onInitialize") || name.equals("onInitializeClient") || name.equals("onInitializeServer"));
     }
 
     /**

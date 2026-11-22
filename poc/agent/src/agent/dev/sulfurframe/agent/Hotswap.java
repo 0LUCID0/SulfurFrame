@@ -17,7 +17,8 @@ import java.util.*;
  * "restart needed". The result goes to "<list file>.result" for the IDE to read. Java 8.
  */
 final class Hotswap {
-    static void redefine(Instrumentation inst, String listFile) {
+    /** Redefine the listed classes; the answer goes to "<list>.result" and is returned. */
+    static List<String> redefine(Instrumentation inst, String listFile) {
         List<String> out = new ArrayList<String>();
         long t0 = System.nanoTime();
         try {
@@ -57,6 +58,7 @@ final class Hotswap {
             SfHooks.log("hotswap failed: " + t);
         }
         try { AnswerFile.write(listFile + ".result", out); } catch (IOException ignored) { }
+        return out;
     }
 
     static String reason(Throwable t) {

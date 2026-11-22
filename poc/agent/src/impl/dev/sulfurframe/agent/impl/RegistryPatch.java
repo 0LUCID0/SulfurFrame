@@ -4,6 +4,8 @@ import org.objectweb.asm.*;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.SimpleRemapper;
 
+import java.lang.instrument.ClassFileTransformer;
+import java.security.ProtectionDomain;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -52,6 +54,70 @@ public final class RegistryPatch {
         };
         r.accept(new ClassRemapper(bridged, new SimpleRemapper(r.getClassName(), newInternalName)), 0);
         return w.toByteArray();
+    }
+
+    /** Set (to "true") once the Registry interface was patched as it loaded: re-running whole entry points relies on it. */
+    public static final String HOOKED_KEY = "dev.sulfurframe.registryHooked";
+
+    /**
+     * For a game started with the agent (premain): as the Registry interface loads, its static register /
+     * registerReference methods first ask the same hook as the shadow's bridges. Code run again anywhere (an entry
+     * point and the helpers it calls) then keeps what is registered. Load time only: the class arrives here with Fabric
+     * API's mixins already applied, and nothing is retransformed (on the JetBrains Runtime that reset mixin fields).
+     */
+    public static ClassFileTransformer loadTimeHooks(final java.util.function.Consumer<String> log) {
+        return new ClassFileTransformer() {
+            @Override public byte[] transform(ClassLoader loader, String name, Class<?> redefined, ProtectionDomain pd, byte[] bytes) {
+                if (redefined != null || name == null || !(name.equals("net/minecraft/registry/Registry") || name.equals("net/minecraft/core/Registry"))) return null;
+                try {
+                    ClassReader r = new ClassReader(bytes);
+                    ClassWriter w = new ClassWriter(r, ClassWriter.COMPUTE_MAXS);
+                    final int[] patched = {0};
+                    r.accept(new ClassVisitor(Opcodes.ASM9, w) {
+                        @Override public MethodVisitor visitMethod(int access, final String m, final String desc, String sig, String[] ex) {
+                            MethodVisitor mv = super.visitMethod(access, m, desc, sig, ex);
+                            if ((access & Opcodes.ACC_STATIC) == 0 || !bridgeable(name, m, desc)) return mv;
+                            patched[0]++;
+                            return new MethodVisitor(Opcodes.ASM9, mv) {
+                                @Override public void visitCode() {
+                                    super.visitCode();
+                                    Type[] a = Type.getArgumentTypes(desc);
+                                    Label skip = new Label();
+                                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperties", "()Ljava/util/Properties;", false);
+                                    mv.visitLdcInsn(HOOK_KEY);
+                                    mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/Properties", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+                                    mv.visitInsn(Opcodes.DUP);
+                                    mv.visitJumpInsn(Opcodes.IFNULL, skip);
+                                    mv.visitTypeInsn(Opcodes.CHECKCAST, "java/util/function/Function");
+                                    mv.visitInsn(Opcodes.ICONST_4);
+                                    mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+                                    mv.visitInsn(Opcodes.DUP); mv.visitInsn(Opcodes.ICONST_0); mv.visitLdcInsn(m); mv.visitInsn(Opcodes.AASTORE);
+                                    for (int i = 0; i < 3; i++) {
+                                        mv.visitInsn(Opcodes.DUP); mv.visitInsn(Opcodes.ICONST_1 + i); mv.visitVarInsn(Opcodes.ALOAD, i); mv.visitInsn(Opcodes.AASTORE);
+                                    }
+                                    mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/Function", "apply", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+                                    mv.visitInsn(Opcodes.DUP);
+                                    mv.visitJumpInsn(Opcodes.IFNULL, skip);
+                                    mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getReturnType(desc).getInternalName());
+                                    mv.visitInsn(Opcodes.ARETURN);
+                                    mv.visitLabel(skip);
+                                    mv.visitFrame(Opcodes.F_FULL, 3, new Object[]{a[0].getInternalName(), a[1].getInternalName(), a[2].getInternalName()},
+                                            1, new Object[]{"java/lang/Object"});
+                                    mv.visitInsn(Opcodes.POP);
+                                }
+                            };
+                        }
+                    }, 0);
+                    if (patched[0] == 0) return null;
+                    System.setProperty(HOOKED_KEY, "true");
+                    log.accept("runtime registration: " + patched[0] + " register method(s) of " + name.replace('/', '.') + " hooked as it loaded");
+                    return w.toByteArray();
+                } catch (Throwable t) {
+                    log.accept("runtime registration: could not hook " + name + ": " + t);
+                    return null;
+                }
+            }
+        };
     }
 
     /** Registry.register(registry, id-or-key, value) and Registry.registerReference(...): three objects in, one out. */

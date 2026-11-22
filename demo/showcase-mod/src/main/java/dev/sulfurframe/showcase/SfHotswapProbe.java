@@ -9,8 +9,12 @@ public final class SfHotswapProbe {
     /** The constant is read here, not in the loop: a running loop frame keeps its old code after a swap. */
     static String tag() { return SfProbeConst.TAG; }
 
+    private static Thread thread;
+
+    /** Once: SulfurFrame may run onInitialize again after it changed. */
     static void start() {
-        Thread t = new Thread(() -> {
+        if (thread != null) return;
+        Thread t = thread = new Thread(() -> {
             while (true) {
                 try { Thread.sleep(5000); } catch (InterruptedException e) { return; }
                 ticks++;

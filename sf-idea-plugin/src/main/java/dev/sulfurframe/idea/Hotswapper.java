@@ -104,14 +104,33 @@ final class Hotswapper {
      * Registration code changed and the classes were redefined: have the agent run it again in the game, registering
      * only what is new (RuntimeRegister). The startup changes it covered no longer ask for a restart.
      */
-    private void registerAgain(Workspace.Target t, long gamePid, Path agentJar) throws Exception {
+    /** The list for the agent's register= request (RuntimeRegister), from the classes in {@link #rerunnable}. */
+    private Path registerList(Workspace.Target t, Path agentJar) throws IOException {
         Path list = agentJar.getParent().resolve("register-" + ProcessHandle.current().pid() + "-" + (++counter) + ".txt");
         var lines = new ArrayList<String>();
-        for (var e : rerunnable.entrySet()) lines.add(binaryName(t, e.getKey()) + "	" + e.getKey() + "	" + String.join(";", e.getValue().methods()));
+        var ownClasses = new HashSet<String>();   // internal names of the project's classes: the only possible owners
+        for (Path root : classRoots(t))
+            if (Files.isDirectory(root))
+                try (Stream<Path> s = Files.walk(root)) {
+                    s.filter(f -> f.toString().endsWith(".class")).forEach(f -> ownClasses.add(root.relativize(f).toString().replace('\\', '/').replaceFirst("\\.class$", "")));
+                }
+        for (var e : rerunnable.entrySet()) {
+            var plan = e.getValue().plan();
+            var owners = plan.called().stream().filter(ownClasses::contains).map(c -> c.replace('/', '.')).toList();
+            lines.add(String.join("\t", binaryName(t, e.getKey()), e.getKey().toString(), String.join(";", plan.statics()),
+                    String.join(";", plan.entries()), String.join(",", owners)));
+        }
         Files.write(list, lines, StandardCharsets.UTF_8);
+        Files.deleteIfExists(Path.of(list + ".result"));
+        return list;
+    }
+
+    /**
+     * The agent's answer to a register= request that went with the hotswap: what ran again, what was registered. The
+     * startup changes it covered no longer ask for a restart.
+     */
+    private void awaitRegistration(Path list) throws Exception {
         Path result = Path.of(list + ".result");
-        Files.deleteIfExists(result);
-        loadAgent(gamePid, agentJar, "codingFps=" + Settings.codingFps() + ",register=" + list);
         for (int i = 0; i < 300 && !Files.exists(result); i++) Thread.sleep(100);   // runs on the render thread: a frame or so, 30 s at most
         if (!Files.exists(result)) { log.accept("registration: no answer from the game"); Files.deleteIfExists(list); return; }
         var answer = Files.readAllLines(result, StandardCharsets.UTF_8);
@@ -120,6 +139,7 @@ final class Hotswapper {
         var errors = answer.stream().filter(s -> s.startsWith("error")).toList();
         var registered = answer.stream().filter(s -> s.startsWith("registered ")).map(s -> s.substring("registered ".length())).toList();
         if (!errors.isEmpty()) { log.accept("registration failed in the game: " + String.join("; ", errors) + " (restart to apply)"); return; }
+        if (answer.contains("skipped static code: the classes could not all be redefined")) return;   // the restart offer stays
         var covered = new ArrayList<String>();
         for (var r : rerunnable.values()) covered.addAll(r.startupChanges());
         var rest = new ArrayList<>(lastStartupChanges);
@@ -209,7 +229,7 @@ final class Hotswapper {
     }
 
     /** A class whose changed startup code can run again in the game (StartupCode.rerunMethods). */
-    record Rerun(List<String> methods, List<String> startupChanges) {}
+    record Rerun(StartupCode.Rerun plan, List<String> startupChanges) {}
     private final Map<Path, Rerun> rerunnable = new LinkedHashMap<>();
 
     /** What the last runtime registration answered ("registered ResourceKey[...]", "error ..."), for the self-test. */
@@ -265,21 +285,23 @@ final class Hotswapper {
             Files.write(list, lines, StandardCharsets.UTF_8);
             Path result = Path.of(list + ".result");
             Files.deleteIfExists(result);
+            // registration / init code changed: the agent runs it again around the redefinition (RuntimeRegister)
+            Path register = rerunnable.isEmpty() ? null : registerList(t, agentJar);
 
             try {
                 var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(gamePid));
-                try { vm.loadAgent(agentJar.toString(), "codingFps=" + Settings.codingFps() + ",redefine=" + list); } finally { vm.detach(); }
+                try { vm.loadAgent(agentJar.toString(), "codingFps=" + Settings.codingFps() + ",redefine=" + list + (register == null ? "" : ",register=" + register)); }
+                finally { vm.detach(); }
             } catch (com.sun.tools.attach.AgentLoadException e) {
                 if (!String.valueOf(e.getMessage()).endsWith(": 0")) throw e;   // Java 8 game: reply-format quirk
             }
-            for (int i = 0; i < 100 && !Files.exists(result); i++) Thread.sleep(100);
+            for (int i = 0; i < (register == null ? 100 : 300) && !Files.exists(result); i++) Thread.sleep(100);   // with register: on the render thread
             if (!Files.exists(result)) { log.accept("hotswap: no answer from the game"); return false; }
             lastResult = Files.readAllLines(result, StandardCharsets.UTF_8);
             Files.deleteIfExists(list); Files.deleteIfExists(result);
             String summary = String.join(", ", lastResult.stream().filter(s -> !s.startsWith("ms ")).toList());
             log.accept("hotswap (" + lastCompiler + ", " + changed.size() + " class file(s), " + (System.currentTimeMillis() - t0) + " ms): " + summary);
-            if (!rerunnable.isEmpty() && lastResult.stream().noneMatch(s -> s.startsWith("restart needed")))
-                registerAgain(t, gamePid, agentJar);
+            if (register != null) awaitRegistration(register);
             return true;
         } catch (Exception e) {
             log.accept("hotswap failed: " + e);
@@ -429,8 +451,8 @@ final class Hotswapper {
             try {
                 var st = StartupCode.changed(old, after);
                 startup.addAll(st);
-                var rerun = st.isEmpty() ? null : StartupCode.rerunMethods(old, after);
-                if (rerun != null) rerunnable.put(c, new Rerun(rerun, st));
+                var plan = st.isEmpty() ? null : StartupCode.rerunPlan(old, after);
+                if (plan != null) rerunnable.put(c, new Rerun(plan, st));
                 else rerunnable.remove(c);
             } catch (Throwable ignored) { }
             try { constantOwners.addAll(StartupCode.constantOwnerNames(old, after)); } catch (Throwable ignored) { }
