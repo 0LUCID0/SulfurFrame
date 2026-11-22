@@ -452,6 +452,9 @@ Fabric 1.21.1에서, JVM이 막는 경우만 빼고 시작 코드의 변경도 �
   더하고(`Mixins.addConfiguration`), 이미 로드된 대상 클래스는 원래 바이트로 다시 정의합니다. Mixin의 hotswap 에이전트가 그때
   모든 Mixin을 다시 적용합니다.
 
+안전장치: 다시 돌리기 직전에 열린 월드를 자동으로 스냅샷합니다(`save-all flush` 뒤 복사, 이름 `before-init`, 월드마다 최신
+3개). 게임 안에서 실패하거나 2분 안에 크래시하면, 재시작 알림에 "그 직전 월드로 재시작"이 함께 뜹니다.
+
 한계(재시작을 권함):
 - JDK나 Minecraft 타입을 부모·인터페이스로 더하거나 빼기: JDK 인터페이스(`Supplier`)를 더하자 JBR이 Minecraft의 무관한
   `Supplier` 필드를 null로 만들고 게임이 죽었습니다. 그래서 그 클래스는 보내지 않습니다. 부모를 `Object`로 되돌리는 것은 JBR이
@@ -461,9 +464,9 @@ Fabric 1.21.1에서, JVM이 막는 경우만 빼고 시작 코드의 변경도 �
 - 월드 데이터의 동적 레지스트리(월드 생성, 인챈트 등)는 월드를 다시 열어야 합니다.
 - JVM 규칙: 이미 돌고 있는 메서드 프레임은 옛 코드로 끝나고, 이미 있는 객체의 새 인스턴스 필드는 기본값에서 시작합니다.
 
-자가 테스트(샌드박스 B): 새 블록(필드와 등록 두 줄) → `setblock`·`give` 동작, 되돌리면 새로 등록된 것 없음; `onInitialize`의
+자가 테스트(샌드박스 B, JetBrains Runtime이 있는 Linux): 새 블록(필드와 등록 두 줄) → `setblock`·`give` 동작, 되돌리면 새로 등록된 것 없음; `onInitialize`의
 틱 리스너 추가·변경·삭제(같은 틱이 두 번 찍히지 않음)와 명령어(새 버전이 응답); `onInitializeClient`의 틱 리스너와 같은 id의
-키 바인딩; enum에 `GAMMA` 추가 → `values`, `valueOf`, switch, `EnumSet`; 프로젝트 인터페이스와 부모 클래스, JDK 인터페이스는
+키 바인딩; 실패하는 `onInitialize` → 직전 월드로 재시작 제안; enum에 `GAMMA` 추가 → `values`, `valueOf`, switch, `EnumSet`; 프로젝트 인터페이스와 부모 클래스, JDK 인터페이스는
 재시작; 새 Mixin이 이미 로드된 대상에 적용.
 
 ### 빠른 재시작 (핫스왑이 못 하는 변경)

@@ -66,6 +66,13 @@ final class WorldSnapshots {
 
     static String label(Path snapshot) { return snapshot.getFileName().toString(); }
 
+    /** Keep the newest {@code keep} snapshots of a world that carry this label; older ones go (automatic snapshots). */
+    static void prune(String mc, String world, String label, int keep) throws IOException {
+        int seen = 0;
+        for (Path p : list(mc, world))
+            if (p.getFileName().toString().endsWith("-" + label) && ++seen > keep) deleteTree(p);
+    }
+
     static String b64(String s) { return Base64.getEncoder().encodeToString(s.getBytes(StandardCharsets.UTF_8)); }
 
     private WorldSnapshots() {}

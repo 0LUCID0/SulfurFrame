@@ -53,8 +53,8 @@ constants + re-applying Mixins). The restarts that remain fall into two groups b
 - Scope: single-player dev clients. Multiplayer and release builds are out of scope.
 - Other Minecraft versions and loaders (the Mojang mapping names are in the tables but untested) go together with the
   multi-version work of the bigger mod developed alongside, like loader and version support.
-- The safety net of the original plan (a world snapshot taken automatically before a run, a restart from it on failure)
-  is not there yet; on failure a restart is offered.
+- Safety net (done): the open world is snapshotted automatically right before a run (`before-init`, the newest 3 per
+  world). If the run fails in the game or the game crashes right after, a restart into the world from before is offered.
 
 ## Other candidates
 

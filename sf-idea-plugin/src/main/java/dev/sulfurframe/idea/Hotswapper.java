@@ -151,7 +151,12 @@ final class Hotswapper {
         Files.deleteIfExists(list); Files.deleteIfExists(result);
         var errors = answer.stream().filter(s -> s.startsWith("error")).toList();
         var registered = answer.stream().filter(s -> s.startsWith("registered ")).map(s -> s.substring("registered ".length())).toList();
-        if (!errors.isEmpty()) { log.accept("registration failed in the game: " + String.join("; ", errors) + " (restart to apply)"); return; }
+        if (!errors.isEmpty()) {
+            failedInitSnapshot = lastInitSnapshot;
+            log.accept("registration failed in the game: " + String.join("; ", errors) + " (restart to apply"
+                    + (lastInitSnapshot == null ? ")" : "; the world before it: " + lastInitSnapshot.getFileName() + ")"));
+            return;
+        }
         if (answer.contains("skipped static code: the classes could not all be redefined")) return;   // the restart offer stays
         var restart = answer.stream().filter(s -> s.startsWith("restart needed")).toList();
         if (!restart.isEmpty()) {   // e.g. an enum constant removed: the panel offers the restart like a failed redefinition
@@ -368,6 +373,17 @@ final class Hotswapper {
     record Rerun(StartupCode.Rerun plan, List<String> startupChanges) {}
     private final Map<Path, Rerun> rerunnable = new LinkedHashMap<>();
 
+    /**
+     * Safety net: takes a snapshot of the open world (SulfurPanel.snapshot) right before init code runs again in the
+     * game; null when no world is open. Set by the panel.
+     */
+    volatile java.util.function.Supplier<Path> beforeInitRerun;
+    /** The world as it was before the last init code run (null: none taken), and when it was taken. */
+    volatile Path lastInitSnapshot;
+    volatile long lastInitSnapshotAt;
+    /** Set when the last run failed in the game: the snapshot to go back to. */
+    volatile Path failedInitSnapshot;
+
     /** What the last runtime registration answered ("registered ResourceKey[...]", "error ..."), for the self-test. */
     volatile List<String> lastRegistration = List.of();
 
@@ -440,8 +456,14 @@ final class Hotswapper {
             Files.write(list, lines, StandardCharsets.UTF_8);
             Path result = Path.of(list + ".result");
             Files.deleteIfExists(result);
-            // registration / init code changed: the agent runs it again around the redefinition (RuntimeRegister)
+            // registration / init code changed: the agent runs it again around the redefinition (RuntimeRegister),
+            // after a snapshot of the open world (a run that goes wrong can be undone)
             Path register = rerunnable.isEmpty() ? null : registerList(t, agentJar);
+            failedInitSnapshot = null;
+            if (register != null && beforeInitRerun != null) {
+                Path snap = beforeInitRerun.get();
+                if (snap != null) { lastInitSnapshot = snap; lastInitSnapshotAt = System.currentTimeMillis(); }
+            }
 
             try {
                 var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(gamePid));

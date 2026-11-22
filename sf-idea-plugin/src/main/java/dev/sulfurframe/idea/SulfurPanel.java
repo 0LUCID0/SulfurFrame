@@ -54,6 +54,7 @@ final class SulfurPanel extends JPanel {
         embedder.setFullscreenHint(() -> { var s = stats(); return s.containsKey("fullscreen") ? Boolean.valueOf(s.get("fullscreen")) : null; });
         launcher = new GameLauncher(this::log);
         hotswapper = new Hotswapper(this::log, Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe"));
+        hotswapper.beforeInitRerun = () -> snapshot(INIT_SNAPSHOT);
         agentJar = extractAgent();
         embedder.setAgentJar(agentJar);
         launcher.setAgentJar(agentJar);
@@ -282,7 +283,10 @@ final class SulfurPanel extends JPanel {
         Thread.ofPlatform().daemon().name("sf-hotswap").start(() -> {
             hotswapper.swap(t, pid, agentJar);
             var restartNeeded = hotswapper.lastResult.stream().filter(s -> s.startsWith("restart needed")).toList();
-            if (!restartNeeded.isEmpty()) offerRestart(restartNeeded.size() + " class(es) changed in a way hotswap cannot apply");
+            Path rollback = hotswapper.failedInitSnapshot;
+            if (rollback != null) offerInitRollback("init code ran again and failed: " + String.join("; ",
+                    hotswapper.lastRegistration.stream().filter(s -> s.startsWith("error")).toList()), rollback);
+            else if (!restartNeeded.isEmpty()) offerRestart(restartNeeded.size() + " class(es) changed in a way hotswap cannot apply");
             else if (!hotswapper.lastStartupChanges.isEmpty())
                 offerRestart("startup code changed (runs only once, at launch): " + String.join(", ", hotswapper.lastStartupChanges));
         });
@@ -357,14 +361,17 @@ final class SulfurPanel extends JPanel {
     /** Last snapshot taken (self-test). */
     volatile Path lastSnapshot;
 
-    void snapshotAsync() { Thread.ofPlatform().daemon().name("sf-snapshot").start(this::snapshot); }
+    void snapshotAsync() { Thread.ofPlatform().daemon().name("sf-snapshot").start(() -> snapshot(null)); }
 
-    /** Flush the open world on the integrated server, then copy it to a snapshot. Blocking. */
-    void snapshot() {
+    /** Label of the automatic snapshots taken before init code runs again; the newest few are kept. */
+    static final String INIT_SNAPSHOT = "before-init";
+
+    /** Flush the open world on the integrated server, then copy it to a snapshot (null label: by hand). Blocking. */
+    Path snapshot(String label) {
         var t = selectedTarget();
         try {
             String world = openWorld();
-            if (world.isEmpty()) { log("snapshot: open a world in the game first"); return; }
+            if (world.isEmpty()) { if (label == null) log("snapshot: open a world in the game first"); return null; }
             long pid = embedder.gamePid();
             Path done = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "flush-" + pid + ".txt");
             Files.deleteIfExists(done);
@@ -372,12 +379,40 @@ final class SulfurPanel extends JPanel {
             for (int i = 0; i < 150 && !Files.exists(done); i++) Thread.sleep(100);
             String flushed = Files.exists(done) ? Files.readString(done).strip() : "no answer";
             if (!flushed.equals("done")) log("snapshot: save-all flush: " + flushed + " (copying anyway)");
-            lastSnapshot = WorldSnapshots.take(SharedInstance.runDir(t).resolve("saves"), world, t.profile().minecraftVersion(), null);
-            log("snapshot of '" + world + "': " + lastSnapshot);
+            Path snap = WorldSnapshots.take(SharedInstance.runDir(t).resolve("saves"), world, t.profile().minecraftVersion(), label);
+            if (label == null) lastSnapshot = snap;
+            else WorldSnapshots.prune(t.profile().minecraftVersion(), world, label, 3);
+            log("snapshot of '" + world + "': " + snap);
+            return snap;
         } catch (Exception e) {
             log("snapshot failed: " + e);
+            return null;
         }
     }
+
+    /**
+     * Init code that ran again went wrong (an error in the game, or a crash soon after): offer a restart into the world as
+     * it was right before (the automatic snapshot), next to the plain restart.
+     */
+    void offerInitRollback(String why, Path snapshot) {
+        log("restart needed: " + why + " (the world before it: " + snapshot.getFileName() + ")");
+        String world = snapshot.getParent().getFileName().toString();
+        lastOffer = System.currentTimeMillis();
+        lastRollbackOffer = snapshot;
+        SwingUtilities.invokeLater(() -> {
+            try {
+                var n = com.intellij.notification.NotificationGroupManager.getInstance().getNotificationGroup("SulfurFrame")
+                        .createNotification("Minecraft needs a restart", why, com.intellij.notification.NotificationType.WARNING);
+                n.addAction(com.intellij.notification.NotificationAction.createSimpleExpiring("Restart with the world from before",
+                        () -> Thread.ofPlatform().daemon().name("sf-restore").start(() -> restoreSnapshot(world, snapshot))));
+                n.addAction(com.intellij.notification.NotificationAction.createSimpleExpiring("Restart into the same world", this::restartAsync));
+                n.notify(null);
+            } catch (Throwable ignored) { }
+        });
+    }
+
+    /** The snapshot the last rollback offer pointed at (self-test). */
+    volatile Path lastRollbackOffer;
 
     void restoreAsync() {
         Thread.ofPlatform().daemon().name("sf-restore").start(() -> {
@@ -742,6 +777,10 @@ final class SulfurPanel extends JPanel {
     }
 
     void log(String s) {
+        // a crash soon after init code ran again: offer the world from before it
+        Path init = hotswapper == null ? null : hotswapper.lastInitSnapshot;
+        if (s.startsWith("game crashed:") && init != null && System.currentTimeMillis() - hotswapper.lastInitSnapshotAt < 120_000 && init != lastRollbackOffer)
+            Thread.ofPlatform().daemon().start(() -> offerInitRollback(s + " (shortly after init code ran again)", init));
         String line = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + " " + s;
         System.out.println("[SulfurFrame] " + line);
         UsageLog.append((AutoTest.enabled() ? "autotest:" : "") + (project == null ? "-" : project.getName()), s);

@@ -353,6 +353,23 @@ final class AutoTest {
                         // a command: the server builds its tree at start and on /reload, which the re-run asks for
                         + " net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((d, a, e) -> d.register("
                         + "net.minecraft.server.command.CommandManager.literal(\"sftest\").executes(c -> { LOGGER.info(\"[SF-CMD] every EVERY\"); return 1; })));");
+        // safety net: an onInitialize that fails in the game -> a restart into the world from before is offered
+        String src = Files.readString(main), head = "public void onInitialize() {";
+        if (src.contains(head)) {
+            try {
+                Files.writeString(main, src.replace(head, head + "\n\t\tif (Boolean.TRUE) throw new IllegalStateException(\"sf rollback test\");"));
+                p.lastRollbackOffer = null;
+                String ran = rerunOnce(p);
+                for (int i = 0; i < 20 && p.lastRollbackOffer == null; i++) sleep(250);
+                Path offered = p.lastRollbackOffer;
+                check("onInitialize fails in the game -> restart with the world from before offered", ran.contains("sf rollback test")
+                        && offered != null && Files.exists(offered.resolve("level.dat")), ran + " -> " + offered);
+            } finally {
+                Files.writeString(main, src);
+            }
+            String back = rerunOnce(p);   // the old code again: its listeners back
+            check("onInitialize back to the old code -> runs again cleanly", back.contains(".onInitialize again") && !back.contains("error"), back);
+        }
         Path client = main.getParent().resolve("client/" + main.getFileName().toString().replace(".java", "Client.java"));
         String logger = probeClassOf(main) + ".LOGGER";
         if (Files.exists(client))
@@ -779,6 +796,9 @@ final class AutoTest {
                     && reg.stream().anyMatch(s -> s.startsWith("registered") && s.contains("item showcase:sf_runtime"));
             check("new block registered in the running game, no restart offered", registered && p.hotswapper.lastStartupChanges.isEmpty()
                     && !log.contains("restart needed"), firstLine(log, "registration", "restart needed") + " " + reg);
+            Path snap = p.hotswapper.lastInitSnapshot;
+            check("safety net: the world was snapshotted before the registration", snap != null && Files.exists(snap.resolve("level.dat"))
+                    && snap.getFileName().toString().endsWith("-" + SulfurPanel.INIT_SNAPSHOT), String.valueOf(snap));
             String set = command(p, "execute as @p at @s run setblock ~2 ~ ~3 showcase:sf_runtime");
             String give = command(p, "give @p showcase:sf_runtime");
             check("new block usable on the server (setblock, give)", "done".equals(set) && "done".equals(give)
@@ -876,7 +896,7 @@ final class AutoTest {
                 missing + " missing, " + added + " added");
 
         // snapshot, then restore it (quick restart in between)
-        p.snapshot();
+        p.snapshot(null);
         Path snap = p.lastSnapshot;
         check("snapshot of the open world (after save-all flush)", snap != null && Files.exists(snap.resolve("level.dat")), String.valueOf(snap));
         long before = p.embedder.gamePid();

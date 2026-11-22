@@ -598,6 +598,10 @@ Runtime (new fields) needs it here too.
   added to Mixin (`Mixins.addConfiguration`), and target classes that are already loaded are redefined from their
   original bytes; Mixin's hotswap agent then applies every mixin again.
 
+Safety net: the open world is snapshotted automatically right before a run (`save-all flush`, then a copy named
+`before-init`, the newest 3 per world). If the run fails in the game or the game crashes within 2 minutes, the
+restart notification also offers a restart into the world from before.
+
 Limits (a restart is offered):
 - Adding or removing a JDK or Minecraft type as superclass or interface: adding a JDK interface (`Supplier`) made JBR null
   unrelated `Supplier` fields in Minecraft and the game crashed, so such a class is not sent. JBR refuses a superclass
@@ -609,9 +613,10 @@ Limits (a restart is offered):
 - JVM rules: a method frame that is already running finishes with the old code, and a new instance field starts at its
   default value in objects that already exist.
 
-Self-tests (sandbox run B): a new block (a field and two register lines) → `setblock` and `give` work, reverting
+Self-tests (sandbox run B, and Linux with a JetBrains Runtime): a new block (a field and two register lines) → `setblock` and `give` work, reverting
 registers nothing; a tick listener added, changed and removed in `onInitialize` (no tick logged twice) and a command (the
-new one answers); a tick listener and the same key binding id in `onInitializeClient`; `GAMMA` added to an enum →
+new one answers); a tick listener and the same key binding id in `onInitializeClient`; a failing `onInitialize` → a restart
+into the world from before offered; `GAMMA` added to an enum →
 `values`, `valueOf`, the switch, `EnumSet`; a project interface and superclass, a JDK interface held for a restart; a new
 mixin applied to its target, which is already loaded.
 
