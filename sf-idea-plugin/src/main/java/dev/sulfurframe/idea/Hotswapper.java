@@ -171,6 +171,102 @@ final class Hotswapper {
                 + answer.stream().filter(s -> s.startsWith("ms ")).map(s -> ", " + s.substring(3) + " ms").findFirst().orElse(""));
     }
 
+    /** Mixin classes already added to the running game per mixins.json (by addMixins), so a second save adds only what is new. */
+    private final Map<Path, Set<String>> hotMixins = new HashMap<>();
+    private int hotConfigs;
+
+    /** What the last addMixins answered (self-test). */
+    volatile List<String> lastMixins = List.of();
+
+    /**
+     * A saved mixins.json: if the only change is mixin classes added to its lists, they go into the running game (the
+     * agent's MixinAdd) and null is returned; otherwise why a restart is needed. The game's copy in the resource output
+     * (what it loaded at start) is left alone; the new mixins go into an extra config next to it, which Mixin takes
+     * after startup. Targets are read from the classes' @Mixin annotation, after compiling them.
+     */
+    String addMixins(Workspace.Target t, long gamePid, Path agentJar, Path json) {
+        String name = json.getFileName().toString();
+        try {
+            var sets = fast.sourceSets(t);
+            Path loaded = null, resOut = null;
+            if (sets != null)
+                for (var s : sets)
+                    for (Path srcDir : s.resSrcDirs())
+                        if (s.resOut() != null && json.toAbsolutePath().normalize().startsWith(srcDir.toAbsolutePath().normalize())) {
+                            resOut = s.resOut();
+                            loaded = resOut.resolve(srcDir.toAbsolutePath().normalize().relativize(json.toAbsolutePath().normalize()));
+                        }
+            if (loaded == null || !Files.exists(loaded)) return name + " changed (the game's copy was not found)";
+            var before = com.google.gson.JsonParser.parseString(Files.readString(loaded)).getAsJsonObject();
+            var after = com.google.gson.JsonParser.parseString(Files.readString(json)).getAsJsonObject();
+            var lists = List.of("mixins", "client", "server");
+            var keys = new HashSet<>(before.keySet());
+            keys.addAll(after.keySet());
+            for (String k : keys)
+                if (!lists.contains(k) && !Objects.equals(before.get(k), after.get(k))) return name + " changed (" + k + "): only added mixins apply while the game runs";
+            var hot = hotMixins.computeIfAbsent(json.toAbsolutePath().normalize().resolveSibling(name + "@" + gamePid), k -> new HashSet<>());   // per game
+            var added = new LinkedHashMap<String, List<String>>();
+            for (String list : lists) {
+                var was = names(before, list);
+                var now = names(after, list);
+                for (String m : was) if (!now.contains(m)) return name + " changed (mixin " + m + " removed): restart to apply";
+                var add = now.stream().filter(m -> !was.contains(m) && !hot.contains(list + ":" + m)).toList();
+                if (!add.isEmpty()) added.put(list, add);
+            }
+            if (added.isEmpty()) return null;
+            // the new classes compiled (and anything else saved with them swapped)
+            boolean compiled = false;
+            for (int i = 0; i < 40 && !(compiled = swap(t, gamePid, agentJar)); i++) Thread.sleep(250);   // busy: a save-triggered swap
+            if (!compiled) return name + " changed (its mixins did not compile)";
+            String pkg = after.has("package") ? after.get("package").getAsString() : "";
+            var targets = new LinkedHashSet<String>();
+            for (var e : added.values())
+                for (String m : e) {
+                    String rel = (pkg.isEmpty() ? m : pkg + "." + m).replace('.', '/') + ".class";
+                    Path cls = null;
+                    for (Path root : classRoots(t)) if (Files.isRegularFile(root.resolve(rel))) cls = root.resolve(rel);
+                    if (cls == null) return name + " changed (" + m + " not compiled)";
+                    targets.addAll(StartupCode.mixinTargets(Files.readAllBytes(cls)));
+                }
+            var config = after.deepCopy();
+            for (String list : lists) config.remove(list);
+            for (var e : added.entrySet()) {
+                var arr = new com.google.gson.JsonArray();
+                e.getValue().forEach(arr::add);
+                config.add(e.getKey(), arr);
+            }
+            String configName = "sulfurframe-hot-" + ProcessHandle.current().pid() + "-" + (++hotConfigs) + ".mixins.json";
+            Files.writeString(resOut.resolve(configName), config.toString());
+            Path list = agentJar.getParent().resolve("mixins-" + ProcessHandle.current().pid() + "-" + (++counter) + ".txt");
+            var lines = new ArrayList<String>();
+            lines.add(configName);
+            lines.addAll(targets);
+            Files.write(list, lines, StandardCharsets.UTF_8);
+            Path result = Path.of(list + ".result");
+            Files.deleteIfExists(result);
+            loadAgent(gamePid, agentJar, "codingFps=" + Settings.codingFps() + ",mixins=" + list);
+            for (int i = 0; i < 300 && !Files.exists(result); i++) Thread.sleep(100);
+            if (!Files.exists(result)) return name + " changed (no answer from the game)";
+            var answer = Files.readAllLines(result, StandardCharsets.UTF_8);
+            lastMixins = List.copyOf(answer);
+            Files.deleteIfExists(list); Files.deleteIfExists(result);
+            var errors = answer.stream().filter(s -> s.startsWith("error")).toList();
+            if (!errors.isEmpty()) return name + " changed (" + String.join("; ", errors) + ")";
+            for (var e : added.entrySet()) for (String m : e.getValue()) hot.add(e.getKey() + ":" + m);
+            log.accept("mixins: " + added.values().stream().flatMap(List::stream).toList() + " added to the running game, "
+                    + answer.stream().filter(s -> s.startsWith("applied to")).count() + " loaded target(s) transformed again");
+            return null;
+        } catch (Exception e) {
+            return name + " changed (" + e + ")";
+        }
+    }
+
+    private static List<String> names(com.google.gson.JsonObject o, String list) {
+        var out = new ArrayList<String>();
+        if (o.has(list) && o.get(list).isJsonArray()) o.getAsJsonArray(list).forEach(e -> out.add(e.getAsString()));
+        return out;
+    }
+
     /** Wait (up to {@code seconds}) until the fast path has its class path; false if it never got one. */
     boolean awaitFastCompile(Workspace.Target t, int seconds) throws InterruptedException {
         fast.prepareAsync(t);

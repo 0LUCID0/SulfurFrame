@@ -594,7 +594,48 @@ final class AutoTest {
         }
         enumFlow(p, src, gameLog);
         newBlockFlow(p, src, gameLog);
+        mixinFlow(p, src, gameLog);
         hierarchyFlow(p, src, gameLog);   // last: the way back to Object needs a restart (JBR refuses it), which comes next
+    }
+
+    /**
+     * A new mixin class is added to showcase.mixins.json while the game runs (Hotswapper.addMixins / MixinAdd): it
+     * targets the probe, which is already loaded, and changes what tag() returns; the probe's log line must show it.
+     * Taking it out again needs a restart (it stays in this game).
+     */
+    private static void mixinFlow(SulfurPanel p, Path probe, Path gameLog) throws Exception {
+        var t = p.selectedTarget();
+        Path json = t.dir().resolve("src/main/resources/showcase.mixins.json");
+        Path dir = probe.getParent().resolve("client/mixin");
+        if (!Files.exists(json) || !Files.isDirectory(dir)) return;
+        String original = Files.readString(json);
+        if (!original.contains("\"SkyMixin\"]")) { check("new mixin added", false, "showcase.mixins.json changed shape"); return; }
+        Path mixin = dir.resolve("SfNewMixin.java");
+        try {
+            Files.writeString(mixin, """
+                    package dev.sulfurframe.showcase.client.mixin;
+
+                    import org.spongepowered.asm.mixin.Mixin;
+                    import org.spongepowered.asm.mixin.injection.At;
+                    import org.spongepowered.asm.mixin.injection.Inject;
+                    import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+                    @Mixin(dev.sulfurframe.showcase.SfHotswapProbe.class)
+                    public class SfNewMixin {
+                        @Inject(method = "tag", at = @At("RETURN"), cancellable = true)
+                        private static void sf$tag(CallbackInfoReturnable<String> cir) { cir.setReturnValue(cir.getReturnValue() + "-mixin"); }
+                    }
+                    """);
+            Files.writeString(json, original.replace("\"SkyMixin\"]", "\"SkyMixin\", \"SfNewMixin\"]"));
+            sleep(1500);
+            String why = p.hotswapper.addMixins(t, p.embedder.gamePid(), agentJarOf(p), json);
+            check("new mixin added to mixins.json -> applied to its loaded target, no restart",
+                    why == null && p.hotswapper.lastMixins.contains("applied to " + probeClassOf(probe)) && waitForLog(gameLog, "-mixin", 15),
+                    why + " " + p.hotswapper.lastMixins);
+        } finally {
+            Files.writeString(json, original);
+            Files.deleteIfExists(mixin);
+        }
     }
 
     /**

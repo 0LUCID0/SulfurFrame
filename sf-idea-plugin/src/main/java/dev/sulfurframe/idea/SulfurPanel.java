@@ -715,9 +715,20 @@ final class SulfurPanel extends JPanel {
         if (!swapOnSave.isSelected() || t == null || !embedder.attached()) return;
         Path dir = t.dir().toAbsolutePath().normalize();
         var all = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(t.buildRoot().toAbsolutePath().normalize())).toList();
-        var startup = all.stream().filter(SulfurPanel::needsRestart).toList();
+        // a mixins.json with only added mixins goes into the running game (Hotswapper.addMixins); anything else waits
+        var mixinConfigs = all.stream().filter(f -> f.getFileName().toString().endsWith("mixins.json")).toList();
+        var startup = all.stream().filter(f -> needsRestart(f) && !mixinConfigs.contains(f)).toList();
         if (!startup.isEmpty())
             offerRestart(String.join(", ", startup.stream().map(f -> f.getFileName().toString()).distinct().toList()) + " changed (read only when the game starts)");
+        if (!mixinConfigs.isEmpty()) {
+            long pid = embedder.gamePid();
+            Thread.ofPlatform().daemon().name("sf-mixins").start(() -> {
+                for (Path f : mixinConfigs) {
+                    String why = hotswapper.addMixins(t, pid, agentJar, f);
+                    if (why != null) offerRestart(why);
+                }
+            });
+        }
         // code from any module of the build (a run config like runAllModsClient runs several; the hotswap compiles and
         // compares every source set on its class path); resources only from the target's own module
         var code = all.stream().filter(f -> !needsRestart(f) && (f.toString().endsWith(".java") || f.toString().endsWith(".kt"))).toList();

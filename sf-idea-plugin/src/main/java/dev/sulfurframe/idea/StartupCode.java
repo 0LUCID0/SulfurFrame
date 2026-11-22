@@ -118,6 +118,27 @@ final class StartupCode {
         return out;
     }
 
+    /** Binary names of the classes a mixin class targets (@Mixin value = classes, targets = names). */
+    static List<String> mixinTargets(byte[] cls) {
+        var out = new ArrayList<String>();
+        new ClassReader(cls).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public AnnotationVisitor visitAnnotation(String desc, boolean visible) {
+                if (!desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")) return null;
+                return new AnnotationVisitor(Opcodes.ASM9) {
+                    @Override public AnnotationVisitor visitArray(String name) {
+                        return new AnnotationVisitor(Opcodes.ASM9) {
+                            @Override public void visit(String n, Object value) {
+                                if (value instanceof Type type) out.add(type.getClassName());
+                                else if (value instanceof String s) out.add(s.replace('/', '.'));
+                            }
+                        };
+                    }
+                };
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return out;
+    }
+
     static boolean entryPoint(String name, String desc) {
         return desc.equals("()V") && (name.equals("onInitialize") || name.equals("onInitializeClient") || name.equals("onInitializeServer"));
     }
