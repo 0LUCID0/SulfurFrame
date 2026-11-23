@@ -27,7 +27,7 @@ public class StartupCodeSelfTest {
                 + " static void register() { %s } static Object helper(String id) { return Registry.register(R, id, new Object()); } }";
         var b1 = compile("t.Blocks", String.format(holder, "", ""), REGISTRY);
         var b2 = compile("t.Blocks", String.format(holder, "public static final Object B = Registry.register(R, \"b\", new Object());", ""), REGISTRY);
-        expect("new field registered in the static initializer -> copy runs <clinit>", plan(b1, b2, "t/Blocks"), "statics=[<clinit>] entries=[] mode=");
+        expect("new field registered in the static initializer -> copy runs <clinit> and the register method", plan(b1, b2, "t/Blocks"), "statics=[<clinit>, register] entries=[] mode=");
         var b3 = compile("t.Blocks", String.format(holder, "", "helper(\"c\");"), REGISTRY);
         expect("register() changed -> copy runs <clinit> and register", plan(b1, b3, "t/Blocks"), "statics=[<clinit>, register] entries=[] mode=");
 
@@ -82,6 +82,23 @@ public class StartupCodeSelfTest {
         expect("mixin removed -> restart", Hotswapper.mixinsAdded(before, json("{\"package\":\"p\",\"client\":[\"A\"],\"injectors\":{\"defaultRequire\":1}}"), Set.of(), new HashMap<>()), "mixin B removed: restart to apply");
         expect("package changed -> restart", Hotswapper.mixinsAdded(before, json("{\"package\":\"q\",\"client\":[\"A\",\"B\"],\"injectors\":{\"defaultRequire\":1}}"), Set.of(), new HashMap<>()), "package: only added mixins apply while the game runs");
 
+        // lambda names: javac numbers lambdas per enclosing method; one added in front of another renumbers it, and an
+        // existing object of the old lambda$a$0 would run the new lambda's body. The old ones keep their names.
+        String lam = "package t; public class L { public static Runnable a() { %s return () -> System.out.print(\"%s\"); }"
+                + " public static Runnable b() { return () -> System.out.print(\"b\"); } }";
+        String front = "Runnable z = () -> System.out.print(\"z\"); z.run();";
+        byte[] l1 = compile("t.L", String.format(lam, "", "a")).get("t/L");
+        byte[] l2 = compile("t.L", String.format(lam, front, "a")).get("t/L");
+        expect("javac renumbered (the hazard): lambda$a$0 is now z", body(l2, "lambda$a$0").contains("ldc z"), true);
+        byte[] s2 = LambdaNames.stabilize(l1, l2);
+        expect("lambda added in front -> the old one keeps lambda$a$0, the new one a fresh name", sortedNames(s2), List.of("lambda$a$0", "lambda$a$sf0", "lambda$b$0"));
+        expect("  lambda$a$0 still has its body", body(s2, "lambda$a$0").contains("ldc a"), true);
+        expect("renamed class runs each lambda's own body (z, then a, b)", runAll(s2, "t.L", "a", "b"), "zab");
+        byte[] l3 = compile("t.L", String.format(lam, "", "a2")).get("t/L");
+        expect("edited lambda keeps its name (existing objects run the edit)", LambdaNames.stabilize(l1, l3) == l3, true);
+        byte[] l4 = compile("t.L", String.format(lam, "", "a") + "").get("t/L");
+        expect("nothing changed -> same bytes", LambdaNames.stabilize(l1, l4) == l4, true);
+
         if (failures.isEmpty()) System.out.println("startup code checks passed");
         else { failures.forEach(f -> System.out.println("FAIL " + f)); System.exit(1); }
     }
@@ -89,6 +106,31 @@ public class StartupCodeSelfTest {
     private static String plan(Map<String, byte[]> before, Map<String, byte[]> after, String cls) {
         var p = StartupCode.rerunPlan(before.get(cls), after.get(cls));
         return p == null ? "null" : "statics=" + p.statics() + " entries=" + p.entries() + " mode=" + p.mode();
+    }
+
+    private static List<String> sortedNames(byte[] cls) {
+        return LambdaNames.lambdas(cls).stream().map(LambdaNames.Lambda::name).sorted().toList();
+    }
+
+    private static String body(byte[] cls, String lambda) {
+        return LambdaNames.lambdas(cls).stream().filter(l -> l.name().equals(lambda)).map(LambdaNames.Lambda::body).findFirst().orElse("");
+    }
+
+    /** Load the class on its own and run the Runnables its static methods return, capturing what they print. */
+    private static String runAll(byte[] cls, String name, String... methods) throws Exception {
+        var loader = new ClassLoader(StartupCodeSelfTest.class.getClassLoader()) {
+            @Override protected Class<?> findClass(String n) throws ClassNotFoundException {
+                if (!n.equals(name)) throw new ClassNotFoundException(n);
+                return defineClass(n, cls, 0, cls.length);
+            }
+        };
+        Class<?> c = loader.loadClass(name);
+        var buf = new java.io.ByteArrayOutputStream();
+        var was = System.out;
+        System.setOut(new java.io.PrintStream(buf, true));
+        try { for (String m : methods) ((Runnable) c.getMethod(m).invoke(null)).run(); }
+        finally { System.setOut(was); }
+        return buf.toString();
     }
 
     private static com.google.gson.JsonObject json(String s) { return com.google.gson.JsonParser.parseString(s).getAsJsonObject(); }

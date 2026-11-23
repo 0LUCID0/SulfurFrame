@@ -598,7 +598,31 @@ Runtime (new fields) needs it here too.
   added to Mixin (`Mixins.addConfiguration`), and target classes that are already loaded are redefined from their
   original bytes; Mixin's hotswap agent then applies every mixin again.
 
-Safety net: the open world is snapshotted automatically right before a run (`save-all flush`, then a copy named
+- **Changed settings of existing blocks and items (`SettingsTransfer`):** `strength(1)` becoming `strength(5)`. Running
+  the code again makes a new object with the new settings, but the registry and the world use the existing one, so the
+  new object's settings fields (settings, sound, components...) go onto the existing object; for a block also each
+  state's cached values (hardness, luminance, map color...), then the shape cache is built again and the chunks redrawn.
+  Fields a mixin added (a `_` or `$` in the name) are left alone: they can point at the new object. A changed class
+  (`Block` to `StairsBlock`) asks for a restart. A change to an existing mixin's body is applied by Mixin's agent at once;
+  a change it refuses (a new `@Unique` field, say) asks for a restart. Without the JetBrains Runtime, Mixin's agent
+  answers "redefined" but the target keeps the old body (seen in self-test run A), so there a changed mixin asks for a
+  restart. Mixin's agent is now added with or without the JBR.
+- **Lambda names (`LambdaNames`):** javac numbers lambdas per enclosing method (`lambda$m$0`, `lambda$m$1`), so a lambda
+  added in front renumbers the ones after it, and a lambda object made earlier (a listener, a stored Supplier) would run
+  another lambda's body. Before sending, the new class's lambdas get their old names (same body, same name; same place,
+  same name; a new lambda, a name nobody had).
+- **World data (dynamic registries):** when a file the server reads only when a world opens changes (`data/<ns>/worldgen/`,
+  `damage_type/`, `enchantment/`...), the world is left and opened again instead of `/reload`, without quitting the game
+  (after any resource reload has finished).
+- **Access wideners (`AccessWiden`):** added entries apply without a restart. Loaded classes are widened and redefined
+  (their mixins applied again), classes that load later are widened as they load, and the compile overlay is updated at
+  once. A class with fields Fabric's Mixin named with a hash and a counter (`…$name$7`) would lose those fields' values
+  when its mixins run again, so that one goes through a restart (without Gradle). Adding mixins has the same guard.
+- **Entities without a renderer:** an entity registered while the game runs can appear before the client has its
+  renderer, and Minecraft crashes. The entity render dispatcher is patched as it loads: such an entity is not drawn until
+  its renderer exists.
+
+Safety net: the open world is snapshotted automatically right before a run (the integrated server writes it out, then a copy named
 `before-init`, the newest 3 per world). If the run fails in the game or the game crashes within 2 minutes, the
 restart notification also offers a restart into the world from before.
 
@@ -606,10 +630,12 @@ Limits (a restart is offered):
 - Adding or removing a JDK or Minecraft type as superclass or interface: adding a JDK interface (`Supplier`) made JBR null
   unrelated `Supplier` fields in Minecraft and the game crashed, so such a class is not sent. JBR refuses a superclass
   going back to `Object`.
-- Removing an enum constant, removing a mixin or changing anything else in a `*mixins.json`, `accesstransformer.cfg`.
+- Removing an enum constant, removing a mixin or changing anything else in a `*mixins.json`, removing an access widener
+  entry, `accesstransformer.cfg`.
 - Whatever `onInitialize` does besides registering (starting a thread, writing a file) happens once more. Writing that
   code so it runs once is the safe way.
-- Dynamic registries from world data (world generation, enchantments...) need the world opened again.
+- Removing a registered entry: it stays in the registry until a restart. Changed world generation code applies to chunks
+  generated from then on.
 - JVM rules: a method frame that is already running finishes with the old code, and a new instance field starts at its
   default value in objects that already exist.
 
@@ -618,7 +644,11 @@ registers nothing; a tick listener added, changed and removed in `onInitialize` 
 new one answers); a tick listener and the same key binding id in `onInitializeClient`; a failing `onInitialize` → a restart
 into the world from before offered; `GAMMA` added to an enum →
 `values`, `valueOf`, the switch, `EnumSet`; a project interface and superclass, a JDK interface held for a restart; a new
-mixin applied to its target, which is already loaded.
+mixin applied to its target, which is already loaded; a block's hardness and an item's stack size changed (back on
+revert, an unchanged block untouched); a sound, particle, entity, block entity, screen type and payload registered, the
+entity renderer and screen registered twice, the entity summoned and rendered; a new damage type usable after the world
+is opened again; a private field of `Util` widened and read by the mod; an existing mixin's body applied, a new `@Unique`
+field a restart.
 
 ### Quick restart (changes hotswap cannot do)
 Mod metadata, build changes and the limits above cannot change while the game runs. The **Restart** button takes care of

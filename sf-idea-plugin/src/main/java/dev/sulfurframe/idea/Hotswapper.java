@@ -57,7 +57,7 @@ final class Hotswapper {
         if (t == null || gamePid <= 0 || agentJar == null) return false;
         var sets = fast.sourceSets(t);
         if (sets == null) { log.accept("resources: class path not read yet (Run client first)"); return false; }
-        boolean assets = false, data = false;
+        boolean assets = false, data = false, worldData = false;
         int copied = 0;
         try {
             for (Path f : files) {
@@ -78,12 +78,26 @@ final class Hotswapper {
                         copied++;
                         String top = rel.getName(0).toString();
                         if (top.equals("assets")) assets = true;
-                        else if (top.equals("data")) data = true;
+                        else if (top.equals("data")) {
+                            data = true;
+                            if (rel.getNameCount() > 3 && WORLD_DATA.contains(rel.getName(2).toString())) worldData = true;
+                        }
                         else assets = true;   // pack.mcmeta and friends: a client reload picks them up
                     }
                 }
             }
             if (copied == 0) return false;
+            if (worldData) {   // read only when a world opens: leave it and open it again (the game keeps running)
+                data = false;
+                Path done = agentJar.getParent().resolve("rejoin-" + gamePid + ".txt");
+                Files.deleteIfExists(done);
+                loadAgent(gamePid, agentJar, "codingFps=" + Settings.codingFps() + ",rejoin=" + done);
+                for (int i = 0; i < 300 && !Files.exists(done); i++) Thread.sleep(100);
+                String answer = Files.exists(done) ? Files.readString(done).strip() : "no answer";
+                lastRejoin = answer;
+                log.accept("resources: world data changed: " + (answer.equals("done") ? "left the world and opened it again" : "could not open the world again (" + answer + ")"));
+                if (!assets) { lastResources = "world data (" + copied + " file(s))"; return answer.equals("done"); }
+            }
             String what = (assets ? "assets" : "") + (assets && data ? "+" : "") + (data ? "data" : "");
             try {
                 var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(gamePid));
@@ -114,6 +128,9 @@ final class Hotswapper {
                 }
         return own;
     }
+
+    /** Class files that had no earlier bytes (new classes): not loaded yet is expected for them. */
+    private final Set<Path> newClassFiles = new HashSet<>();
 
     /** Classes whose superclass / interfaces changed to or from a type outside the project, with that type: not sent. */
     private final Map<Path, Set<String>> foreignHierarchy = new LinkedHashMap<>();
@@ -256,6 +273,60 @@ final class Hotswapper {
         }
     }
 
+    /** Access widener entries already added to the running game, per game and file (by widenLive). */
+    private final Map<String, Set<String>> liveWidenings = new HashMap<>();
+
+    /** What the last widenLive answered (self-test). */
+    volatile List<String> lastWiden = List.of();
+
+    /**
+     * A saved access widener whose only change is added entries: they go into the running game (the agent's
+     * AccessWiden) and the compile overlay (AwOverlay) at once, and null is returned; otherwise why a restart is needed
+     * (a removed entry, an unreadable file, a class the agent will not touch).
+     */
+    String widenLive(Workspace.Target t, long gamePid, Path agentJar, Path aw) {
+        String name = aw.getFileName().toString();
+        try {
+            var sets = fast.sourceSets(t);
+            Path loaded = null;
+            if (sets != null)
+                for (var s : sets)
+                    for (Path srcDir : s.resSrcDirs())
+                        if (s.resOut() != null && aw.toAbsolutePath().normalize().startsWith(srcDir.toAbsolutePath().normalize()))
+                            loaded = s.resOut().resolve(srcDir.toAbsolutePath().normalize().relativize(aw.toAbsolutePath().normalize()));
+            if (loaded == null || !Files.exists(loaded)) return name + " changed (the game's copy was not found)";
+            var before = AwOverlay.parse(Files.readString(loaded)); var after = AwOverlay.parse(Files.readString(aw));
+            if (before == null || after == null) return name + " changed (not a widener this can read)";
+            for (var e : before) if (!after.contains(e)) return name + " changed (" + e.owner() + " " + e.name() + " no longer widened): restart to apply";
+            var live = liveWidenings.computeIfAbsent(aw.toAbsolutePath().normalize() + "@" + gamePid, k -> new HashSet<>());
+            var added = after.stream().filter(e -> !before.contains(e) && !live.contains(e.toString())).toList();
+            if (added.isEmpty()) return null;
+            // compiling sees the new access at once (the overlay goes first on fast compile's class path)
+            var cp = new LinkedHashSet<Path>();
+            for (var s : sets) cp.addAll(s.classpath());
+            if (AwOverlay.build(List.of(aw), new ArrayList<>(cp), fast.awOverlayDir(t)) < 0) return name + " changed (could not apply it for compiling)";
+            fast.invalidateManagers();
+            Path list = agentJar.getParent().resolve("widen-" + ProcessHandle.current().pid() + "-" + (++counter) + ".txt");
+            Files.write(list, added.stream().map(e -> e.access() + " " + e.kind() + " " + e.owner() + (e.name() == null ? "" : " " + e.name() + " " + e.desc())).toList(), StandardCharsets.UTF_8);
+            Path result = Path.of(list + ".result");
+            Files.deleteIfExists(result);
+            loadAgent(gamePid, agentJar, "codingFps=" + Settings.codingFps() + ",widen=" + list);
+            for (int i = 0; i < 100 && !Files.exists(result); i++) Thread.sleep(100);
+            if (!Files.exists(result)) return name + " changed (no answer from the game)";
+            var answer = Files.readAllLines(result, StandardCharsets.UTF_8);
+            lastWiden = List.copyOf(answer);
+            Files.deleteIfExists(list); Files.deleteIfExists(result);
+            var refused = answer.stream().filter(s -> s.startsWith("error") || s.startsWith("restart needed")).toList();
+            if (!refused.isEmpty()) return name + " changed (" + String.join("; ", refused) + ")";
+            added.forEach(e -> live.add(e.toString()));
+            log.accept("access widener: " + added.size() + " entr" + (added.size() == 1 ? "y" : "ies") + " added to the running game ("
+                    + answer.stream().filter(s -> s.startsWith("widened")).count() + " loaded class(es) redefined)");
+            return null;
+        } catch (Exception e) {
+            return name + " changed (" + e + ")";
+        }
+    }
+
     static final List<String> MIXIN_LISTS = List.of("mixins", "client", "server");
 
     /**
@@ -290,6 +361,17 @@ final class Hotswapper {
         if (o.has(list) && o.get(list).isJsonArray()) o.getAsJsonArray(list).forEach(e -> out.add(e.getAsString()));
         return out;
     }
+
+    /**
+     * data/<namespace>/<folder>: folders of the registries a server reads only when a world opens (dynamic registries,
+     * Minecraft 1.21.1), so /reload does not pick them up; the world is left and opened again instead.
+     */
+    static final Set<String> WORLD_DATA = Set.of("worldgen", "dimension", "dimension_type", "damage_type", "enchantment",
+            "enchantment_provider", "chat_type", "trim_material", "trim_pattern", "banner_pattern", "painting_variant",
+            "wolf_variant", "jukebox_song");
+
+    /** What the last rejoin for changed world data answered (self-test). */
+    volatile String lastRejoin = "";
 
     /** Wait (up to {@code seconds}) until the fast path has its class path; false if it never got one. */
     boolean awaitFastCompile(Workspace.Target t, int seconds) throws InterruptedException {
@@ -476,6 +558,21 @@ final class Hotswapper {
             if (!Files.exists(result)) { log.accept("hotswap: no answer from the game"); return false; }
             lastResult = Files.readAllLines(result, StandardCharsets.UTF_8);
             if (!held.isEmpty()) { var all = new ArrayList<>(lastResult); all.addAll(held); lastResult = List.copyOf(all); }
+            // a mixin class is never loaded by name: only Mixin's hotswap agent (added by Run client) picks a change up.
+            // Without it (a game attached later), the change would be silently dropped: a restart applies it.
+            var mixinsNotApplied = new ArrayList<String>();
+            for (String line : lastResult)
+                if (line.startsWith("not loaded: "))
+                    for (Path c : changed)
+                        if (binaryName(t, c).equals(line.substring("not loaded: ".length())) && !newClassFiles.contains(c) && classBytes.get(c) != null && !StartupCode.mixinTargets(classBytes.get(c)).isEmpty())
+                            mixinsNotApplied.add("restart needed: " + line.substring("not loaded: ".length()) + " (a mixin, and Mixin's hotswap agent is not in this game)");
+            // without the JetBrains Runtime, Mixin's agent answers "redefined" for a changed mixin but the target keeps the
+            // old code (seen in the self-test's run without it): say restart instead of claiming it applied
+            if (Jbr.find(t.profile().javaMajor()) == null)
+                for (Path c : changed)
+                    if (!newClassFiles.contains(c) && classBytes.get(c) != null && !StartupCode.mixinTargets(classBytes.get(c)).isEmpty())
+                        mixinsNotApplied.add("restart needed: " + binaryName(t, c) + " (a mixin: without the JetBrains Runtime it is not applied to its targets reliably)");
+            if (!mixinsNotApplied.isEmpty()) { var all = new ArrayList<>(lastResult); all.addAll(mixinsNotApplied); lastResult = List.copyOf(all); }
             Files.deleteIfExists(list); Files.deleteIfExists(result);
             String summary = String.join(", ", lastResult.stream().filter(s -> !s.startsWith("ms ")).toList());
             log.accept("hotswap (" + lastCompiler + ", " + changed.size() + " class file(s), " + (System.currentTimeMillis() - t0) + " ms): " + summary);
@@ -626,6 +723,17 @@ final class Hotswapper {
             if (before != null && before >= e.getValue()) continue;
             byte[] after = Files.readAllBytes(c), old = classBytes.get(c);
             if (old != null && Arrays.equals(old, after)) continue;
+            if (old == null) newClassFiles.add(c); else newClassFiles.remove(c);
+            // lambda methods keep the names the game knows them by (javac renumbers them class-wide); the class file is
+            // rewritten too, so a restart, a new mixin or the next comparison sees what the game runs
+            try {
+                byte[] stable = LambdaNames.stabilize(old, after);
+                if (stable != after) {
+                    Files.write(c, stable);
+                    after = stable;
+                    if (old != null && Arrays.equals(old, after)) continue;
+                }
+            } catch (Throwable ignored) { }
             try {
                 var st = StartupCode.changed(old, after);
                 startup.addAll(st);

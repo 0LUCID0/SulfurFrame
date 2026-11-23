@@ -96,6 +96,14 @@ final class StartupCode {
         if (staticChange) {
             if (!registers[0]) return null;
             statics.add(0, "<clinit>");
+            // the static initializer makes the objects, a register method often registers them (TILE = new Block(...)
+            // then register()): run those too, changed or not, so changed settings reach the registered objects
+            if (!b.getOrDefault("<clinit>()V", "").equals(a.getOrDefault("<clinit>()V", "")))
+                for (var e : access.entrySet()) {
+                    String nd = e.getKey(), n = nd.substring(0, nd.indexOf('('));
+                    if (nd.endsWith("()V") && (e.getValue() & Opcodes.ACC_STATIC) != 0 && (n.startsWith("register") || n.startsWith("initialize"))
+                            && !statics.contains(n)) statics.add(n);
+                }
         }
         if (statics.isEmpty() && entries.isEmpty()) return null;
         return new Rerun(statics, entries, entries.isEmpty() ? Set.of() : calledByEntry, "");
@@ -183,11 +191,14 @@ final class StartupCode {
     }
 
     /** name+descriptor -> a textual form of the instructions. */
-    static Map<String, String> startupBodies(byte[] cls) {
+    static Map<String, String> startupBodies(byte[] cls) { return bodies(cls, StartupCode::startupMethod); }
+
+    /** name+descriptor -> a textual form of the instructions, for the methods whose name passes {@code which}. */
+    static Map<String, String> bodies(byte[] cls, java.util.function.Predicate<String> which) {
         var bodies = new LinkedHashMap<String, String>();
         new ClassReader(cls).accept(new ClassVisitor(Opcodes.ASM9) {
             @Override public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
-                if (!startupMethod(name)) return null;
+                if (!which.test(name)) return null;
                 var sb = new StringBuilder();
                 bodies.put(name + desc, "");
                 return new MethodVisitor(Opcodes.ASM9) {

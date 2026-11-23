@@ -375,10 +375,11 @@ final class SulfurPanel extends JPanel {
             long pid = embedder.gamePid();
             Path done = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "flush-" + pid + ".txt");
             Files.deleteIfExists(done);
-            Hotswapper.loadAgent(pid, agentJar, "codingFps=" + Settings.codingFps() + ",cmd=" + WorldSnapshots.b64("save-all flush") + ",done=" + done);
+            // the integrated server's own save (save-all is a dedicated-server command: in singleplayer it does not exist)
+            Hotswapper.loadAgent(pid, agentJar, "codingFps=" + Settings.codingFps() + ",save=" + done);
             for (int i = 0; i < 150 && !Files.exists(done); i++) Thread.sleep(100);
-            String flushed = Files.exists(done) ? Files.readString(done).strip() : "no answer";
-            if (!flushed.equals("done")) log("snapshot: save-all flush: " + flushed + " (copying anyway)");
+            String flushed = Files.exists(done) ? Files.readAllLines(done).stream().findFirst().orElse("").strip() : "no answer";   // line 2: what it said
+            if (!flushed.equals("done")) log("snapshot: world not written out first: " + flushed + " (copying anyway)");
             Path snap = WorldSnapshots.take(SharedInstance.runDir(t).resolve("saves"), world, t.profile().minecraftVersion(), label);
             if (label == null) lastSnapshot = snap;
             else WorldSnapshots.prune(t.profile().minecraftVersion(), world, label, 3);
@@ -752,7 +753,9 @@ final class SulfurPanel extends JPanel {
         var all = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(t.buildRoot().toAbsolutePath().normalize())).toList();
         // a mixins.json with only added mixins goes into the running game (Hotswapper.addMixins); anything else waits
         var mixinConfigs = all.stream().filter(f -> f.getFileName().toString().endsWith("mixins.json")).toList();
-        var startup = all.stream().filter(f -> needsRestart(f) && !mixinConfigs.contains(f)).toList();
+        // an access widener with only added entries goes into the running game too (Hotswapper.widenLive)
+        var wideners = all.stream().filter(f -> Hotswapper.isWidener(f.getFileName().toString())).toList();
+        var startup = all.stream().filter(f -> needsRestart(f) && !mixinConfigs.contains(f) && !wideners.contains(f)).toList();
         if (!startup.isEmpty())
             offerRestart(String.join(", ", startup.stream().map(f -> f.getFileName().toString()).distinct().toList()) + " changed (read only when the game starts)");
         if (!mixinConfigs.isEmpty()) {
@@ -769,7 +772,16 @@ final class SulfurPanel extends JPanel {
         var code = all.stream().filter(f -> !needsRestart(f) && (f.toString().endsWith(".java") || f.toString().endsWith(".kt"))).toList();
         var res = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(dir) && !needsRestart(f) && !code.contains(f)
                 && f.toString().replace('\\', '/').contains("/resources/")).toList();
-        if (!code.isEmpty()) hotswapAsync();
+        if (!wideners.isEmpty()) {   // first, then the code that may use what it widens
+            long pid = embedder.gamePid();
+            Thread.ofPlatform().daemon().name("sf-widen").start(() -> {
+                for (Path f : wideners) {
+                    String why = hotswapper.widenLive(t, pid, agentJar, f);
+                    if (why != null) offerRestart(why);
+                }
+                if (!code.isEmpty()) hotswapAsync();
+            });
+        } else if (!code.isEmpty()) hotswapAsync();
         if (!res.isEmpty()) {
             long pid = embedder.gamePid();
             Thread.ofPlatform().daemon().name("sf-resources").start(() -> hotswapper.reloadResources(t, pid, agentJar, res));

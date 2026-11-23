@@ -43,6 +43,8 @@ final class MixinAdd {
                 Class<?> c = null;
                 for (Class<?> k : inst.getAllLoadedClasses()) if (k.getName().equals(target) && k.getClassLoader() != null) { c = k; break; }
                 if (c == null) { out.add("later " + target + " (not loaded yet: the mixin applies when it loads)"); continue; }
+                String renamed = AccessWiden.mixinField(c);   // running its mixins again would rename and empty such fields
+                if (renamed != null) { out.add("error " + target + " has the mixin field " + renamed + ": restart to apply"); continue; }
                 byte[] original = originalBytes(agentLoader, c);
                 if (original == null) { out.add("error no original bytes for " + target); continue; }
                 // with Mixin's hotswap agent the redefinition is transformed by it (all mixins); without, transform here

@@ -10,7 +10,7 @@ import java.util.stream.Stream;
 
 /**
  * World snapshots: ~/.sulfurframe/snapshots/<mc>/<world>/<yyyyMMdd-HHmmss>/ hold copies of a world folder.
- * Taking one while the game runs first has the integrated server write everything out ("save-all flush", through the
+ * Taking one while the game runs first has the integrated server write everything out (its saveAll, through the
  * agent) so the copy is consistent. Restoring is a quick restart that swaps the world folder while the game is down;
  * the world being replaced is kept as a snapshot too ("before-restore-..."), so a restore can itself be undone.
  */

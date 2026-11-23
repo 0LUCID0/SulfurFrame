@@ -51,6 +51,7 @@ final class Hotswap {
             }
             out.add("redefined " + ok);
             out.add("not loaded " + (wanted.size() - loadedNames.size()));
+            for (String w : wanted.keySet()) if (!loadedNames.contains(w)) out.add("not loaded: " + w);   // the IDE checks for mixins
             for (String r : restart) out.add("restart needed: " + r);
             out.add("ms " + (System.nanoTime() - t0) / 1_000_000);
             SfHooks.log("hotswap: redefined " + ok + " class(es)" + (restart.isEmpty() ? "" : ", " + restart.size() + " need a restart"));

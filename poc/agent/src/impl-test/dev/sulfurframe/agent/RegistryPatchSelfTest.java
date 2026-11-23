@@ -53,6 +53,23 @@ public class RegistryPatchSelfTest {
         try { expect("hook: binding taken", registerKey.invoke(null, "k"), "k taken"); }
         finally { System.getProperties().remove(RegistryPatch.KEY_HOOK); }
 
+        // ---- entity renderer guard: an entity without a renderer is not drawn instead of crashing the game
+        var disp = compile("package net.minecraft.client.render.entity; public class EntityRenderDispatcher {"
+                + " public Object getRenderer(Object e) { return null; }"
+                + " public boolean shouldRender(Object e, Object frustum, double x, double y, double z) { return getRenderer(e).hashCode() > 0; }"
+                + " public void render(Object e, double x, double y, double z, float a, float b, Object m, Object v, int light) { getRenderer(e).toString(); } }");
+        String dn = "net/minecraft/client/render/entity/EntityRenderDispatcher";
+        var l5 = new Loader(Map.of(dn.replace('/', '.'), RegistryPatch.loadTimeHooks(s -> { }).transform(null, dn, null, null, disp.get(dn))));
+        Class<?> dc = l5.loadClass(dn.replace('/', '.'));
+        Object d = dc.getConstructor().newInstance();
+        expect("no renderer -> shouldRender false, no crash", dc.getMethod("shouldRender", Object.class, Object.class, double.class, double.class, double.class)
+                .invoke(d, "entity", null, 0d, 0d, 0d), false);
+        String rendered;
+        try { dc.getMethod("render", Object.class, double.class, double.class, double.class, float.class, float.class, Object.class, Object.class, int.class)
+                .invoke(d, "entity", 0d, 0d, 0d, 0f, 0f, null, null, 0); rendered = "skipped"; }
+        catch (java.lang.reflect.InvocationTargetException e) { rendered = "crashed: " + e.getCause(); }
+        expect("no renderer -> render skipped, no crash", rendered, "skipped");
+
         // ---- renamed registration copy: its Registry.register calls go through a bridge that asks the hook
         var holder = compile("package t; import net.minecraft.registry.Registry; public class Holder {"
                 + " public static final Object A = Registry.register(null, \"old\", new Object());"

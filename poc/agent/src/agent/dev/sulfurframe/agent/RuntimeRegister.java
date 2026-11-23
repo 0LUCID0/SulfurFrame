@@ -130,16 +130,30 @@ final class RuntimeRegister {
         reopen(unfrozen, frozen, intrusive, false);
         SfHooks.log("runtime registration: " + unfrozen.size() + " registries unfrozen");
         final List<Object[]> added = new ArrayList<Object[]>();   // {registry, "namespace:path"}
+        final List<Object[]> pairs = new ArrayList<Object[]>();   // {new object, existing object}: settings to hand on
+        final Map<Object, String> ids = new IdentityHashMap<Object, String>();
         final int[] kept = {0};
         // {"register" | "registerReference", registry, id (Identifier, RegistryKey or String), value} -> existing or null
         Function<Object[], Object> hook = new Function<Object[], Object>() {
             public Object apply(Object[] call) {
                 try {
+                    // frozen again since the run began (seen between two classes): open it again, or add() throws
+                    if (frozen.getBoolean(call[1])) {
+                        frozen.setBoolean(call[1], false);
+                        if (Boolean.TRUE.equals(INTRUSIVE.get(call[1])) && intrusive.get(call[1]) == null) intrusive.set(call[1], new IdentityHashMap<Object, Object>());
+                        SfHooks.log("runtime registration: " + call[1] + " was frozen again during the run, opened again");
+                    }
                     String id = idOf(call[2], idMethod);
                     Object ref = entry(keyToEntry, call[1], id, idMethod);
                     if (ref != null) {
                         kept[0]++;
-                        return "registerReference".equals(call[0]) ? ref : ref.getClass().getMethod("value").invoke(ref);
+                        Object existing = ref.getClass().getMethod("value").invoke(ref);
+                        if (call[3] != null && call[3] != existing) {
+                            boolean seen = false;
+                            for (Object[] p : pairs) seen |= p[1] == existing;
+                            if (!seen) { pairs.add(new Object[]{call[3], existing}); ids.put(existing, registryName(rootHolder, call[1]) + " " + id); }
+                        }
+                        return "registerReference".equals(call[0]) ? ref : existing;
                     }
                     for (Object[] a : added) if (a[0] == call[1] && a[1].equals(id)) return null;   // bridge and Registry hook both ask
                     added.add(new Object[]{call[1], id});
@@ -169,9 +183,10 @@ final class RuntimeRegister {
                 Class<?> real = loadedClass(inst, c[0]);
                 if (real == null) { out.add("skipped " + c[0] + " (not loaded)"); continue; }
                 String mode = c.length > 5 ? c[5] : "";
+                reopen(unfrozen, frozen, intrusive, true);   // before each class: something froze them between two before
                 if (redefined && (mode.equals("enum") || mode.equals("switchmap"))) ClinitReplay.run(real, c[1], mode, out);
                 else if (redefined && c.length > 2 && !c[2].isEmpty()) shadowRun(real, c, out);
-                if (entries.containsKey(c)) EntryRerun.run(entries.get(c), out);
+                if (entries.containsKey(c)) { reopen(unfrozen, frozen, intrusive, true); EntryRerun.run(entries.get(c), out); }
             }
         } finally {
             System.getProperties().remove("dev.sulfurframe.registry");
@@ -187,6 +202,10 @@ final class RuntimeRegister {
             }
         }
         out.add("kept " + kept[0]);
+        boolean redraw = false;
+        try { redraw = SettingsTransfer.apply(pairs, ids, out); }
+        catch (Throwable t) { out.add("warning settings: " + cause(t)); }
+        if (redraw) redrawChunks(mc, client, out);
         boolean entries = false;
         for (String[] c : classes) entries |= c.length > 3 && !c[3].isEmpty();
         Set<String> shortIds = new LinkedHashSet<String>();
@@ -205,6 +224,19 @@ final class RuntimeRegister {
         if (!added.isEmpty()) ResourceReload.reload(inst, true, true);
         else if (clientEntry || commands) ResourceReload.reload(inst, clientEntry, commands);
         GameMessage.show(inst, added.isEmpty() ? "§aInit code ran again" : "§aRegistered " + added.size() + " new: " + String.join(", ", shortIds));
+    }
+
+    /** A block's look or light changed: the client builds its chunk meshes again (what F3+A does). */
+    private static void redrawChunks(Class<?> mc, Object client, List<String> out) {
+        try {
+            for (String[] n : new String[][]{{"worldRenderer", "reload"}, {"levelRenderer", "allChanged"}}) {
+                Field f;
+                try { f = field(mc, n[0]); } catch (NoSuchFieldException e) { continue; }
+                Object renderer = f.get(client);
+                if (renderer != null) renderer.getClass().getMethod(n[1]).invoke(renderer);
+                return;
+            }
+        } catch (Throwable t) { out.add("warning chunks not redrawn: " + cause(t)); }
     }
 
     /** Unfrozen, and intrusive ones with a holder map (new blocks and items need one in their constructor). */

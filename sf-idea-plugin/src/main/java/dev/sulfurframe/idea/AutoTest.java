@@ -276,6 +276,9 @@ final class AutoTest {
         var t = p.selectedTarget();
         Path main = modInitializerNextTo(probe);
         if (main != null) entryRerunFlow(p, main, t.dir().resolve("run/logs/latest.log"));
+        worldDataFlow(p, t.dir().resolve("run/logs/latest.log"));
+        if (main != null) registriesFlow(p, main, t.dir().resolve("run/logs/latest.log"));
+        worldDataFlow(p, t.dir().resolve("run/logs/latest.log"));   // again after the registries: reopening must still work
         // mod metadata: read only at launch
         Path meta = t.dir().resolve("src/main/resources/fabric.mod.json");
         if (Files.exists(meta)) {
@@ -418,6 +421,103 @@ final class AutoTest {
         sleep(4000);
         var ticks = ticksLogged(gameLog, from, tag);
         check(method + " reverted -> listener gone", ran.contains(cls + "." + method + " again") && ticks.isEmpty(), ran + ", ticks " + ticks);
+    }
+
+    /**
+     * Registries beyond blocks and items, and client registrations, from changed entry points: onInitialize registers a
+     * sound, a particle type, an entity type (the vanilla cow, with default attributes), a block entity type, a container
+     * screen type and a network payload type; onInitializeClient the entity's renderer and the screen, twice (the second
+     * run must not trip over the first one's registrations). The entity is summoned and rendered for a few seconds (a
+     * missing renderer crashes the game), the sound plays.
+     */
+    private static void registriesFlow(SulfurPanel p, Path main, Path gameLog) throws Exception {
+        var t = p.selectedTarget();
+        Path client = main.getParent().resolve("client/" + main.getFileName().toString().replace(".java", "Client.java"));
+        if (Jbr.find(t.profile().javaMajor()) == null || !Files.exists(client)) return;
+        String pkg = probeClassOf(main).replaceFirst("\\.[^.]+$", ""), cls = probeClassOf(main);
+        String src = Files.readString(main), csrc = Files.readString(client);
+        String head = "public void onInitialize() {", chead = "public void onInitializeClient() {";
+        String fieldsAnchor = "public static final Logger LOGGER";
+        if (!src.contains(head) || !src.contains(fieldsAnchor) || !csrc.contains(chead)) { check("other registries", false, "demo changed shape"); return; }
+        Path payload = main.getParent().resolve("SfPayload.java");
+        String id = "net.minecraft.util.Identifier.of(\"showcase\", ";
+        try {
+            Files.writeString(payload, "package " + pkg + ";\n\npublic record SfPayload(int n) implements net.minecraft.network.packet.CustomPayload {\n"
+                    + "    public static final Id<SfPayload> ID = new Id<>(" + id + "\"sf_payload\"));\n"
+                    + "    public static final net.minecraft.network.codec.PacketCodec<io.netty.buffer.ByteBuf, SfPayload> CODEC =\n"
+                    + "            net.minecraft.network.codec.PacketCodec.tuple(net.minecraft.network.codec.PacketCodecs.INTEGER, SfPayload::n, SfPayload::new);\n"
+                    + "    @Override public Id<? extends net.minecraft.network.packet.CustomPayload> getId() { return ID; }\n}\n");
+            Files.writeString(main, src
+                    .replace(fieldsAnchor, "public static net.minecraft.entity.EntityType<net.minecraft.entity.passive.CowEntity> SF_COW;\n"
+                            + "    public static net.minecraft.screen.ScreenHandlerType<net.minecraft.screen.GenericContainerScreenHandler> SF_MENU;\n    " + fieldsAnchor)
+                    .replace(head, head
+                            + "\n\t\tnet.minecraft.registry.Registry.register(net.minecraft.registry.Registries.SOUND_EVENT, " + id + "\"sf_sound\"), net.minecraft.sound.SoundEvent.of(" + id + "\"sf_sound\")));"
+                            + "\n\t\tnet.minecraft.registry.Registry.register(net.minecraft.registry.Registries.PARTICLE_TYPE, " + id + "\"sf_particle\"), net.fabricmc.fabric.api.particle.v1.FabricParticleTypes.simple());"
+                            + "\n\t\tSF_COW = net.minecraft.registry.Registry.register(net.minecraft.registry.Registries.ENTITY_TYPE, " + id + "\"sf_cow\"),"
+                            + " net.minecraft.entity.EntityType.Builder.create(net.minecraft.entity.passive.CowEntity::new, net.minecraft.entity.SpawnGroup.CREATURE).dimensions(0.9f, 1.4f).build());"
+                            + "\n\t\tnet.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry.register(SF_COW, net.minecraft.entity.passive.CowEntity.createCowAttributes());"
+                            + "\n\t\tnet.minecraft.registry.Registry.register(net.minecraft.registry.Registries.BLOCK_ENTITY_TYPE, " + id + "\"sf_be\"),"
+                            + " net.minecraft.block.entity.BlockEntityType.Builder.create(net.minecraft.block.entity.SignBlockEntity::new, ShowcaseBlocks.TILE).build());"
+                            + "\n\t\tSF_MENU = net.minecraft.registry.Registry.register(net.minecraft.registry.Registries.SCREEN_HANDLER, " + id + "\"sf_menu\"),"
+                            + " new net.minecraft.screen.ScreenHandlerType<>(net.minecraft.screen.GenericContainerScreenHandler::createGeneric9x1, net.minecraft.resource.featuretoggle.FeatureFlags.VANILLA_FEATURES));"
+                            + "\n\t\tnet.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry.playS2C().register(SfPayload.ID, SfPayload.CODEC);"));
+            String ran = rerunOnce(p);
+            for (String r : new String[]{"sound_event showcase:sf_sound", "particle_type showcase:sf_particle", "entity_type showcase:sf_cow",
+                    "block_entity_type showcase:sf_be", "screen_handler showcase:sf_menu"})
+                check("registered in the running game: " + r, ran.contains("registered " + r), ran);
+            Files.writeString(client, csrc.replace(chead, chead
+                    + "\n\t\tnet.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(" + cls + ".SF_COW, net.minecraft.client.render.entity.CowEntityRenderer::new);"
+                    + "\n\t\tnet.minecraft.client.gui.screen.ingame.HandledScreens.register(" + cls + ".SF_MENU, net.minecraft.client.gui.screen.ingame.GenericContainerScreen::new);"));
+            String c1 = rerunOnce(p);
+            check("client: entity renderer and screen registered by onInitializeClient", c1.contains(".onInitializeClient again") && !c1.contains("error"), c1);
+            Files.writeString(client, csrc.replace(chead, chead + "\n\t\t" + cls + ".LOGGER.info(\"[SF] client again\");"
+                    + "\n\t\tnet.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(" + cls + ".SF_COW, net.minecraft.client.render.entity.CowEntityRenderer::new);"
+                    + "\n\t\tnet.minecraft.client.gui.screen.ingame.HandledScreens.register(" + cls + ".SF_MENU, net.minecraft.client.gui.screen.ingame.GenericContainerScreen::new);"));
+            String c2 = rerunOnce(p);
+            check("client: the same registrations a second time (no duplicate refused)", c2.contains(".onInitializeClient again") && !c2.contains("error"), c2);
+            long pid = p.embedder.gamePid();
+            String summon = command(p, "execute as @p at @s run summon showcase:sf_cow ~ ~ ~3");
+            sleep(5000);   // rendered meanwhile: no renderer would crash the game
+            String sound = command(p, "playsound showcase:sf_sound master @p");
+            check("new entity summoned and rendered, new sound played", "done".equals(summon) && "done".equals(sound) && waitForLog(gameLog, "Summoned new", 10)
+                    && ProcessHandle.of(pid).isPresent() && p.embedder.attached(), summon + ", " + sound);
+            command(p, "kill @e[type=showcase:sf_cow]");
+        } finally {
+            Files.writeString(main, src);
+            Files.writeString(client, csrc);
+            Files.deleteIfExists(payload);
+        }
+        rerunOnce(p);   // both entry points back to the old code
+    }
+
+    /**
+     * World data (a dynamic registry: a new damage type) is read only when a world opens: saving it leaves the world and
+     * opens it again, without quitting the game, and the new damage type works there.
+     */
+    private static void worldDataFlow(SulfurPanel p, Path gameLog) throws Exception {
+        var t = p.selectedTarget();
+        Path dir = t.dir().resolve("src/main/resources/data/showcase/damage_type");
+        if (!Files.isDirectory(t.dir().resolve("src/main/resources/data")) && !Files.isDirectory(t.dir().resolve("src/main/resources/assets"))) return;
+        Path json = dir.resolve("sf_damage.json");
+        long pid = p.embedder.gamePid();
+        try {
+            Files.createDirectories(dir);
+            Files.writeString(json, "{\"message_id\": \"generic\", \"scaling\": \"never\", \"exhaustion\": 0.0}\n");
+            int from = Files.exists(gameLog) ? Files.readString(gameLog).length() : 0;
+            boolean ok = p.hotswapper.reloadResources(t, pid, agentJarOf(p), java.util.List.of(json));
+            boolean back = false;
+            for (int i = 0; i < 120 && !back; i++) { sleep(500); back = Files.readString(gameLog).substring(Math.min(from, Files.readString(gameLog).length())).contains("logged in with entity id"); }
+            sleep(2000);
+            String damage = command(p, "damage @p 1 showcase:sf_damage");
+            String said = lastCommandSaid;
+            // applied, or the player is immune (creative): either way the type exists; an unknown one is an argument error
+            boolean known = said.contains("Applied") || said.toLowerCase().contains("immune") || said.toLowerCase().contains("invulnerable");
+            check("world data changed (new damage type) -> world left and opened again, the game kept running, the new type works",
+                    ok && "done".equals(p.hotswapper.lastRejoin) && back && p.embedder.gamePid() == pid && "done".equals(damage) && known,
+                    p.hotswapper.lastRejoin + ", back " + back + ", " + damage + ": " + said);
+        } finally {
+            Files.deleteIfExists(json);
+        }
     }
 
     /** Save-path hotswap (as when the editor saves); the registration answer, or why there is none. */
@@ -639,8 +739,119 @@ final class AutoTest {
         }
         enumFlow(p, src, gameLog);
         newBlockFlow(p, src, gameLog);
+        settingsFlow(p, src);
         mixinFlow(p, src, gameLog);
+        awLiveFlow(p, src, gameLog);
+        mixinChangeFlow(p, src, gameLog);
         hierarchyFlow(p, src, gameLog);   // last: the way back to Object needs a restart (JBR refuses it), which comes next
+    }
+
+    /**
+     * The settings of a block and an item that are already registered change (TILE's strength, SULFUR_CUBE's stack size):
+     * the existing objects take them (SettingsTransfer), read back from the game; reverting takes them back.
+     */
+    private static void settingsFlow(SulfurPanel p, Path probe) throws Exception {
+        var t = p.selectedTarget();
+        Path blocks = probe.getParent().resolve("ShowcaseBlocks.java"), items = probe.getParent().resolve("ShowcaseItems.java");
+        if (!Files.exists(blocks) || !Files.exists(items) || Jbr.find(t.profile().javaMajor()) == null) return;
+        String b = Files.readString(blocks), i = Files.readString(items);
+        if (!b.contains("strength(1.0f)") || !i.contains("new Item(new Item.Settings())")) { check("settings changed", false, "demo changed shape"); return; }
+        try {
+            Files.writeString(blocks, b.replace("strength(1.0f)", "strength(5.0f)"));
+            Files.writeString(items, i.replace("new Item(new Item.Settings())", "new Item(new Item.Settings().maxCount(16))"));
+            p.hotswapper.lastRegistration = java.util.List.of();
+            sleep(1500);
+            swapRetry(p, t);
+            String reg = String.join(" | ", p.hotswapper.lastRegistration);
+            check("block settings changed -> the registered block takes them (hardness read back)", reg.contains("settings changed: block showcase:tile")
+                    && reg.contains("hardness 1.0 -> 5.0"), reg);
+            check("item settings changed -> the registered item takes them (components)", reg.contains("settings changed: item showcase:sulfur_cube")
+                    && reg.contains("components"), reg);
+            check("an unchanged block reports no change (nothing copied over wrongly)", !reg.contains("settings changed: block showcase:probe_block"), reg);
+        } finally {
+            Files.writeString(blocks, b);
+            Files.writeString(items, i);
+        }
+        p.hotswapper.lastRegistration = java.util.List.of();
+        sleep(1500);
+        swapRetry(p, t);
+        String back = String.join(" | ", p.hotswapper.lastRegistration);
+        check("settings reverted -> the old values back", back.contains("hardness 5.0 -> 1.0"), back);
+    }
+
+    /**
+     * An existing mixin changes: its injected body (Mixin's hotswap agent applies it to the target at once), then a new
+     * @Unique field (Mixin may refuse such a change: then a restart, never a crash).
+     */
+    private static void mixinChangeFlow(SulfurPanel p, Path probe, Path gameLog) throws Exception {
+        var t = p.selectedTarget();
+        Path fog = probe.getParent().resolve("client/mixin/FogMixin.java");
+        if (!Files.exists(fog)) return;
+        String original = Files.readString(fog), anchor = "Vec3d sky = world.getSkyColor(camera.getPos(), tickDelta);";
+        if (!original.contains(anchor)) { check("mixin change", false, "FogMixin changed shape"); return; }
+        String logger = probeClassOf(probe).replaceFirst("\\.[^.]+$", "") + ".Showcase.LOGGER";
+        if (Jbr.find(t.profile().javaMajor()) == null) {   // no JBR: a changed mixin is a restart, never a silent no-op
+            try {
+                Files.writeString(fog, original.replace(anchor, "if (world.getTime() % 100 < 3) " + logger + ".info(\"[SF-FOG] m1 \" + world.getTime());\n        " + anchor));
+                sleep(1500);
+                swapRetry(p, t);
+                check("mixin body changed, no JBR -> restart offered (not silently dropped)",
+                        p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed") && s.contains("FogMixin")), String.valueOf(p.hotswapper.lastResult));
+            } finally {
+                Files.writeString(fog, original);
+                sleep(1500);
+                swapRetry(p, t);
+            }
+            return;
+        }
+        try {
+            Files.writeString(fog, original.replace(anchor, "if (world.getTime() % 100 < 3) " + logger + ".info(\"[SF-FOG] m1 \" + world.getTime());\n        " + anchor));
+            sleep(1500);
+            swapRetry(p, t);
+            check("mixin body changed -> applied to its target at once", waitForLog(gameLog, "[SF-FOG] m1", 15)
+                    && p.hotswapper.lastResult.stream().noneMatch(s -> s.startsWith("restart needed")), String.valueOf(p.hotswapper.lastResult));
+            long pid = p.embedder.gamePid();
+            Files.writeString(fog, original.replace("public class FogMixin {", "public class FogMixin {\n    @org.spongepowered.asm.mixin.Unique private static int sf$calls;")
+                    .replace(anchor, "if (++sf$calls % 300 == 0) " + logger + ".info(\"[SF-FOG] m2 \" + sf$calls);\n        " + anchor));
+            sleep(1500);
+            swapRetry(p, t);
+            boolean applied = waitForLog(gameLog, "[SF-FOG] m2", 15);
+            boolean restart = p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed"));
+            check("mixin with a new @Unique field -> applied or a restart offered, the game still running", (applied || restart)
+                    && ProcessHandle.of(pid).isPresent() && p.embedder.attached(), (applied ? "applied " : "") + p.hotswapper.lastResult);
+        } finally {
+            Files.writeString(fog, original);
+            sleep(1500);
+            swapRetry(p, t);
+        }
+    }
+
+    /**
+     * An access widener entry is added while the game runs (Hotswapper.widenLive / AccessWiden): a private Minecraft field
+     * becomes public in the running game and for compiling, and the probe reads it after a hotswap; no restart.
+     */
+    private static void awLiveFlow(SulfurPanel p, Path probe, Path gameLog) throws Exception {
+        var t = p.selectedTarget();
+        Path aw;
+        try (var s = Files.list(t.dir().resolve("src/main/resources"))) { aw = s.filter(f -> Hotswapper.isWidener(f.getFileName().toString())).findFirst().orElse(null); }
+        if (aw == null || Jbr.find(t.profile().javaMajor()) == null) return;
+        String awOriginal = Files.readString(aw), original = Files.readString(probe);
+        try {
+            Files.writeString(aw, awOriginal.stripTrailing() + "\naccessible field net/minecraft/util/Util MAIN_WORKER_EXECUTOR Ljava/util/concurrent/ExecutorService;\n");
+            String why = p.hotswapper.widenLive(t, p.embedder.gamePid(), agentJarOf(p), aw);
+            check("access widener entry added -> widened in the running game, no restart", why == null
+                    && p.hotswapper.lastWiden.contains("widened net.minecraft.util.Util"), why + " " + p.hotswapper.lastWiden);
+            Files.writeString(probe, original.replaceFirst("static String message\\(\\) \\{[^}]*}",
+                    java.util.regex.Matcher.quoteReplacement("static String message() { return \"w-\" + (net.minecraft.util.Util.MAIN_WORKER_EXECUTOR != null); }")));
+            sleep(1500);
+            swapRetry(p, t);
+            check("  the mod reads the widened field after a hotswap", waitForLog(gameLog, "[SF-PROBE] w-true", 15), p.hotswapper.lastCompiler + " " + p.hotswapper.lastResult);
+        } finally {
+            Files.writeString(aw, awOriginal);   // the entry stays in this game; the next start reads the file again
+            Files.writeString(probe, original);
+            sleep(1500);
+            swapRetry(p, t);
+        }
     }
 
     /**
@@ -825,8 +1036,14 @@ final class AutoTest {
         Files.deleteIfExists(done);
         Hotswapper.loadAgent(pid, agentJarOf(p), "cmd=" + WorldSnapshots.b64(cmd) + ",done=" + done);
         for (int i = 0; i < 100 && !Files.exists(done); i++) sleep(100);
-        return Files.exists(done) ? Files.readString(done).strip() : "no answer";
+        if (!Files.exists(done)) return "no answer";
+        var lines = Files.readAllLines(done);
+        lastCommandSaid = lines.size() > 1 ? lines.get(1) : "";
+        return lines.isEmpty() ? "" : lines.get(0).strip();
     }
+
+    /** What the last command() said (its feedback or error, plain text). */
+    private static volatile String lastCommandSaid = "";
 
     /** The probe's fully qualified class name, from its package line and file name. */
     private static String probeClassOf(Path probe) {
@@ -898,7 +1115,7 @@ final class AutoTest {
         // snapshot, then restore it (quick restart in between)
         p.snapshot(null);
         Path snap = p.lastSnapshot;
-        check("snapshot of the open world (after save-all flush)", snap != null && Files.exists(snap.resolve("level.dat")), String.valueOf(snap));
+        check("snapshot of the open world (written out first)", snap != null && Files.exists(snap.resolve("level.dat")) && !p.logText().contains("world not written out first"), String.valueOf(snap));
         long before = p.embedder.gamePid();
         if (snap != null) {
             p.restoreSnapshot(testWorld(), snap);

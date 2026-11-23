@@ -44,11 +44,13 @@ final class GameLauncher {
             // every init script below patches exactly this task (runClient, or a run config like runAllModsClient)
             var cmd = new ArrayList<>(List.of(wrapper.toString(), target.runTask(), "--console=plain", "-PsfRunTask=" + target.task()));
             Path jbr = Jbr.find(profile.javaMajor());
+            // the init script always (Mixin's hotswap agent); its JBR part only with -PsfJbr
+            Path jbrInit = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "sf-jbr.init.gradle");
+            Files.createDirectories(jbrInit.getParent());
+            Files.writeString(jbrInit, Jbr.INIT_SCRIPT, StandardCharsets.UTF_8);
+            cmd.addAll(List.of("--init-script", jbrInit.toString()));
             if (jbr != null) {   // DCEVM: hotswap may then add/remove methods and fields
-                Path init = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "sf-jbr.init.gradle");
-                Files.createDirectories(init.getParent());
-                Files.writeString(init, Jbr.INIT_SCRIPT, StandardCharsets.UTF_8);
-                cmd.addAll(List.of("--init-script", init.toString(), "-PsfJbr=" + jbr));
+                cmd.add("-PsfJbr=" + jbr);
                 Path jbrHome = jbr.getParent().getParent();
                 if (Files.isRegularFile(jbrHome.resolve("bin").resolve(jbr.getFileName().toString().replace("java", "javac")))) {
                     // a full JDK: usable as a Gradle toolchain, for builds that choose the game's Java by toolchain

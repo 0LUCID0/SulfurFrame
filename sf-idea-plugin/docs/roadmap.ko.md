@@ -19,7 +19,7 @@
 | 컴파일 상수가 읽는 쪽에 복사됨 | javac | 이미 우회: 사용처 소스를 다시 컴파일해 함께 보냄 |
 | 새 블록·아이템 등록 | **Minecraft** (시작 뒤 레지스트리를 얼림) | 해결 (Fabric 1.21.1): 레지스트리를 잠시 풀고 등록 코드를 다시 돌림 → 목표 2 |
 | 모드 메타데이터 | **우리 구현** | 해결: 지난 빌드의 값으로 직접 채워 Gradle 없이 재시작 (`MetadataTemplate`) |
-| 액세스 와이드너, class tweaker | **우리 구현** | 해결: Fabric Loader가 시작할 때 적용, 컴파일용 클래스만 직접 넓혀 Gradle 없이 재시작 (`AwOverlay`) |
+| 액세스 와이드너, class tweaker | **우리 구현** | 해결: 추가는 실행 중에 적용(`AccessWiden`), 그 밖에는 Fabric Loader가 시작할 때 적용하고 컴파일용 클래스만 직접 넓혀 Gradle 없이 재시작 (`AwOverlay`) |
 | 지운 소스·리소스의 출력이 남음, Windows 명령줄 길이 | **우리 구현** (Gradle 없는 재시작) | 다음 Gradle 실행 때 정리, 길면 `CLASSPATH`로 넘김 |
 | 상속에 JDK·Minecraft 타입을 넣거나 빼기, 부모를 `Object`로 되돌리기 | **JBR** (넣으면 무관한 필드가 null이 되어 크래시, 되돌리기는 거부) | 재시작 권함 |
 
@@ -42,7 +42,9 @@
 
 - **끝남:** 새 블록·아이템(레지스트리 전부), 바뀐 `onInitialize`/`onInitializeClient`(이벤트·리로드 리스너, payload 타입,
   렌더러, 화면, 명령어, 키 바인딩을 두 번 걸지 않고), enum 상수 추가, 프로젝트 타입끼리의 상속 변경, `*mixins.json`에 더한
-  Mixin이 재시작 없이 들어갑니다(`RuntimeRegister`, `EntryRerun`, `ClinitReplay`, `MixinAdd`). 첫 실험에서 깨진 것은 아이템
+  Mixin이 재시작 없이 들어갑니다(`RuntimeRegister`, `EntryRerun`, `ClinitReplay`, `MixinAdd`). 이어서 기존 블록·아이템의 설정
+  변경(`SettingsTransfer`), 람다 이름 고정(`LambdaNames`), 월드 데이터 변경 시 월드 재입장, 액세스 와이드너 추가를 재시작 없이
+  (`AccessWiden`), 렌더러 없는 엔티티 크래시 방지까지 들어갔습니다. 첫 실험에서 깨진 것은 아이템
   모델(아이템 렌더러가 시작할 때 목록을 만듦)과 크리에이티브 탭(캐시)이었습니다. 자세한 동작과 한계는 플러그인 README의
   "시작할 때만 도는 코드도 실행 중에".
 - 범위: 싱글플레이 개발 클라이언트. 멀티플레이와 배포용 빌드는 다루지 않습니다.

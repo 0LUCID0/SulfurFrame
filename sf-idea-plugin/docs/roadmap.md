@@ -19,7 +19,7 @@ constants + re-applying Mixins). The restarts that remain fall into two groups b
 | Compile-time constants are copied into the classes that read them | javac | Already worked around: the users' sources are recompiled and sent along |
 | Registering new blocks, items and the like | **Minecraft** (freezes its registries after startup) | Solved (Fabric 1.21.1): the registries are unfrozen for a moment and the registration code runs again → goal 2 |
 | Mod metadata | **Our implementation** | Solved: filled in with the last build's values, restart without Gradle (`MetadataTemplate`) |
-| Access wideners, class tweakers | **Our implementation** | Solved: Fabric Loader applies them at start, only the classes for compiling are widened here, restart without Gradle (`AwOverlay`) |
+| Access wideners, class tweakers | **Our implementation** | Solved: added entries apply while the game runs (`AccessWiden`); otherwise Fabric Loader applies them at start, only the classes for compiling are widened here, restart without Gradle (`AwOverlay`) |
 | Outputs of deleted sources and resources stay behind; Windows command line length | **Our implementation** (restart without Gradle) | Cleaned up on the next Gradle run; a long class path goes through `CLASSPATH` |
 | A JDK or Minecraft type added to or removed from the hierarchy, a superclass back to `Object` | **JBR** (adding one nulled unrelated fields and crashed; going back is refused) | A restart is suggested |
 
@@ -47,7 +47,10 @@ constants + re-applying Mixins). The restarts that remain fall into two groups b
 - **Done:** new blocks and items (every registry), a changed `onInitialize`/`onInitializeClient` (event and reload
   listeners, payload types, renderers, screens, commands and key bindings, none hooked up twice), new enum constants,
   hierarchy changes between the project's own types, and mixins added to a `*mixins.json` apply without a restart
-  (`RuntimeRegister`, `EntryRerun`, `ClinitReplay`, `MixinAdd`). What broke in the first experiment was the item model (the
+  (`RuntimeRegister`, `EntryRerun`, `ClinitReplay`, `MixinAdd`). Then changed settings of existing blocks and items
+  (`SettingsTransfer`), stable lambda names (`LambdaNames`), the world opened again when world data changes, added access
+  widener entries without a restart (`AccessWiden`) and no crash for an entity without a renderer. What broke in the first
+  experiment was the item model (the
   item renderer lists items at startup) and the creative tabs (cached). How it works and its limits: "Startup code in the
   running game too" in the plugin README.
 - Scope: single-player dev clients. Multiplayer and release builds are out of scope.

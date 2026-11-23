@@ -51,7 +51,10 @@ final class Jbr {
 
     private static String strip(String s) { return s.replace("\"", "").trim(); }
 
-    /** Groovy init script: runClient-like JavaExec tasks run on the JBR given as -PsfJbr=..., with enhanced redefinition. */
+    /**
+     * Groovy init script, applied to every Run client: runClient-like JavaExec tasks run on the JBR given as -PsfJbr=...
+     * (when there is one) with enhanced redefinition, and get Mixin's hotswap agent either way.
+     */
     static final String INIT_SCRIPT = """
             def sfJbr = gradle.startParameter.projectProperties['sfJbr']
             // set when the JBR is a full JDK (has javac): then Gradle can resolve it as a toolchain
@@ -79,7 +82,14 @@ final class Jbr {
                             t.executable = sfJbr
                         }
                         t.jvmArgs('-XX:+AllowEnhancedClassRedefinition')
-                        // Mixin's own hotswap agent: re-applies a changed mixin to its targets when the mixin is redefined
+                    }
+                }
+            } }
+            // Mixin's own hotswap agent, with or without the JBR (a changed mixin body applies on any JVM): re-applies a
+            // changed mixin to its targets when the mixin is redefined
+            allprojects { afterEvaluate {
+                tasks.withType(JavaExec).configureEach { t ->
+                    if ((sfRun ? t.name == sfRun : t.name ==~ /(?i).*runclient.*/)) {
                         t.doFirst {
                             def mixin = t.classpath.files.find { it.name ==~ /(sponge-)?mixin-[0-9].*\\.jar/ }
                             if (mixin != null) t.jvmArgs("-javaagent:" + mixin.absolutePath, '-Dmixin.hotSwap=true')

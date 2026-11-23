@@ -54,6 +54,7 @@ final class ResourceReload {
 
     /** No reload overlay up, and not between starting the integrated server and the client's world arriving. */
     private static boolean idle(Class<?> mc, Object client, String[] n) {
+        if (SfHooks.worldOpening) return false;
         try {
             if (mc.getMethod("getOverlay").invoke(client) != null) return false;
             Object server = mc.getMethod(n[2]).invoke(client);

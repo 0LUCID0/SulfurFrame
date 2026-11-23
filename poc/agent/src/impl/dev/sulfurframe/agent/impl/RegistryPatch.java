@@ -69,6 +69,11 @@ public final class RegistryPatch {
         return new ClassFileTransformer() {
             @Override public byte[] transform(ClassLoader loader, String name, Class<?> redefined, ProtectionDomain pd, byte[] bytes) {
                 if (redefined == null && KEY_BINDINGS.equals(name)) return keyBindingHook(bytes, log);
+                if (redefined == null && ("net/minecraft/client/render/entity/EntityRenderDispatcher".equals(name)
+                        || "net/minecraft/client/renderer/entity/EntityRenderDispatcher".equals(name))) return rendererGuard(bytes, log);
+                if (redefined == null && name != null && WIDEN.containsKey(name)) {   // access widened while the game runs
+                    try { return widen(bytes, WIDEN.get(name)); } catch (Throwable t) { log.accept("access widener: " + name + ": " + t); return null; }
+                }
                 if (redefined != null || name == null || !(name.equals("net/minecraft/registry/Registry") || name.equals("net/minecraft/core/Registry"))) return null;
                 try {
                     ClassReader r = new ClassReader(bytes);
@@ -171,6 +176,126 @@ public final class RegistryPatch {
         }, 0);
         w.visitEnd();
         return w.toByteArray();
+    }
+
+    /**
+     * Access widener entries added while the game runs, by owner (internal name): {access, kind, name, desc}. Fabric
+     * Loader applies only the wideners it read at startup, so classes that load later get these from the load-time
+     * transformer; loaded ones are redefined with them (AccessWiden).
+     */
+    static final java.util.Map<String, List<String[]>> WIDEN = new java.util.concurrent.ConcurrentHashMap<String, List<String[]>>();
+
+    public static void addWidening(String owner, String access, String kind, String name, String desc) {
+        List<String[]> l = WIDEN.get(owner);
+        if (l == null) { l = new java.util.concurrent.CopyOnWriteArrayList<String[]>(); WIDEN.put(owner, l); }
+        l.add(new String[]{access, kind, name, desc});
+    }
+
+    /** All entries for this owner so far (as {access, kind, name, desc}); empty if none. */
+    public static List<String[]> wideningsOf(String owner) {
+        List<String[]> l = WIDEN.get(owner);
+        return l == null ? new ArrayList<String[]>() : l;
+    }
+
+    /**
+     * The class with access widener entries applied, as Fabric's widener does it for compiling and running:
+     * accessible -> public (a widened member's class too), extendable -> public (protected for methods) and not final,
+     * mutable -> a field not final.
+     */
+    public static byte[] widen(byte[] cls, final List<String[]> entries) {
+        ClassReader r = new ClassReader(cls);
+        ClassWriter w = new ClassWriter(0);
+        final String self = r.getClassName();
+        r.accept(new ClassVisitor(Opcodes.ASM9, w) {
+            int classAccess(int access) {
+                for (String[] e : entries) {
+                    if (e[0].equals("mutable")) continue;
+                    boolean ext = e[0].equals("extendable") && e[1].equals("class");
+                    access = pub(access);
+                    if (ext) access &= ~Opcodes.ACC_FINAL;
+                }
+                return access;
+            }
+            @Override public void visit(int v, int access, String name, String sig, String sup, String[] ifs) { super.visit(v, classAccess(access), name, sig, sup, ifs); }
+            @Override public void visitInnerClass(String name, String outer, String inner, int access) {
+                super.visitInnerClass(name, outer, inner, name.equals(self) ? classAccess(access) : access);
+            }
+            @Override public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                for (String[] e : entries)
+                    if (e[1].equals("method") && e[2].equals(name) && e[3].equals(desc)) {
+                        if (e[0].equals("accessible")) access = pub(access);
+                        if (e[0].equals("extendable")) access = (access & Opcodes.ACC_PUBLIC) != 0 ? access & ~Opcodes.ACC_FINAL
+                                : (access & ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL)) | Opcodes.ACC_PROTECTED;
+                    }
+                return super.visitMethod(access, name, desc, sig, ex);
+            }
+            @Override public FieldVisitor visitField(int access, String name, String desc, String sig, Object value) {
+                for (String[] e : entries)
+                    if (e[1].equals("field") && e[2].equals(name) && e[3].equals(desc)) {
+                        if (e[0].equals("accessible")) access = pub(access);
+                        if (e[0].equals("mutable")) access &= ~Opcodes.ACC_FINAL;
+                    }
+                return super.visitField(access, name, desc, sig, value);
+            }
+        }, 0);
+        return w.toByteArray();
+    }
+
+    private static int pub(int access) { return (access & ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED)) | Opcodes.ACC_PUBLIC; }
+
+    /**
+     * An entity type registered while the game runs can be in the world before the client has its renderer (the
+     * renderer comes with the client entry point and a resource reload); Minecraft then crashes in
+     * EntityRenderDispatcher.shouldRender ("entityRenderer is null"). As the dispatcher loads, shouldRender and render
+     * first check getRenderer: no renderer, not drawn (yet). Load time only, like the other hooks.
+     */
+    private static byte[] rendererGuard(byte[] bytes, java.util.function.Consumer<String> log) {
+        try {
+            ClassReader r = new ClassReader(bytes);
+            final String owner = r.getClassName();
+            final String[] getRenderer = {null};
+            r.accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override public MethodVisitor visitMethod(int access, String m, String desc, String sig, String[] ex) {
+                    if (m.equals("getRenderer") && Type.getArgumentTypes(desc).length == 1 && (access & Opcodes.ACC_STATIC) == 0) getRenderer[0] = desc;
+                    return null;
+                }
+            }, ClassReader.SKIP_CODE);
+            if (getRenderer[0] == null) return null;
+            final String entityType = Type.getArgumentTypes(getRenderer[0])[0].getInternalName();
+            ClassWriter w = new ClassWriter(r, ClassWriter.COMPUTE_MAXS);
+            final int[] patched = {0};
+            r.accept(new ClassVisitor(Opcodes.ASM9, w) {
+                @Override public MethodVisitor visitMethod(int access, String m, final String desc, String sig, String[] ex) {
+                    MethodVisitor mv = super.visitMethod(access, m, desc, sig, ex);
+                    Type[] a = Type.getArgumentTypes(desc);
+                    final Type ret = Type.getReturnType(desc);
+                    boolean should = m.equals("shouldRender") && ret.getSort() == Type.BOOLEAN && a.length == 5;
+                    boolean render = m.equals("render") && ret.getSort() == Type.VOID && a.length > 3 && a[0].getInternalName().equals(entityType);
+                    if ((access & Opcodes.ACC_STATIC) != 0 || !(should || render) || !a[0].getInternalName().equals(entityType)) return mv;
+                    patched[0]++;
+                    return new MethodVisitor(Opcodes.ASM9, mv) {
+                        @Override public void visitCode() {
+                            super.visitCode();
+                            Label go = new Label();
+                            mv.visitVarInsn(Opcodes.ALOAD, 0);
+                            mv.visitVarInsn(Opcodes.ALOAD, 1);
+                            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, owner, "getRenderer", getRenderer[0], false);
+                            mv.visitJumpInsn(Opcodes.IFNONNULL, go);
+                            if (ret.getSort() == Type.BOOLEAN) { mv.visitInsn(Opcodes.ICONST_0); mv.visitInsn(Opcodes.IRETURN); }
+                            else mv.visitInsn(Opcodes.RETURN);
+                            mv.visitLabel(go);
+                            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                        }
+                    };
+                }
+            }, 0);
+            if (patched[0] == 0) return null;
+            log.accept("runtime registration: entity renderer guard in " + owner.replace('/', '.') + " (" + patched[0] + " method(s))");
+            return w.toByteArray();
+        } catch (Throwable t) {
+            log.accept("runtime registration: no entity renderer guard: " + t);
+            return null;
+        }
     }
 
     static final String KEY_BINDINGS = "net/fabricmc/fabric/impl/client/keybinding/KeyBindingRegistryImpl";

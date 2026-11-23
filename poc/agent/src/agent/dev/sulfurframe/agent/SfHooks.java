@@ -14,7 +14,9 @@ import java.lang.reflect.Method;
  */
 public final class SfHooks {
     static final boolean LINUX = System.getProperty("os.name", "").startsWith("Linux");
-    public static volatile int codingFps = 15;   // public: SfAgent (app loader) and SfHooks (boot loader) are different runtime packages
+    public static volatile int codingFps = 15;
+    /** A world is being left and opened again (GameSession.rejoin): a resource reload waits (one then never finished loading). */
+    public static volatile boolean worldOpening;   // public: SfAgent (app loader) and SfHooks (boot loader) are different runtime packages
     private static volatile ClassLoader lwjglLoader;
 
     private static final long FOCUS_CACHE_NS = 20_000_000L;
