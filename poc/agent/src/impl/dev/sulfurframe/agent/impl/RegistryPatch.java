@@ -69,6 +69,8 @@ public final class RegistryPatch {
         return new ClassFileTransformer() {
             @Override public byte[] transform(ClassLoader loader, String name, Class<?> redefined, ProtectionDomain pd, byte[] bytes) {
                 if (redefined == null && KEY_BINDINGS.equals(name)) return keyBindingHook(bytes, log);
+                if (redefined == null && ("net/minecraft/registry/SimpleRegistry".equals(name) || "net/minecraft/core/MappedRegistry".equals(name)))
+                    return freezeWatch(bytes, log);
                 if (redefined == null && ("net/minecraft/client/render/entity/EntityRenderDispatcher".equals(name)
                         || "net/minecraft/client/renderer/entity/EntityRenderDispatcher".equals(name))) return rendererGuard(bytes, log);
                 if (redefined == null && name != null && WIDEN.containsKey(name)) {   // access widened while the game runs
@@ -191,6 +193,9 @@ public final class RegistryPatch {
         l.add(new String[]{access, kind, name, desc});
     }
 
+    /** Forget the entries added for this owner (an entry was taken out again: the remaining ones are added anew). */
+    public static void clearWidening(String owner) { WIDEN.remove(owner); }
+
     /** All entries for this owner so far (as {access, kind, name, desc}); empty if none. */
     public static List<String[]> wideningsOf(String owner) {
         List<String[]> l = WIDEN.get(owner);
@@ -242,6 +247,55 @@ public final class RegistryPatch {
     }
 
     private static int pub(int access) { return (access & ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED)) | Opcodes.ACC_PUBLIC; }
+
+    public static final String FREEZE_WATCH = "dev.sulfurframe.freezeWatch";
+
+    /**
+     * Something freezes the registries again while a runtime registration runs (seen twice, cause unknown). As the
+     * registry class loads, freeze() first hands the registry to a watcher (a JDK Consumer in a system property, set only
+     * during a run), which logs who called it.
+     */
+    private static byte[] freezeWatch(byte[] bytes, java.util.function.Consumer<String> log) {
+        try {
+            ClassReader r = new ClassReader(bytes);
+            ClassWriter w = new ClassWriter(r, ClassWriter.COMPUTE_MAXS);
+            final int[] patched = {0};
+            r.accept(new ClassVisitor(Opcodes.ASM9, w) {
+                @Override public MethodVisitor visitMethod(int access, String m, String desc, String sig, String[] ex) {
+                    MethodVisitor mv = super.visitMethod(access, m, desc, sig, ex);
+                    if (!m.equals("freeze") || !desc.startsWith("()") || (access & Opcodes.ACC_STATIC) != 0 || (access & Opcodes.ACC_BRIDGE) != 0) return mv;
+                    patched[0]++;
+                    return new MethodVisitor(Opcodes.ASM9, mv) {
+                        @Override public void visitCode() {
+                            super.visitCode();
+                            Label skip = new Label();
+                            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperties", "()Ljava/util/Properties;", false);
+                            mv.visitLdcInsn(FREEZE_WATCH);
+                            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/Properties", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+                            mv.visitInsn(Opcodes.DUP);
+                            mv.visitJumpInsn(Opcodes.IFNULL, skip);
+                            mv.visitTypeInsn(Opcodes.CHECKCAST, "java/util/function/Consumer");
+                            mv.visitVarInsn(Opcodes.ALOAD, 0);
+                            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/Consumer", "accept", "(Ljava/lang/Object;)V", true);
+                            Label done = new Label();
+                            mv.visitJumpInsn(Opcodes.GOTO, done);
+                            mv.visitLabel(skip);
+                            mv.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{"java/lang/Object"});
+                            mv.visitInsn(Opcodes.POP);
+                            mv.visitLabel(done);
+                            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                        }
+                    };
+                }
+            }, 0);
+            if (patched[0] == 0) return null;
+            log.accept("runtime registration: freeze watch in " + r.getClassName().replace('/', '.'));
+            return w.toByteArray();
+        } catch (Throwable t) {
+            log.accept("runtime registration: no freeze watch: " + t);
+            return null;
+        }
+    }
 
     /**
      * An entity type registered while the game runs can be in the world before the client has its renderer (the

@@ -162,6 +162,18 @@ final class RuntimeRegister {
             }
         };
         System.getProperties().put("dev.sulfurframe.registry", hook);
+        // who else freezes a registry during the run (seen, cause unknown): log the caller once per registry
+        final boolean[] ourFreeze = {false};
+        final Set<Object> reported = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+        System.getProperties().put("dev.sulfurframe.freezeWatch", new java.util.function.Consumer<Object>() {
+            public void accept(Object registry) {
+                if (ourFreeze[0] || !unfrozen.contains(registry) || !reported.add(registry)) return;
+                StringBuilder at = new StringBuilder();
+                StackTraceElement[] st = new Throwable().getStackTrace();
+                for (int i = 1; i < st.length && i < 14; i++) at.append("\n\tat ").append(st[i]);
+                SfHooks.log("runtime registration: " + registry + " frozen during the run by thread '" + Thread.currentThread().getName() + "'" + at);
+            }
+        });
         try {
             // entry points: their old registrations out, before the classes change under them
             Map<String[], Object[]> entries = new LinkedHashMap<String[], Object[]>();
@@ -190,6 +202,7 @@ final class RuntimeRegister {
             }
         } finally {
             System.getProperties().remove("dev.sulfurframe.registry");
+            ourFreeze[0] = true;
             // 4. freeze again; holders made for objects that were not registered (the shadow's copies of existing ones) go
             for (Object reg : unfrozen) {
                 try {
@@ -201,6 +214,7 @@ final class RuntimeRegister {
                 }
             }
         }
+        System.getProperties().remove("dev.sulfurframe.freezeWatch");
         out.add("kept " + kept[0]);
         boolean redraw = false;
         try { redraw = SettingsTransfer.apply(pairs, ids, out); }
@@ -220,7 +234,7 @@ final class RuntimeRegister {
         for (String[] c : classes) clientEntry |= c.length > 3 && c[3].contains("onInitializeClient");
         // new entries: models, translations (client) and loot tables, tags (server); init code alone: renderers and
         // the like (client), and no /reload, which holds the server for seconds
-        boolean commands = out.contains("commands changed");   // /reload builds the command tree again and sends it
+        boolean commands = out.contains("data reload needed");   // /reload: command tree, loot tables, data listeners
         if (!added.isEmpty()) ResourceReload.reload(inst, true, true);
         else if (clientEntry || commands) ResourceReload.reload(inst, clientEntry, commands);
         GameMessage.show(inst, added.isEmpty() ? "§aInit code ran again" : "§aRegistered " + added.size() + " new: " + String.join(", ", shortIds));

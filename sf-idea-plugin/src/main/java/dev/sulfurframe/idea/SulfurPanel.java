@@ -262,6 +262,10 @@ final class SulfurPanel extends JPanel {
         gameLogPanel = new GameLogPanel(project, this::selectedTarget, this::restartAsync, this::log);
         var t = selectedTarget();
         if (t != null) gameLogPanel.follow(t);
+        // the first scan ran in the constructor, before there was a project: the run configurations come now
+        var found = new java.util.ArrayList<Workspace.Target>();
+        for (int i = 0; i < targets.getItemCount(); i++) found.add(targets.getItemAt(i));
+        ensureConfigs(found);
     }
 
     /** One game folder per Minecraft version for all projects (worlds, options, resource packs). */
@@ -610,8 +614,7 @@ final class SulfurPanel extends JPanel {
             if (project.isDisposed()) return;
             var rm = com.intellij.execution.RunManager.getInstance(project);
             com.intellij.execution.RunnerAndConfigurationSettings remembered = null;
-            for (var t : found) { var s = configFor(t); if (key(t).equals(savedTarget.get())) remembered = s; }
-            var sel = rm.getSelectedConfiguration();
+            for (var t : found) { var s = configFor(t); if (key(t).equals(savedTarget.get())) remembered = s; }            var sel = rm.getSelectedConfiguration();
             if (sel == null || !(sel.getConfiguration() instanceof SulfurRunConfiguration)) rm.setSelectedConfiguration(remembered != null ? remembered : configFor(found.get(0)));
         });
     }

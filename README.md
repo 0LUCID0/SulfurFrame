@@ -111,7 +111,7 @@ as one step (its slowest change decides) to counting each changed file as one st
 method bodies and new members (with a JetBrains Runtime, see Install), mixins, and assets or data.
 
 Since 0.3.0, new blocks and items and changed settings of existing ones, `onInitialize`, enum constants, new mixins,
-added access widener entries, world data (the world is opened again) and hierarchy changes between the project's own
+access widener entries added (and taken out again) during the run, data reload events (commands, loot tables), world data (the world is opened again) and hierarchy changes between the project's own
 types apply without a restart too (the numbers above were measured before, so they leave that share out).
 The rest needs a restart (mod metadata, build files, a JDK type in the hierarchy...). A restart skips Gradle and starts the game
 from the command line it was last started with, unless build files changed since (mod metadata is filled in with the last build's values; Fabric Loader applies access wideners as the game starts).

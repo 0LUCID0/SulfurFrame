@@ -54,7 +54,10 @@ constants + re-applying Mixins). The restarts that remain fall into two groups b
   item renderer lists items at startup) and the creative tabs (cached). How it works and its limits: "Startup code in the
   running game too" in the plugin README.
 - Scope: single-player dev clients. Multiplayer and release builds are out of scope.
-- Other Minecraft versions and loaders (the Mojang mapping names are in the tables but untested) go together with the
+- Fabric 1.21.1 with Mojang's official mappings is tested too (`demo/mojang-mod`: a method body, a block and item, a
+  command, a loot table change, a key binding and a model plugin in the running game), and so is a large multi-project
+  mod (a client entrypoint in a subproject run again, a listener replaced, an item registered).
+- Other Minecraft versions and loaders go together with the
   multi-version work of the bigger mod developed alongside, like loader and version support.
 - Safety net (done): the open world is snapshotted automatically right before a run (`before-init`, the newest 3 per
   world). If the run fails in the game or the game crashes right after, a restart into the world from before is offered.

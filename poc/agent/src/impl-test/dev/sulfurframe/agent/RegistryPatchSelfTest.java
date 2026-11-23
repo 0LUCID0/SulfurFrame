@@ -70,6 +70,18 @@ public class RegistryPatchSelfTest {
         catch (java.lang.reflect.InvocationTargetException e) { rendered = "crashed: " + e.getCause(); }
         expect("no renderer -> render skipped, no crash", rendered, "skipped");
 
+        // ---- freeze watch: freeze() first tells a watcher (to find who freezes registries during a run)
+        var reg2 = compile("package net.minecraft.registry; public class SimpleRegistry { public boolean frozen; public SimpleRegistry freeze() { frozen = true; return this; } }");
+        String rn = "net/minecraft/registry/SimpleRegistry";
+        var l6 = new Loader(Map.of(rn.replace('/', '.'), RegistryPatch.loadTimeHooks(s -> { }).transform(null, rn, null, null, reg2.get(rn))));
+        Class<?> rc = l6.loadClass(rn.replace('/', '.'));
+        Object r1 = rc.getConstructor().newInstance();
+        rc.getMethod("freeze").invoke(r1);   // no watcher: just freezes
+        List<Object> seen = new ArrayList<>();
+        System.getProperties().put(RegistryPatch.FREEZE_WATCH, (java.util.function.Consumer<Object>) seen::add);
+        try { rc.getMethod("freeze").invoke(r1); } finally { System.getProperties().remove(RegistryPatch.FREEZE_WATCH); }
+        expect("freeze watch: told who froze, then froze as before", seen.size() == 1 && seen.get(0) == r1 && rc.getField("frozen").getBoolean(r1), true);
+
         // ---- renamed registration copy: its Registry.register calls go through a bridge that asks the hook
         var holder = compile("package t; import net.minecraft.registry.Registry; public class Holder {"
                 + " public static final Object A = Registry.register(null, \"old\", new Object());"

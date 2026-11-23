@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "mojtest",
+  "version": "${version}",
+  "name": "SulfurFrame Mojang-mapped test",
+  "description": "Test mod for SulfurFrame built with Mojang's official mappings.",
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.sulfurframe.mojtest.MojangMod"],
+    "client": ["dev.sulfurframe.mojtest.client.MojangModClient"]
+  },
+  "depends": {"fabricloader": ">=0.16", "minecraft": "~1.21.1", "java": ">=21", "fabric-api": "*"}
+}

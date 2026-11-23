@@ -27,7 +27,7 @@ final class EntryRerun {
     static Object[] prepare(Class<?> real, String[] methods, List<String> owners) throws Throwable {
         String modId = (String) find(real, methods[0])[1];
         ClassLoader l = real.getClassLoader();
-        int commandsBefore = commandListeners(l, owners);
+        int commandsBefore = dataReloadListeners(l, owners);
         List<Object> oldKeys = takeKeyBindings(l, modId);
         int removed = purge(l, owners, modId) + oldKeys.size();
         return new Object[]{real, methods, removed, owners, modId, commandsBefore, oldKeys};
@@ -53,22 +53,46 @@ final class EntryRerun {
             System.getProperties().remove("dev.sulfurframe.keyBinding");
         }
         // commands: the server builds its command tree when it starts and on /reload; Fabric's callback runs then
-        if ((Integer) prepared[5] > 0 || commandListeners(l, (List<String>) prepared[3]) > 0) out.add("commands changed");
+        // what /reload runs (commands, loot table changes, data reload listeners...): they had or have listeners here
+        if ((Integer) prepared[5] > 0 || dataReloadListeners(l, (List<String>) prepared[3]) > 0) out.add("data reload needed");
         try { keyBindingsBack(l, (String) prepared[4], (List<Object>) prepared[6]); }
         catch (Throwable t) { out.add("warning key bindings: " + t); }
     }
 
-    /** Listeners of Fabric's command registration callback (v2, and v1 if present) that came from the owners. */
-    private static int commandListeners(ClassLoader l, List<String> owners) {
+    /** Events the server fires when it loads data: at start and on /reload only. {class, static field}. */
+    private static final String[][] DATA_RELOAD_EVENTS = {
+            {"net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback", "EVENT"},
+            {"net.fabricmc.fabric.api.command.v1.CommandRegistrationCallback", "EVENT"},
+            {"net.fabricmc.fabric.api.loot.v3.LootTableEvents", "MODIFY"},
+            {"net.fabricmc.fabric.api.loot.v3.LootTableEvents", "REPLACE"},
+            {"net.fabricmc.fabric.api.loot.v3.LootTableEvents", "ALL_LOADED"},
+            {"net.fabricmc.fabric.api.loot.v2.LootTableEvents", "MODIFY"},
+            {"net.fabricmc.fabric.api.loot.v2.LootTableEvents", "REPLACE"},
+            {"net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents", "START_DATA_PACK_RELOAD"},
+            {"net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents", "END_DATA_PACK_RELOAD"},
+            {"net.fabricmc.fabric.api.event.lifecycle.v1.CommonLifecycleEvents", "TAGS_LOADED"},
+    };
+
+    /**
+     * Owner listeners of what /reload runs: those events, and server data reload listeners. A changed entry point with
+     * such listeners takes effect on the next data load, so the run ends with /reload.
+     */
+    private static int dataReloadListeners(ClassLoader l, List<String> owners) {
         int n = 0;
-        for (String c : new String[]{"net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback", "net.fabricmc.fabric.api.command.v1.CommandRegistrationCallback"}) {
+        for (String[] e : DATA_RELOAD_EVENTS) {
             try {
-                Object event = Class.forName(c, false, l).getField("EVENT").get(null);
+                Object event = Class.forName(e[0], false, l).getField(e[1]).get(null);
                 Class<?> phaseData = Class.forName("net.fabricmc.fabric.impl.base.event.EventPhaseData", false, l);
                 for (Object phase : (List<?>) field(event.getClass(), "sortedPhases").get(event))
                     for (Object o : (Object[]) field(phaseData, "listeners").get(phase)) if (owned(o, owners)) n++;
             } catch (Throwable ignored) { }
         }
+        try {   // ResourceManagerHelper.get(SERVER_DATA) reload listeners
+            Class<?> c = Class.forName("net.fabricmc.fabric.impl.resource.loader.ResourceManagerHelperImpl", false, l);
+            for (Map.Entry<?, ?> h : ((Map<?, ?>) field(c, "registryMap").get(null)).entrySet())
+                if (String.valueOf(h.getKey()).contains("SERVER"))
+                    for (Object listener : (Set<?>) field(c, "addedListeners").get(h.getValue())) if (owned(listener, owners)) n++;
+        } catch (Throwable ignored) { }
         return n;
     }
 
@@ -193,6 +217,9 @@ final class EntryRerun {
                 {"net.fabricmc.fabric.impl.client.rendering.ArmorRendererRegistryImpl", "RENDERERS", "values"},
                 {"net.minecraft.client.gui.screen.ingame.HandledScreens", "PROVIDERS", "values"},
                 {"net.minecraft.client.gui.screens.MenuScreens", "SCREENS", "values"},
+                // model loading plugins pile up (a list): plugins, and holders of a data loader + plugin
+                {"net.fabricmc.fabric.impl.client.model.loading.ModelLoadingPluginManager", "PLUGINS", "values"},
+                {"net.fabricmc.fabric.impl.client.model.loading.ModelLoadingPluginManager", "PREPARABLE_PLUGINS", "values"},
         };
         for (String[] p : places) {
             try { n += purgeContainer(field(Class.forName(p[0], false, l), p[1]).get(null), owners, null); } catch (Throwable ignored) { }
@@ -262,9 +289,22 @@ final class EntryRerun {
                 if (mine) { it.remove(); n++; }
             }
         } else if (c instanceof Collection) {
-            for (Iterator<?> it = ((Collection<?>) c).iterator(); it.hasNext(); ) if (owned(it.next(), owners)) { it.remove(); n++; }
+            for (Iterator<?> it = ((Collection<?>) c).iterator(); it.hasNext(); ) {
+                Object o = it.next();
+                if (owned(o, owners) || holdsOwned(o, owners)) { it.remove(); n++; }
+            }
         }
         return n;
+    }
+
+    /** A holder object (Fabric's own class) one of whose fields is an owner's object, e.g. a plugin + data loader pair. */
+    private static boolean holdsOwned(Object o, List<String> owners) {
+        if (o == null || !o.getClass().getName().startsWith("net.fabricmc.")) return false;
+        for (Field f : o.getClass().getDeclaredFields()) {
+            if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+            try { f.setAccessible(true); if (owned(f.get(o), owners)) return true; } catch (Throwable ignored) { }
+        }
+        return false;
     }
 
     /** Was this object (a listener, a provider) written in one of the owner classes? */

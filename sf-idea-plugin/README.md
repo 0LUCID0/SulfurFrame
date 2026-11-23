@@ -618,6 +618,16 @@ Runtime (new fields) needs it here too.
   (their mixins applied again), classes that load later are widened as they load, and the compile overlay is updated at
   once. A class with fields Fabric's Mixin named with a hash and a counter (`…$name$7`) would lose those fields' values
   when its mixins run again, so that one goes through a restart (without Gradle). Adding mixins has the same guard.
+  Entries added during the run can be taken out again the same way (the class is redefined from its original bytes with
+  the entries still there). Entries that were in the file when the game started are already in the jar Loom made, so
+  taking one of those out is a restart.
+- **Data reload events:** a run that registers a command (`CommandRegistrationCallback`), a loot table change
+  (`LootTableEvents`), a data pack reload listener or a tag listener reloads the server's data afterwards (`/reload`),
+  because those are read only when the data loads. The old listeners are taken out first.
+- **Client lists read at reload:** model loading plugins (`ModelLoadingPlugin`) registered by the old `onInitializeClient`
+  are taken out before it runs again, and the resource reload after the run runs only the new ones.
+- **Registries frozen again:** a registry closed again while the run is still registering is opened again, and the thread
+  and stack that froze it go to the game log once ("was frozen again during the run"), so the cause can be found.
 - **Entities without a renderer:** an entity registered while the game runs can appear before the client has its
   renderer, and Minecraft crashes. The entity render dispatcher is patched as it loads: such an entity is not drawn until
   its renderer exists.
@@ -631,10 +641,15 @@ Limits (a restart is offered):
   unrelated `Supplier` fields in Minecraft and the game crashed, so such a class is not sent. JBR refuses a superclass
   going back to `Object`.
 - Removing an enum constant, removing a mixin or changing anything else in a `*mixins.json`, removing an access widener
-  entry, `accesstransformer.cfg`.
+  entry that was there when the game started, `accesstransformer.cfg`. Why these stay restarts: a removed enum constant
+  is still referenced by objects, saved data and `ordinal()`-indexed tables in the running game, and other constants
+  would shift; taking a mixin out means transforming its targets again from their original bytes, which loses the values
+  of the fields Fabric's Mixin renamed (the guard above) and leaves objects whose state the mixin set.
 - Whatever `onInitialize` does besides registering (starting a thread, writing a file) happens once more. Writing that
   code so it runs once is the safe way.
-- Removing a registered entry: it stays in the registry until a restart. Changed world generation code applies to chunks
+- Removing a registered entry: it stays in the registry until a restart. Minecraft's registries have no removal: raw ids
+  would shift (they are in chunks and network packets), and blocks in the world, item stacks and tags still point at the
+  entry. Changed world generation code applies to chunks
   generated from then on.
 - JVM rules: a method frame that is already running finishes with the old code, and a new instance field starts at its
   default value in objects that already exist.

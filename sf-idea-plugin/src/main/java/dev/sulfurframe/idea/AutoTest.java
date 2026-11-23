@@ -237,8 +237,13 @@ final class AutoTest {
         }
         var e = p.embedder;
         // attached() turns true just before SetParent: wait for the reparent itself, not only the flag
+        int logFrom = p.logText().length();
         while (!(e.attached() && NativeWindows.parentOf(e.gameHwnd()) == e.canvasNativeHwnd())
-                && System.currentTimeMillis() - t0 < 10 * 60_000) sleep(500);
+                && System.currentTimeMillis() - t0 < 10 * 60_000) {
+            String since = p.logText().substring(Math.min(logFrom, p.logText().length()));
+            if (since.contains("the run exited")) { check("Run client -> game started", false, firstLine(since, "the run exited")); return; }   // no 10-minute wait for a game that is gone
+            sleep(500);
+        }
         long secs = (System.currentTimeMillis() - t0) / 1000;
         long game = e.gameHwnd(), canvas = e.canvasNativeHwnd();
         check("Run client -> game embedded", game != 0 && NativeWindows.parentOf(game) == canvas,
@@ -258,7 +263,12 @@ final class AutoTest {
             check("no JetBrains Runtime -> download offered", JbrDownloader.wasOffered(major) && p.logText().contains("a download is offered"),
                     "Java " + major + ", " + firstLine(p.logText(), "no JetBrains Runtime"));
         String probe = System.getProperty("sulfurframe.autotest.hotswap");
-        if (probe != null) {
+        String realMod = System.getProperty("sulfurframe.autotest.realmod");
+        if (realMod != null) {
+            try { realModFlow(p, Path.of(realMod)); } catch (Exception ex) { check("real mod flow", false, ex.toString()); }
+        } else if (probe != null && Boolean.getBoolean("sulfurframe.autotest.mojang")) {
+            try { mojangFlow(p, Path.of(probe)); } catch (Exception ex) { check("mojang flow", false, ex.toString()); }
+        } else if (probe != null) {
             try { hotswapFlow(p, Path.of(probe)); } catch (Exception ex) { check("hotswap flow", false, ex.toString()); }
             try { restartFlow(p, Path.of(probe), world); } catch (Exception ex) { check("restart flow", false, ex.toString()); }
             if (Boolean.getBoolean("sulfurframe.autotest.worlds"))
@@ -409,7 +419,7 @@ final class AutoTest {
                 if (listener.contains("\"sftest\"")) {
                     String done = command(p, "sftest");
                     check("command added in onInitialize (every " + every + ") -> the new one runs", "done".equals(done)
-                            && waitForLog(gameLog, "[SF-CMD] every " + every, 10) && ran.contains("commands changed"), done + ", " + ran);
+                            && waitForLog(gameLog, "[SF-CMD] every " + every, 10) && ran.contains("data reload needed"), done + ", " + ran);
                 }
             }
         } finally {
@@ -460,21 +470,38 @@ final class AutoTest {
                             + " net.minecraft.block.entity.BlockEntityType.Builder.create(net.minecraft.block.entity.SignBlockEntity::new, ShowcaseBlocks.TILE).build());"
                             + "\n\t\tSF_MENU = net.minecraft.registry.Registry.register(net.minecraft.registry.Registries.SCREEN_HANDLER, " + id + "\"sf_menu\"),"
                             + " new net.minecraft.screen.ScreenHandlerType<>(net.minecraft.screen.GenericContainerScreenHandler::createGeneric9x1, net.minecraft.resource.featuretoggle.FeatureFlags.VANILLA_FEATURES));"
-                            + "\n\t\tnet.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry.playS2C().register(SfPayload.ID, SfPayload.CODEC);"));
+                            + "\n\t\tnet.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry.playS2C().register(SfPayload.ID, SfPayload.CODEC);"
+                            // a loot table change: applied when the server loads data (/reload), which the run must do
+                            + "\n\t\tnet.fabricmc.fabric.api.loot.v3.LootTableEvents.MODIFY.register((key, table, source, registries) -> {"
+                            + " if (key.equals(net.minecraft.block.Blocks.DIRT.getLootTableKey())) table.pool(net.minecraft.loot.LootPool.builder()"
+                            + ".with(net.minecraft.loot.entry.ItemEntry.builder(net.minecraft.item.Items.DIAMOND))); });"));
             String ran = rerunOnce(p);
             for (String r : new String[]{"sound_event showcase:sf_sound", "particle_type showcase:sf_particle", "entity_type showcase:sf_cow",
                     "block_entity_type showcase:sf_be", "screen_handler showcase:sf_menu"})
                 check("registered in the running game: " + r, ran.contains("registered " + r), ran);
+            sleep(4000);   // the /reload the run asked for
+            String loot = command(p, "execute as @p at @s run loot spawn ~ ~ ~3 loot minecraft:blocks/dirt");
+            String dropped = lastCommandSaid;
+            check("loot table changed in onInitialize -> data reloaded, the new drop is there", ran.contains("data reload needed") && "done".equals(loot)
+                    && dropped.contains("2"), loot + ": " + dropped + " | " + ran);
             Files.writeString(client, csrc.replace(chead, chead
                     + "\n\t\tnet.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(" + cls + ".SF_COW, net.minecraft.client.render.entity.CowEntityRenderer::new);"
-                    + "\n\t\tnet.minecraft.client.gui.screen.ingame.HandledScreens.register(" + cls + ".SF_MENU, net.minecraft.client.gui.screen.ingame.GenericContainerScreen::new);"));
+                    + "\n\t\tnet.minecraft.client.gui.screen.ingame.HandledScreens.register(" + cls + ".SF_MENU, net.minecraft.client.gui.screen.ingame.GenericContainerScreen::new);"
+                    + "\n\t\tnet.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin.register(ctx -> " + cls + ".LOGGER.info(\"[SF-MODELS] a\"));"));
             String c1 = rerunOnce(p);
             check("client: entity renderer and screen registered by onInitializeClient", c1.contains(".onInitializeClient again") && !c1.contains("error"), c1);
+            sleep(8000);   // its client reload (plugin "a" runs there) is over before the next run's mark
             Files.writeString(client, csrc.replace(chead, chead + "\n\t\t" + cls + ".LOGGER.info(\"[SF] client again\");"
                     + "\n\t\tnet.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(" + cls + ".SF_COW, net.minecraft.client.render.entity.CowEntityRenderer::new);"
-                    + "\n\t\tnet.minecraft.client.gui.screen.ingame.HandledScreens.register(" + cls + ".SF_MENU, net.minecraft.client.gui.screen.ingame.GenericContainerScreen::new);"));
+                    + "\n\t\tnet.minecraft.client.gui.screen.ingame.HandledScreens.register(" + cls + ".SF_MENU, net.minecraft.client.gui.screen.ingame.GenericContainerScreen::new);"
+                    + "\n\t\tnet.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin.register(ctx -> " + cls + ".LOGGER.info(\"[SF-MODELS] b\"));"));
+            int modelsFrom = Files.readString(gameLog).length();
             String c2 = rerunOnce(p);
             check("client: the same registrations a second time (no duplicate refused)", c2.contains(".onInitializeClient again") && !c2.contains("error"), c2);
+            sleep(8000);   // the client reload after the run: model loading plugins run in it
+            String after = Files.readString(gameLog).substring(modelsFrom);
+            int b = after.split("\\[SF-MODELS] b", -1).length - 1, a = after.split("\\[SF-MODELS] a", -1).length - 1;
+            check("model loading plugin registered again -> only the new one runs, once", b >= 1 && a == 0, "a " + a + ", b " + b);
             long pid = p.embedder.gamePid();
             String summon = command(p, "execute as @p at @s run summon showcase:sf_cow ~ ~ ~3");
             sleep(5000);   // rendered meanwhile: no renderer would crash the game
@@ -521,6 +548,115 @@ final class AutoTest {
     }
 
     /** Save-path hotswap (as when the editor saves); the registration answer, or why there is none. */
+    /**
+     * A mod built with Mojang's official mappings (demo/mojang-mod): the game runs with Mojang names, so the agent's
+     * lookups (registries, commands, loot reload, key bindings, model plugins) must find their Mojang forms.
+     */
+    private static void mojangFlow(SulfurPanel p, Path probe) throws Exception {
+        var t = p.selectedTarget();
+        Path gameLog = t.dir().resolve("run/logs/latest.log");
+        check("mojang: probe running (v1 in game log)", waitForLog(gameLog, "[SF-PROBE] v1", 120), String.valueOf(gameLog));
+        check("mojang: fast compile ready", p.hotswapper.awaitFastCompile(t, 180), "");
+        onEdt(() -> p.setSwapOnSave(false));
+        String original = Files.readString(probe);
+        Path main = modInitializerNextTo(probe);
+        Path client = main.getParent().resolve("client/" + main.getFileName().toString().replace(".java", "Client.java"));
+        String src = Files.readString(main), csrc = Files.readString(client);
+        String head = "public void onInitialize() {", chead = "public void onInitializeClient() {";
+        String id = "net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(\"mojtest\", ";
+        try {
+            Files.writeString(probe, original.replace("return \"v1\";", "return \"v2\";"));
+            boolean ran = p.hotswapper.swap(t, p.embedder.gamePid(), agentJarOf(p));
+            check("mojang: method body change applied", ran && waitForLog(gameLog, "[SF-PROBE] v2", 15), String.valueOf(p.hotswapper.lastResult));
+            if (Jbr.find(t.profile().javaMajor()) == null) return;
+            Files.writeString(main, src.replace(head, head
+                    + "\n\t\tnet.minecraft.world.level.block.Block b = net.minecraft.core.Registry.register(net.minecraft.core.registries.BuiltInRegistries.BLOCK, " + id + "\"sf_block\"),"
+                    + " new net.minecraft.world.level.block.Block(net.minecraft.world.level.block.state.BlockBehaviour.Properties.of().strength(1.0f)));"
+                    + "\n\t\tnet.minecraft.core.Registry.register(net.minecraft.core.registries.BuiltInRegistries.ITEM, " + id + "\"sf_block\"),"
+                    + " new net.minecraft.world.item.BlockItem(b, new net.minecraft.world.item.Item.Properties()));"
+                    + "\n\t\tnet.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((d, a, e) -> d.register(net.minecraft.commands.Commands.literal(\"sfmoj\")"
+                    + ".executes(c -> { LOGGER.info(\"[SF-CMD] mojang\"); return 1; })));"
+                    + "\n\t\tnet.fabricmc.fabric.api.loot.v3.LootTableEvents.MODIFY.register((key, table, source, registries) -> {"
+                    + " if (key.equals(net.minecraft.world.level.block.Blocks.DIRT.getLootTable())) table.withPool(net.minecraft.world.level.storage.loot.LootPool.lootPool()"
+                    + ".add(net.minecraft.world.level.storage.loot.entries.LootItem.lootTableItem(net.minecraft.world.item.Items.DIAMOND))); });"));
+            String reg = rerunOnce(p);
+            check("mojang: block and item registered in the running game", reg.contains("registered block mojtest:sf_block")
+                    && reg.contains("registered item mojtest:sf_block") && p.hotswapper.lastStartupChanges.isEmpty(), reg);
+            sleep(4000);   // the /reload the run asked for
+            String set = command(p, "execute as @p at @s run setblock ~2 ~ ~3 mojtest:sf_block");
+            String give = command(p, "give @p mojtest:sf_block");
+            check("mojang: new block usable (setblock, give)", "done".equals(set) && "done".equals(give), set + ", " + give);
+            String cmd = command(p, "sfmoj");
+            check("mojang: command from onInitialize runs", "done".equals(cmd) && waitForLog(gameLog, "[SF-CMD] mojang", 10)
+                    && reg.contains("data reload needed"), cmd + ", " + reg);
+            String loot = command(p, "execute as @p at @s run loot spawn ~ ~ ~3 loot minecraft:blocks/dirt");
+            check("mojang: loot table change -> data reloaded", "done".equals(loot) && lastCommandSaid.contains("2"), loot + ": " + lastCommandSaid);
+            command(p, "execute as @p at @s run setblock ~2 ~ ~3 air");
+            command(p, "kill @e[type=item]");
+            Files.writeString(client, csrc.replace(chead, chead
+                    + "\n\t\tnet.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper.registerKeyBinding(new net.minecraft.client.KeyMapping(\"key.mojtest.sf\", org.lwjgl.glfw.GLFW.GLFW_KEY_K, \"key.categories.misc\"));"
+                    + "\n\t\tnet.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin.register(ctx -> dev.sulfurframe.mojtest.MojangMod.LOGGER.info(\"[SF-MODELS] mojang\"));"));
+            int from = Files.readString(gameLog).length();
+            String c1 = rerunOnce(p);
+            sleep(8000);   // the client reload after the run
+            String after = Files.readString(gameLog).substring(from);
+            check("mojang: key binding and model plugin from onInitializeClient", c1.contains(".onInitializeClient again") && !c1.contains("error")
+                    && after.contains("[SF-MODELS] mojang"), c1);
+        } finally {
+            Files.writeString(probe, original);
+            Files.writeString(main, src);
+            Files.writeString(client, csrc);
+        }
+        String back = rerunOnce(p);
+        check("mojang: back to the original code, no restart", !back.contains("error") && p.hotswapper.lastStartupChanges.isEmpty(), back);
+    }
+
+    /**
+     * A real multi-project mod (-Dsulfurframe.autotest.realmod=<a client entrypoint source in one of its subprojects>):
+     * its onInitializeClient changes twice (a tick listener, then the same listener changed, plus a new item), runs again
+     * each time in the game, and goes back. Yarn names.
+     */
+    private static void realModFlow(SulfurPanel p, Path entry) throws Exception {
+        var t = p.selectedTarget();
+        Path gameLog = SharedInstance.runDir(t).resolve("logs/latest.log");
+        check("real mod: fast compile ready", p.hotswapper.awaitFastCompile(t, 300), "");
+        onEdt(() -> p.setSwapOnSave(false));
+        sleep(15000);   // the world is open and settled
+        String src = Files.readString(entry);
+        var m = java.util.regex.Pattern.compile("public void onInitializeClient\\(\\)\\s*\\{").matcher(src);
+        if (!m.find()) { check("real mod: onInitializeClient found", false, entry.toString()); return; }
+        String head = m.group();
+        // counted ticks, not world time: a paused game (this mod's run folder pauses on lost focus) keeps the time still
+        String listener = "\n\t\tint[] sfTicks = {0};"
+                + "\n\t\tnet.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(c -> {"
+                + " if (++sfTicks[0] % 40 == 0) org.slf4j.LoggerFactory.getLogger(\"sf-real\").info(\"[SF-REAL] TAG\"); });";
+        String item = "\n\t\tnet.minecraft.registry.Registry.register(net.minecraft.registry.Registries.ITEM, net.minecraft.util.Identifier.of(\"sfreal\", \"sf_item\"),"
+                + " new net.minecraft.item.Item(new net.minecraft.item.Item.Settings()));";
+        try {
+            Files.writeString(entry, src.replace(head, head + listener.replace("TAG", "a")));
+            String r1 = rerunOnce(p);
+            check("real mod: onInitializeClient ran again in the game", r1.contains(".onInitializeClient again") && !r1.contains("error")
+                    && p.hotswapper.lastStartupChanges.isEmpty() && waitForLog(gameLog, "[SF-REAL] a", 20), r1);
+            Files.writeString(entry, src.replace(head, head + listener.replace("TAG", "b") + item));
+            String r2 = rerunOnce(p);
+            int from = Files.readString(gameLog).length();
+            sleep(6000);
+            String after = Files.readString(gameLog).substring(from);
+            check("real mod: changed listener replaced (only the new one runs)", after.contains("[SF-REAL] b") && !after.contains("[SF-REAL] a"), r2);
+            check("real mod: new item registered in the running game", r2.contains("registered item sfreal:sf_item"), r2);
+            String give = command(p, "give @p sfreal:sf_item");
+            check("real mod: new item usable (give)", "done".equals(give), give + ": " + lastCommandSaid);
+            command(p, "clear @p sfreal:sf_item");
+        } finally {
+            Files.writeString(entry, src);
+        }
+        String back = rerunOnce(p);
+        int from = Files.readString(gameLog).length();
+        sleep(5000);
+        check("real mod: back to the original code, listener gone", !back.contains("error")
+                && !Files.readString(gameLog).substring(from).contains("[SF-REAL]"), back);
+    }
+
     private static String rerunOnce(SulfurPanel p) {
         sleep(1500);
         p.hotswapper.lastRegistration = java.util.List.of();
@@ -847,11 +983,16 @@ final class AutoTest {
             swapRetry(p, t);
             check("  the mod reads the widened field after a hotswap", waitForLog(gameLog, "[SF-PROBE] w-true", 15), p.hotswapper.lastCompiler + " " + p.hotswapper.lastResult);
         } finally {
-            Files.writeString(aw, awOriginal);   // the entry stays in this game; the next start reads the file again
-            Files.writeString(probe, original);
+            Files.writeString(probe, original);   // the code that used it goes first
             sleep(1500);
             swapRetry(p, t);
+            Files.writeString(aw, awOriginal);
         }
+        // the entry was added during this run: taking it out narrows the class again, no restart
+        String why = p.hotswapper.widenLive(t, p.embedder.gamePid(), agentJarOf(p), aw);
+        for (int i = 0; i < 20 && !p.logText().contains("1 taken out"); i++) sleep(250);   // the log is appended on the EDT
+        check("access widener entry taken out again -> narrowed in the running game, no restart", why == null
+                && p.hotswapper.lastWiden.contains("widened net.minecraft.util.Util") && p.logText().contains("1 taken out"), why + " " + p.hotswapper.lastWiden);
     }
 
     /**

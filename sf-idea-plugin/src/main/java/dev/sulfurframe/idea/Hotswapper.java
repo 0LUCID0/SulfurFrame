@@ -274,7 +274,12 @@ final class Hotswapper {
     }
 
     /** Access widener entries already added to the running game, per game and file (by widenLive). */
-    private final Map<String, Set<String>> liveWidenings = new HashMap<>();
+    private final Map<String, Set<AwOverlay.Entry>> liveWidenings = new HashMap<>();
+
+    /** An entry as a widener line ("access kind owner [name desc]"). */
+    private static String widenerLine(AwOverlay.Entry e) {
+        return e.access() + " " + e.kind() + " " + e.owner() + (e.name() == null ? "" : " " + e.name() + " " + e.desc());
+    }
 
     /** What the last widenLive answered (self-test). */
     volatile List<String> lastWiden = List.of();
@@ -297,17 +302,29 @@ final class Hotswapper {
             if (loaded == null || !Files.exists(loaded)) return name + " changed (the game's copy was not found)";
             var before = AwOverlay.parse(Files.readString(loaded)); var after = AwOverlay.parse(Files.readString(aw));
             if (before == null || after == null) return name + " changed (not a widener this can read)";
+            // an entry the game started with is baked into Loom's Minecraft jar (the access it had before is gone): a
+            // restart. One added during this run can be taken out again: its class is redefined from the original bytes
+            // with the live entries that remain.
             for (var e : before) if (!after.contains(e)) return name + " changed (" + e.owner() + " " + e.name() + " no longer widened): restart to apply";
-            var live = liveWidenings.computeIfAbsent(aw.toAbsolutePath().normalize() + "@" + gamePid, k -> new HashSet<>());
-            var added = after.stream().filter(e -> !before.contains(e) && !live.contains(e.toString())).toList();
-            if (added.isEmpty()) return null;
+            var live = liveWidenings.computeIfAbsent(aw.toAbsolutePath().normalize() + "@" + gamePid, k -> new LinkedHashSet<>());
+            var added = after.stream().filter(e -> !before.contains(e) && !live.contains(e)).toList();
+            var takenOut = live.stream().filter(e -> !after.contains(e)).toList();
+            var resetOwners = new LinkedHashSet<String>();
+            for (var e : takenOut) resetOwners.add(e.owner());
+            if (added.isEmpty() && takenOut.isEmpty()) return null;
             // compiling sees the new access at once (the overlay goes first on fast compile's class path)
             var cp = new LinkedHashSet<Path>();
             for (var s : sets) cp.addAll(s.classpath());
             if (AwOverlay.build(List.of(aw), new ArrayList<>(cp), fast.awOverlayDir(t)) < 0) return name + " changed (could not apply it for compiling)";
             fast.invalidateManagers();
             Path list = agentJar.getParent().resolve("widen-" + ProcessHandle.current().pid() + "-" + (++counter) + ".txt");
-            Files.write(list, added.stream().map(e -> e.access() + " " + e.kind() + " " + e.owner() + (e.name() == null ? "" : " " + e.name() + " " + e.desc())).toList(), StandardCharsets.UTF_8);
+            var lines = new ArrayList<String>();
+            for (String owner : resetOwners) {   // that owner's remaining live entries, sent anew after a reset
+                lines.add("reset " + owner);
+                for (var e : after) if (e.owner().equals(owner) && !before.contains(e)) lines.add(widenerLine(e));
+            }
+            for (var e : added) if (!resetOwners.contains(e.owner())) lines.add(widenerLine(e));
+            Files.write(list, lines, StandardCharsets.UTF_8);
             Path result = Path.of(list + ".result");
             Files.deleteIfExists(result);
             loadAgent(gamePid, agentJar, "codingFps=" + Settings.codingFps() + ",widen=" + list);
@@ -318,9 +335,10 @@ final class Hotswapper {
             Files.deleteIfExists(list); Files.deleteIfExists(result);
             var refused = answer.stream().filter(s -> s.startsWith("error") || s.startsWith("restart needed")).toList();
             if (!refused.isEmpty()) return name + " changed (" + String.join("; ", refused) + ")";
-            added.forEach(e -> live.add(e.toString()));
-            log.accept("access widener: " + added.size() + " entr" + (added.size() == 1 ? "y" : "ies") + " added to the running game ("
-                    + answer.stream().filter(s -> s.startsWith("widened")).count() + " loaded class(es) redefined)");
+            live.addAll(added);
+            takenOut.forEach(live::remove);
+            log.accept("access widener: " + added.size() + " entr" + (added.size() == 1 ? "y" : "ies") + " added, " + takenOut.size()
+                    + " taken out in the running game (" + answer.stream().filter(s -> s.startsWith("widened")).count() + " loaded class(es) redefined)");
             return null;
         } catch (Exception e) {
             return name + " changed (" + e + ")";

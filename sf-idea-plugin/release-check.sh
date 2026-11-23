@@ -86,10 +86,12 @@ if [ $LINUX = 1 ]; then
     WREPO=$(MSYS_NO_PATHCONV=1 wsl wslpath -a "$(cygpath -w "$REPO" | sed 's/\\/\//g')" | tr -d '\r')
     WCOPY=/home/$(MSYS_NO_PATHCONV=1 wsl whoami | tr -d '\r')/sf-showcase-test
     # Gradle daemons go first: one started before a JDK update cannot start the game ("Failed to exec spawn helper").
-    MSYS_NO_PATHCONV=1 wsl bash -lc "pkill -f GradleDaemon; bash $WREPO/demo/tools/test-copy.sh $WCOPY && chmod +x $WCOPY/gradlew" >/dev/null 2>&1
+    MSYS_NO_PATHCONV=1 wsl bash -lc "pkill -f [G]radleDaemon; bash $WREPO/demo/tools/test-copy.sh $WCOPY && chmod +x $WCOPY/gradlew" >/dev/null 2>&1
     MSYS_NO_PATHCONV=1 wsl env SF_PROJ="$WCOPY" bash "$WREPO/sf-idea-plugin/xvfb-test.sh" runclient "$WCOPY/src/main/java/dev/sulfurframe/showcase/SfHotswapProbe.java" > "$OUT/C-linux.txt" 2>&1
-    # the game may have been restarted without Gradle: match the test project's path too, not only Loom's dev launch
-    MSYS_NO_PATHCONV=1 wsl bash -lc 'pkill -f "$HOME/idea/bin/idea"; pkill -f "fabric.dli.config|$HOME/sf-showcase-test"; sleep 2; pkill -9 -f "fabric.dli.config|$HOME/sf-showcase-test"' >/dev/null 2>&1
+    # the game may have been restarted without Gradle: match the test project's path too, not only Loom's dev launch.
+    # "[f]abric" etc.: a plain pattern also matches this bash -lc's own command line, which then killed itself first.
+    # Repeated: a restart the test asked for can bring the game back up a moment after the first kill.
+    MSYS_NO_PATHCONV=1 wsl bash -lc 'for i in 1 2 3 4 5 6 7 8 9 10; do pkill -f "[f]abric.dli.config|$HOME/[s]f-showcase-test|[G]radleDaemon"; sleep 2; pgrep -f "[f]abric.dli.config|$HOME/[s]f-showcase-test|$HOME/[i]dea/bin/idea|[G]radleDaemon" >/dev/null || break; done; pkill -9 -f "[f]abric.dli.config|$HOME/[s]f-showcase-test|$HOME/[i]dea/bin/idea"; true' >/dev/null 2>&1
     pass=$(grep -c '^PASS' "$OUT/C-linux.txt"); fail=$(grep -c '^FAIL' "$OUT/C-linux.txt")
     say "C-linux: $pass passed, $fail failed"
     grep '^FAIL' "$OUT/C-linux.txt" | sed 's/^/  /' | tee -a "$SUM"

@@ -31,11 +31,14 @@ final class AccessWiden {
         try {
             Class<?> patch = Class.forName("dev.sulfurframe.agent.impl.RegistryPatch", true, SfAgent.impl());
             Method add = patch.getMethod("addWidening", String.class, String.class, String.class, String.class, String.class);
+            Method clear = patch.getMethod("clearWidening", String.class);
             Method of = patch.getMethod("wideningsOf", String.class);
             Method widen = patch.getMethod("widen", byte[].class, List.class);
             Set<String> owners = new LinkedHashSet<String>();
             for (String line : Files.readAllLines(Paths.get(listFile), StandardCharsets.UTF_8)) {
                 String[] p = line.trim().split("\\s+");
+                // "reset owner": entries added for it during the run were taken out; its remaining ones follow
+                if (p.length == 2 && p[0].equals("reset")) { clear.invoke(null, p[1]); owners.add(p[1]); continue; }
                 if (p.length < 3) continue;
                 String access = p[0].startsWith("transitive-") ? p[0].substring("transitive-".length()) : p[0];
                 add.invoke(null, p[2], access, p[1], p.length > 3 ? p[3] : "", p.length > 4 ? p[4] : "");
