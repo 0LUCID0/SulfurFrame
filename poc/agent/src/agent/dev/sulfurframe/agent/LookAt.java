@@ -50,6 +50,15 @@ final class LookAt {
                 try { out.add("yaw=" + player.getClass().getMethod(n).invoke(player)); break; } catch (NoSuchMethodException ignored) { }
             }
         } catch (Throwable ignored) { }
+        try {   // input state: does the game think its window is focused, is the mouse grabbed
+            for (String n : new String[]{"isWindowActive", "isWindowFocused"}) {
+                try { out.add("windowActive=" + mc.getClass().getMethod(n).invoke(mc)); break; } catch (NoSuchMethodException ignored) { }
+            }
+            for (String[] m : new String[][]{{"mouseHandler", "isMouseGrabbed"}, {"mouse", "isCursorLocked"}}) {
+                try { Object h = field(mc, m[0]); out.add("mouseGrabbed=" + h.getClass().getMethod(m[1]).invoke(h)); break; }
+                catch (NoSuchFieldException ignored) { } catch (NoSuchMethodException ignored) { }
+            }
+        } catch (Throwable ignored) { }
         try {
             Object hit = field(mc, HIT[w]);
             if (hit == null) { out.add("kind=none"); return out; }

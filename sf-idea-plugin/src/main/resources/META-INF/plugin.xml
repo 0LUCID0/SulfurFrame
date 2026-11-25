@@ -3,7 +3,7 @@
     <name>SulfurFrame</name>
     <vendor url="https://github.com/0LUCID0/Sulfur_Frame">0LUCID0</vendor>
     <!-- version and idea-version are overwritten by the Gradle build (gradle.properties); kept here for build.sh -->
-    <version>0.2.1</version>
+    <version>0.3.0</version>
     <description><![CDATA[
       <p>Your mod's Minecraft client, in the IDE. Run the dev client inside IntelliJ IDEA and see your changes in the
          running game as soon as you save.</p>
@@ -12,6 +12,10 @@
             memory is handed back while it is hidden.</li>
         <li>Hotswap on save: changed classes (also files changed outside the IDE) are compiled and reloaded into the
             running game; "Restart into the Same World" goes straight back to where you were.</li>
+        <li>Startup code too: new blocks, items and other registry entries, a changed <code>onInitialize</code>, new
+            enum constants, new mixins and added access widener entries go into the running game without a restart.</li>
+        <li>Coding agents can use the running game from a terminal with the <code>sf</code> command (wait for a swap,
+            run a command, read the log, take a screenshot), or start it without the IDE with <code>sf run</code>.</li>
         <li>The Minecraft version and mod loader are read from the project's build files, including multi-project
             and Stonecutter-style layouts.</li>
         <li>World snapshots, throwaway test worlds, and worlds shared by every project of the same Minecraft version.</li>

@@ -275,6 +275,8 @@ final class AutoTest {
             try { restartFlow(p, Path.of(probe), world); } catch (Exception ex) { check("restart flow", false, ex.toString()); }
             if (Boolean.getBoolean("sulfurframe.autotest.worlds"))
                 try { worldsFlow(p, Path.of(probe)); } catch (Exception ex) { check("worlds flow", false, ex.toString()); }
+            else   // the worlds flow has it too; mouse grab and release while embedded (Windows)
+                try { if (com.intellij.openapi.util.SystemInfo.isWindows) mouseLookCheck(p, p.selectedTarget().dir().resolve("run/logs/latest.log")); } catch (Exception ex) { check("mouse look", false, ex.toString()); }
         }
         uiChecks(p);
         lines.add("game pid " + e.gamePid() + " left running for inspection");
@@ -1558,6 +1560,20 @@ final class AutoTest {
     }
 
     /** Focus the game, move the real mouse over it, and see the player turn (yaw from the agent's look report). */
+    /** Moves the mouse to the right a few times; "turned ..." when the player's yaw changed. */
+    private static String turnsWithMouse(SulfurPanel p, Robot robot, int cx, int cy) throws Exception {
+        p.inspect();
+        String y0 = p.lastLook.get("yaw");
+        robot.mouseMove(cx, cy);
+        for (int i = 0; i < 20; i++) { robot.mouseMove(cx + 40, cy); sleep(60); }
+        sleep(500);
+        p.inspect();
+        String y1 = p.lastLook.get("yaw");
+        return (y0 != null && y1 != null && !y0.equals(y1) ? "turned" : "did not turn") + ": yaw " + y0 + " -> " + y1
+                + ", game " + p.lastLook.get("windowActive") + "/" + p.lastLook.get("mouseGrabbed") + " (window active/mouse grabbed), screen "
+                + p.lastLook.get("screen");
+    }
+
     private static void mouseLookCheck(SulfurPanel p, Path gameLog) throws Exception {
         var e = p.embedder;
         long game = e.gameHwnd();
@@ -1586,6 +1602,13 @@ final class AutoTest {
             sleep(1000);
             p.inspect();
         }
+        if ("none".equals(p.lastLook.getOrDefault("screen", "none")) && "false".equals(p.lastLook.get("mouseGrabbed"))) {
+            // the world opened while the game had no focus: Minecraft grabs the mouse on the next click into it
+            robot.mouseMove(cx, cy);
+            robot.mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK); robot.mouseRelease(java.awt.event.InputEvent.BUTTON1_DOWN_MASK);
+            sleep(1000);
+            p.inspect();
+        }
         String yaw0 = p.lastLook.get("yaw");
         robot.mouseMove(cx, cy);
         // GLFW re-centers a grabbed cursor every frame, so each move to the right is a fresh delta
@@ -1594,7 +1617,39 @@ final class AutoTest {
         p.inspect();
         String yaw1 = p.lastLook.get("yaw");
         check("mouse look in the embedded game (player turns)", yaw0 != null && yaw1 != null && !yaw0.equals(yaw1),
-                "yaw " + yaw0 + " -> " + yaw1 + (waitForLog(gameLog, "mouse grabbed while embedded", 1) ? " (grab applied by the agent)" : ""));
+                "yaw " + yaw0 + " -> " + yaw1 + ", game " + p.lastLook.get("windowActive") + "/" + p.lastLook.get("mouseGrabbed") + " (window active/mouse grabbed)" + (waitForLog(gameLog, "mouse grabbed while embedded", 1) ? " (grab applied by the agent)" : ""));
+
+        // Alt pressed and released (it can reach the IDE's menu bar): mouse look still works afterwards
+        robot.keyPress(java.awt.event.KeyEvent.VK_ALT); robot.keyRelease(java.awt.event.KeyEvent.VK_ALT);
+        sleep(800);
+        if (NativeWindows.keyboardFocus() != game) { e.focusGame(); sleep(800); }   // Alt gave the IDE's menu bar the keys
+        String turnAlt = turnsWithMouse(p, robot, cx, cy);
+        check("mouse look after Alt pressed in the embedded game", turnAlt.startsWith("turned"), turnAlt);
+
+        // Minecraft told the window lost the focus while it still has the keyboard: the agent reports the focus back,
+        // so the game grabs again and mouse look works (an overlay that grabs on a key release needs this)
+        NativeWindows.post(game, 0x0008);   // WM_KILLFOCUS
+        sleep(1500);
+        String turnSync = turnsWithMouse(p, robot, cx, cy);
+        check("game's focus put back after a missed focus message (mouse look works)", turnSync.startsWith("turned")
+                && waitForLog(gameLog, "thought its window was not focused", 1), turnSync);
+
+        // release (pause menu): the cursor is left in the middle, where the game put it (not where the grab was
+        // applied), and it moves freely afterwards (GLFW no longer re-centers it); no focus loss is faked for it
+        robot.keyPress(java.awt.event.KeyEvent.VK_ESCAPE); robot.keyRelease(java.awt.event.KeyEvent.VK_ESCAPE);
+        sleep(1000);
+        var at = java.awt.MouseInfo.getPointerInfo().getLocation();
+        boolean centered = Math.abs(at.x - cx) <= 30 && Math.abs(at.y - cy) <= 30;
+        int fx = cx + (int) (r[2] / s / 4), fy = cy + (int) (r[3] / s / 6);
+        robot.mouseMove(fx, fy);
+        sleep(500);
+        var free = java.awt.MouseInfo.getPointerInfo().getLocation();
+        boolean stays = Math.abs(free.x - fx) <= 2 && Math.abs(free.y - fy) <= 2;
+        check("mouse released in the embedded game (cursor in the middle, then free)", centered && stays,
+                "after ESC at " + at.x + "," + at.y + " (middle " + cx + "," + cy + "), moved to " + fx + "," + fy + " -> " + free.x + "," + free.y
+                        + (waitForLog(gameLog, "mouse released while embedded", 1) ? " (release applied by the agent)" : ""));
+        robot.keyPress(java.awt.event.KeyEvent.VK_ESCAPE); robot.keyRelease(java.awt.event.KeyEvent.VK_ESCAPE);   // back into the game
+        sleep(500);
     }
 
     /** Swap, retrying while another swap (save-triggered) is busy; gives up after ~10 s (a compile error would loop). */

@@ -56,6 +56,33 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <p><b>0.3.0</b>: Fabric 1.21.1, everything a running JVM allows (a long-lived base while other versions and
+            loaders come next).</p>
+            <ul>
+              <li>Startup code in the running game: new blocks, items and entries of every registry, a changed
+                  <code>onInitialize</code>/<code>onInitializeClient</code> (listeners, commands, key bindings, renderers,
+                  screens, payloads, model loading plugins replaced, never added twice), new enum constants, new mixins,
+                  changed settings of existing blocks and items, hierarchy changes between the project's own types. Loot
+                  tables, commands and tags reload the server's data; world data reopens the world.</li>
+              <li>Access widener entries added while the game runs apply at once, and can be taken out again.</li>
+              <li>Safety: the world is snapshotted before init code runs again, with a restart into it if that fails; a
+                  class file that a Gradle build is rewriting is waited for instead of crashing the game; callers of a
+                  changed method or field are compiled too, and the swap is refused if they break.</li>
+              <li>Coding agents (Claude Code, Codex, ...): the <code>sf</code> command in <code>~/.sulfurframe/bin</code>
+                  checks changes in the running game from a terminal (<code>sf wait</code>, <code>cmd</code>,
+                  <code>log</code>, <code>shot</code>, <code>restart</code>...), <code>sf run</code> starts the game
+                  without IntelliJ (Java 25 and an IntelliJ installation needed), <code>sf feedback</code> and
+                  <code>sf relay</code> collect reports for the developers. Local files only; it can be turned off in
+                  Settings.</li>
+              <li>Tested on Yarn and Mojang-mapped projects and on a large multi-project mod. Run configurations are made
+                  for every client found; Java 21+ games no longer log a warning on every agent attach.</li>
+              <li>Embedded game on Windows: releasing the mouse (menus, overlays shown while a key is held) no longer fakes
+                  a focus loss, so held keys stay held, and the cursor stays in the middle instead of jumping back to where
+                  you clicked into the game.</li>
+              <li>Still a restart: removing a registered entry, an enum constant, a mixin or an access widener entry that
+                  was there at startup; a JDK or Minecraft type in a class's hierarchy; <code>fabric.mod.json</code> and
+                  build files (restarted without Gradle when nothing else changed).</li>
+            </ul>
             <p><b>0.2.1</b></p>
             <ul>
               <li>The first quick-play launch in a new run folder joins the world: the options.txt SulfurFrame prepares

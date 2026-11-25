@@ -730,7 +730,11 @@ Windows 회귀 확인(같은 빌드, 2026.3 샌드박스): Run client + 핫스�
 검증(1.21.1 lucid 사본, 샌드박스 IDE 자동 테스트): 빠진 모델 2건 보고, 빠진 번역 3개 찾고 3개 추가, 디버거 세션 연결, 일부러 던진 예외로 크래시 → 원인과 `kr.kro.lucid.SfHotswapProbe` 프레임 찾음.
 
 ## 임베드된 게임의 마우스 시점 (GLFW, Windows)
-키보드는 되는데 마우스로 시점이 안 돌아가던 문제. GLFW는 `glfwSetInputMode(GLFW_CURSOR_DISABLED)`가 불릴 때 창이 "포커스"인지 `GetActiveWindow()`로 확인하는데, 자식 창은 절대 활성 창이 아닙니다. 그래서 클릭으로 포커스를 받은 뒤에 일어난 마우스 잡기(월드 입장, 메뉴 닫기)는 기록만 되고 적용되지 않아, GLFW가 모든 마우스 이동을 버립니다. GLFW는 `WM_SETFOCUS`를 받을 때는 잡기를 적용하므로, 에이전트가 커서 모드가 DISABLED로 바뀌고 게임이 임베드돼 있고 키보드 포커스를 가진 순간에 게임 창에 `WM_SETFOCUS`를 직접 보냅니다(`GlfwCursorFix.java`, 렌더 스레드 = GLFW 스레드에서 실행). 실제 IDE에서 사용자가 확인했습니다.
+키보드는 되는데 마우스로 시점이 안 돌아가던 문제. GLFW는 `glfwSetInputMode(GLFW_CURSOR_DISABLED)`가 불릴 때 창이 "포커스"인지 `GetActiveWindow()`로 확인하는데, 자식 창은 절대 활성 창이 아닙니다. 그래서 클릭으로 포커스를 받은 뒤에 일어난 마우스 잡기(월드 입장, 메뉴 닫기)는 기록만 되고 적용되지 않아, GLFW가 모든 마우스 이동을 버립니다. 놓기(메뉴, ESC, 인벤토리, 키를 누르고 있는 동안 뜨는 오버레이)도 같은 조건에 막혀서, GLFW가 커서를 계속 게임 가운데로 끌어당깁니다.
+
+GLFW는 `WM_SETFOCUS`를 받으면 잡기를 적용하고, 창 메뉴 루프가 시작될 때(`WM_ENTERMENULOOP`) 커서를 놓는데 이쪽은 포커스를 건드리지 않습니다. 그래서 게임이 임베드돼 있고 키보드 포커스를 가진 상태에서 커서 모드가 바뀌면 에이전트가 게임 창에 잡기는 `WM_SETFOCUS`, 놓기는 `WM_ENTERMENULOOP`을 보냅니다(`GlfwCursorFix.java`, 렌더 스레드 = GLFW 스레드에서 매 프레임 확인하므로 놓기가 그 프레임의 이벤트 폴링이 커서를 다시 가운데로 옮기기 전에 적용됨). 놓은 뒤 커서는 잡기가 적용된 자리가 아니라 게임이 둔 자리(가운데)로 돌려놓습니다(Win32 `SetCursorPos`로. GLFW가 포커스가 없다고 보는 창에서는 `glfwSetCursorPos`가 무시됨).
+
+첫 버전은 `WM_SETFOCUS`와 가짜 `WM_KILLFOCUS`를 쓰고 50ms마다 확인했습니다. 코딩 에이전트가 보고한 문제: `WM_KILLFOCUS`를 받으면 GLFW가 눌린 키를 모두 뗀 것으로 보고하고 게임은 포커스를 잃은 것으로 봐서, Alt를 누르는 동안 열린 오버레이가 바로 닫혔고, 커서가 사용자가 게임을 클릭했던 자리로 튀었습니다.
 
 ## Gradle과 게임이 쓰는 Java
 - **Gradle 자체의 JDK:** IDE 환경의 `JAVA_HOME`이 게임에 필요한 Java보다 낮으면(26.x용 Loom은 Java 25 Gradle을 요구), 그 버전 이상인 JDK를 찾아 gradlew에 넘깁니다(`GradleJava.java`). 프로젝트가 Gradle JVM을 직접 정해 두었으면(`org.gradle.java.home`, 또는 `gradle/gradle-daemon-jvm.properties`의 데몬 툴체인) 데몬은 Gradle이 고르지만, gradlew 런처 자체는 여전히 `JAVA_HOME`으로 뜹니다. 그래서 그때도 `JAVA_HOME`이 Java 17보다 낮으면(예: Java 8) 17 이상인 JDK를 넘깁니다. 클래스패스 스캔과 핫스왑 컴파일도 같은 JDK라 데몬 하나를 같이 씁니다.

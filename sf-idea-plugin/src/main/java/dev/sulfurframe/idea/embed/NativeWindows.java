@@ -12,6 +12,8 @@ public final class NativeWindows {
     public static List<Long> gameWindows() { return X ? X11.findGameWindows() : Win32.findGameWindows(); }
     public static long pidOf(long w) { return X ? X11.pidOf(w) : Win32.processIdOf(w); }
     public static boolean isWindow(long w) { return X ? X11.exists(w) : Win32.isWindow(w); }
+    /** Win32 only: post a window message (self-test). */
+    public static boolean post(long w, int msg) { return !X && Win32.postMessage(w, msg, 0, 0); }
     public static long parentOf(long w) { return X ? X11.parentOf(w) : Win32.getAncestor(w, Win32.GA_PARENT); }
     public static String className(long w) { return X ? X11.name(w) : Win32.className(w); }
     /** Windows: minimized. X11: not viewable (unmapped, the "hidden" state there). */

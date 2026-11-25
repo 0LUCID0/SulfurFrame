@@ -994,10 +994,20 @@ frame found.
 The keyboard worked, but the mouse did not turn the view. When `glfwSetInputMode(GLFW_CURSOR_DISABLED)` is called, GLFW
 checks whether the window is "focused" with `GetActiveWindow()`, and a child window is never the active window. So a
 mouse grab that happens after the focus came by click (entering the world, closing a menu) is only recorded and never
-applied, and GLFW drops every mouse movement. GLFW does apply the grab when it receives `WM_SETFOCUS`, so the agent sends
-`WM_SETFOCUS` to the game window itself the moment the cursor mode becomes DISABLED while the game is embedded and has
-the keyboard focus (`GlfwCursorFix.java`, run on the render thread = the GLFW thread). Confirmed by the user in the real
-IDE.
+applied, and GLFW drops every mouse movement. The release (menu, ESC, inventory, an overlay shown while a key is held) is
+gated the same way, and GLFW then keeps pulling the cursor back to the middle of the game.
+
+GLFW applies a grab when it receives `WM_SETFOCUS`, and releases the cursor when the window menu loop starts
+(`WM_ENTERMENULOOP`), which does not touch the focus. So when the cursor mode changes while the game is embedded and has
+the keyboard focus, the agent sends the game window `WM_SETFOCUS` for a grab and `WM_ENTERMENULOOP` for a release
+(`GlfwCursorFix.java`, checked every frame on the render thread = the GLFW thread, so a release is applied before that
+frame's event poll re-centers the cursor). After a release the cursor is put back where the game left it (the middle,
+with Win32 `SetCursorPos`: `glfwSetCursorPos` is ignored for a window GLFW thinks is not focused) instead of where the
+grab was applied.
+
+The first version used `WM_SETFOCUS` and a faked `WM_KILLFOCUS`, checked every 50 ms. Reported by a coding agent: on
+`WM_KILLFOCUS` GLFW reports every held key as released and the game sees a focus loss, so an overlay held open with Alt
+closed again at once, and the cursor jumped back to where the user had clicked into the game.
 
 ## The Java that Gradle and the game use
 - **Gradle's own JDK:** when `JAVA_HOME` in the IDE environment is older than the Java the game needs (Loom for 26.x
