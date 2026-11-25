@@ -98,7 +98,7 @@ the per-file end, but that cannot be verified. Real usage records (4 below) fill
 
 **2. The time each path takes (same PC, same day)**
 
-| Path | Test copy (1 Gradle project, 56 mods) | Multi-project mod (9 Gradle projects, 65 mods) |
+| Path | Test copy (1 Gradle project, 56 mods loaded) | Multi-project mod (9 Gradle projects, 65 mods loaded) |
 |---|---|---|
 | Gradle configuration only (`help`) | — | 30.7 s |
 | Restart: `runClient --quickPlaySingleplayer` → in the world | 49.4 / 41.9 / 41.8 s | 85.1 / 82.1 / 80.2 s |
@@ -146,8 +146,9 @@ nothing depends on is the best case for Gradle. The game ran muted during the me
 **What affects the times**
 - **Gradle configuration time:** the stock path pays it every time it calls Gradle. On the multi-project mod it is
   30 s. SulfurFrame's swaps and resource updates do not call Gradle.
-- **Mod count and world:** they decide how long the game takes to start and enter the world (56 → 65 mods, a small flat
-  world → a real working world).
+- **Mod count and world:** they decide how long the game takes to start and enter the world (56 → 65 mods loaded, a small flat
+  world → a real working world). These are Fabric Loader's counts: most are Fabric API modules, libraries and other
+  mods the projects run with, not mods of their own.
 - **Daemon state:** the first run is slow while the daemon warms up (test copy 49 s → 42 s).
 - **Where you edit:** changing the signature of a class many others use makes Gradle recompile its dependants too. The
   measurements above are the best case for Gradle.
@@ -1008,6 +1009,24 @@ grab was applied.
 The first version used `WM_SETFOCUS` and a faked `WM_KILLFOCUS`, checked every 50 ms. Reported by a coding agent: on
 `WM_KILLFOCUS` GLFW reports every held key as released and the game sees a focus loss, so an overlay held open with Alt
 closed again at once, and the cursor jumped back to where the user had clicked into the game.
+
+Found while using it with Axiom, whose context menu stays open while Alt is held (each fixed, and each logged when it
+happens):
+- **Alt opened an invisible menu in the IDE.** Alt pressed and released alone makes Windows send `SC_KEYMENU` to the
+  top-level window. In a normal window that is the game, and GLFW ignores it; embedded it is the IDE frame, which went
+  into a menu mode that took the next keys and clicks: the overlay stayed open until a click. The IDE frame's window
+  procedure now drops `SC_KEYMENU` while the game has the keyboard (`GameEmbedder.frameProc`).
+- **Missed key releases.** A release that went elsewhere (a stall, a moment without focus) left GLFW believing a key
+  was held: the player kept walking. While the game has the keyboard, the agent compares GLFW's held keys and mouse
+  buttons with `GetAsyncKeyState` every 100 ms and sends the missed release (GLFW ignores one for a key it sees up).
+- **The first click attacked.** The click into the game reached it before the focus did, so Minecraft did not grab the
+  mouse with it and attacked instead. The canvas now gives the game the focus while handling `WM_PARENTNOTIFY`, which
+  the game's thread waits for before it handles the click.
+- **Minecraft's focus out of sync.** When the game has the keyboard but Minecraft thinks its window is not focused (it
+  then refuses to grab the mouse), the agent reports the focus with `WM_SETFOCUS`, at most every 0.5 s. A grab or
+  release seen while the focus is away for a moment waits instead of being lost.
+- **A cursor showing on the grabbed game.** Without mouse moves GLFW gets no `WM_SETCURSOR` to hide it again after the
+  IDE changes the shared cursor; the agent hides it every frame while the mouse is grabbed.
 
 ## The Java that Gradle and the game use
 - **Gradle's own JDK:** when `JAVA_HOME` in the IDE environment is older than the Java the game needs (Loom for 26.x

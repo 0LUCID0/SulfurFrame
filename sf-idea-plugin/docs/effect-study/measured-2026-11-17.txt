@@ -1,6 +1,6 @@
 # measured 2026-11-17, Windows 11, one machine (C: nearly full: 2.4 GB free), IDE closed, Gradle daemons warm after run 1
 
-## test copy (lucid-study-mod, Fabric 1.21.1, 56 mods): measure-baseline.sh <copy> SFWorld 3
+## test copy (lucid-study-mod, Fabric 1.21.1, 56 mods loaded, mostly Fabric API modules): measure-baseline.sh <copy> SFWorld 3
 == plain: runClient -> joined 'SFWorld'
 plain run 1: 49.4 s
 plain run 2: 41.9 s
@@ -16,7 +16,7 @@ processResources run 3: 6.9 s
 done
 
 
-## Multi-project mod (9 Gradle projects, 65 mods): measure-multiproject.sh ... '새로운 세계' 3
+## Multi-project mod (9 Gradle projects, 65 mods loaded, mostly Fabric API modules, libraries and other mods): measure-multiproject.sh ... '새로운 세계' 3
 <root>/core/mod-fabric-1_21_1/src/main/java/<package>/core/platform/fabric/v1_21_1
 <root>/<module>/mod-fabric-1_21_1/src/main/resources/assets/<modid>
 == gradle configuration: help

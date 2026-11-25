@@ -95,7 +95,8 @@ Windows 10/11과 Linux X11(IntelliJ를 XToolkit으로), IntelliJ IDEA 2026.3 이
 대부분의 수정은 게임을 재시작할 필요가 없습니다. 얼마나 그런지 보려고 대형 오픈소스 모드 9개(Fabric API, Sodium,
 Lithium, Iris, Create, Applied Energistics 2, Botania, Farmer's Delight, Mod Menu)의 최근 커밋 1,080개를, 실행 중인 클라이언트가
 각 변경을 반영하려면 무엇이 필요한지로 나눴습니다. 그다음 PC 한 대에서 작은 테스트 모드와 실제 다중 프로젝트 모드(Gradle
-프로젝트 9개, 모드 65개)로 경로마다 걸리는 시간을 쟀습니다:
+프로젝트 9개. Fabric Loader가 불러오는 모드는 65개지만 대부분은 자체 모드가 아니라 Fabric API 모듈, 라이브러리, 같이 쓰는
+다른 모드)로 경로마다 걸리는 시간을 쟀습니다:
 
 | 수정-실행 1회당 기다리는 시간 | 작은 모드 | 다중 프로젝트 모드 |
 |---|---|---|

@@ -371,11 +371,44 @@ public final class GameEmbedder implements GameView {
         if (stub == 0) stub = Win32.wndProcStub(this::canvasProc);
         origProc = Win32.setLongPtr(c, Win32.GWLP_WNDPROC, stub);
         subclassed = c;
+        long root = Win32.getAncestor(c, Win32.GA_ROOT);
+        if (root != 0 && root != c) {
+            if (frameStub == 0) frameStub = Win32.wndProcStub(this::frameProc);
+            origFrameProc = Win32.setLongPtr(root, Win32.GWLP_WNDPROC, frameStub);
+            frameSubclassed = root;
+        }
     }
 
     private void unsubclass() {
         if (subclassed != 0 && Win32.isWindow(subclassed)) Win32.setLongPtr(subclassed, Win32.GWLP_WNDPROC, origProc);
         subclassed = 0;
+        if (frameSubclassed != 0 && Win32.isWindow(frameSubclassed)) Win32.setLongPtr(frameSubclassed, Win32.GWLP_WNDPROC, origFrameProc);
+        frameSubclassed = 0;
+    }
+
+    private long frameSubclassed, origFrameProc, frameStub;
+    private long keyMenuLoggedAt;
+
+    /**
+     * IDE frame (AWT toolkit thread); must never throw. Alt pressed and released alone in the game makes Windows send
+     * SC_KEYMENU to the top-level window: in a normal window that is the game, and GLFW ignores it; embedded it is the
+     * IDE frame, which then went into an invisible menu mode that took the next keys and clicks (an overlay held
+     * open by Alt did not close until a click, and that click's release never reached the game). Dropped while the
+     * game has the keyboard.
+     */
+    private long frameProc(long hwnd, int msg, long wParam, long lParam) {
+        try {
+            final int WM_SYSCOMMAND = 0x0112, SC_KEYMENU = 0xF100;
+            if (msg == WM_SYSCOMMAND && (wParam & 0xFFF0) == SC_KEYMENU) {
+                long g = game;
+                if (g != 0 && Win32.foregroundFocus() == g) {
+                    long now = System.currentTimeMillis();
+                    if (now - keyMenuLoggedAt > 60_000) { keyMenuLoggedAt = now; log.accept("the game has the keys: Alt menu activation of the IDE window dropped"); }
+                    return 0;
+                }
+            }
+        } catch (Throwable ignored) { }
+        return Win32.callWindowProc(origFrameProc, hwnd, msg, wParam, lParam);
     }
 
     /** AWT toolkit thread; must never throw. */
@@ -383,8 +416,18 @@ public final class GameEmbedder implements GameView {
         try {
             if (msg == Win32.WM_PARENTNOTIFY) {
                 int ev = (int) (wParam & 0xFFFF);
-                if (ev == Win32.WM_LBUTTONDOWN || ev == Win32.WM_RBUTTONDOWN || ev == Win32.WM_MBUTTONDOWN || ev == Win32.WM_XBUTTONDOWN)
-                    Win32.postMessage(hwnd, WM_SF_FOCUS_GAME, 0, 0);
+                if (ev == Win32.WM_LBUTTONDOWN || ev == Win32.WM_RBUTTONDOWN || ev == Win32.WM_MBUTTONDOWN || ev == Win32.WM_XBUTTONDOWN) {
+                    long g = game;
+                    // The game's thread waits for this message before it handles the click: give it the focus right
+                    // here, so the game sees the click with its window focused. Minecraft then grabs the mouse with
+                    // that first click (and does not attack with it), as in a normal window. The canvas shares its
+                    // input state with the game window (parent and child), so no AttachThreadInput is needed here.
+                    if (g != 0 && Win32.foregroundFocus() != g) {
+                        if (!inputDetached) Win32.setFocus(g);
+                        if (Win32.getFocus() == g) throttler.onGameFocused();
+                        else Win32.postMessage(hwnd, WM_SF_FOCUS_GAME, 0, 0);
+                    }
+                }
             } else if (msg == WM_MOUSEACTIVATE && game != 0) {
                 return MA_ACTIVATE;
             } else if (msg == WM_SF_FOCUS_GAME) {
@@ -434,9 +477,33 @@ public final class GameEmbedder implements GameView {
                     Win32.attachThreadInput(gameTid, ideTid, true); inputDetached = false;
                     long ms = System.currentTimeMillis() - detachedAt;
                     if (ms >= 3000) log.accept(String.format("game was not responding for %.1f s (its input was kept apart from the IDE's meanwhile)", ms / 1000.0));
+                    reattachedAt = System.currentTimeMillis(); lastStallMs = ms;
                 }
+                try { watchFocus(h); } catch (Throwable ignored) { }
             }
         });
+    }
+
+    private volatile long reattachedAt, lastStallMs;
+    private boolean gameHadKeyboard;
+
+    /**
+     * Logs who takes the keyboard from the embedded game (Windows): the window and process, the IDE's own focus owner,
+     * how long ago the user last pressed a key or clicked (a long time = the focus moved by itself), and when the
+     * game's input was last joined to the IDE's again after a stall.
+     */
+    private void watchFocus(long g) {
+        long f = Win32.foregroundFocus();
+        boolean has = f == g;
+        if (gameHadKeyboard && !has && f != 0) {
+            long now = System.currentTimeMillis(), idle = Win32.idleMillis();
+            Component owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+            String awt = owner == null ? "none" : owner.getClass().getName() + (owner.getName() == null ? "" : " '" + owner.getName() + "'");
+            log.accept("focus: the game lost the keyboard to " + Win32.describe(f) + ", foreground " + Win32.describe(Win32.foregroundWindow())
+                    + "; IDE focus owner " + awt + "; last user input " + (idle < 0 ? "?" : idle + " ms") + " ago"
+                    + (reattachedAt == 0 ? "" : "; input rejoined " + (now - reattachedAt) + " ms ago after a " + lastStallMs + " ms stall"));
+        }
+        gameHadKeyboard = has;
     }
 
     // ------------------------------------------------------------------ agent

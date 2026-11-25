@@ -1,11 +1,11 @@
 # Seconds of waiting per edit-run step, by what the change needs, under several workflows, in two measured
 # environments (one machine, 2026-11-17; SulfurFrame's swap timings are from the test copy in both, see below).
 #
-#   test copy   lucid-study-mod copy: 1 Gradle project, 56 mods (measure-baseline.sh)
+#   test copy   lucid-study-mod copy: 1 Gradle project, 56 mods loaded (measure-baseline.sh)
 #     plain restart   runClient --quickPlaySingleplayer -> in the world: 49.4 / 41.9 / 41.8 s
 #     stock HotSwap   gradlew classes after a body edit: 10.9 / 7.0 / 7.5 s (+ JDWP redefinition, < 1 s)
 #     stock assets    gradlew processResources: 7.1 / 6.5 / 6.9 s (+ the reload)
-#   Multi-project   9 Gradle projects, 65 mods (measure-multiproject.sh); Gradle configuration alone 30.7 s per call
+#   Multi-project   9 Gradle projects, 65 mods loaded (measure-multiproject.sh); Gradle configuration alone 30.7 s per call
 #     plain restart   85.1 / 82.1 / 80.2 s
 #     stock HotSwap   19.7 / 19.8 / 19.8 s (+ < 1 s)
 #     stock assets    18.8 / 18.5 / 18.5 s (+ the reload)

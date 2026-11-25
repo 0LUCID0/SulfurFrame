@@ -78,7 +78,9 @@ intellijPlatform {
                   for every client found; Java 21+ games no longer log a warning on every agent attach.</li>
               <li>Embedded game on Windows: releasing the mouse (menus, overlays shown while a key is held) no longer fakes
                   a focus loss, so held keys stay held, and the cursor stays in the middle instead of jumping back to where
-                  you clicked into the game.</li>
+                  you clicked into the game. Alt no longer opens an invisible IDE menu that kept an Alt overlay open until a
+                  click, a key released while the game missed it no longer keeps the player walking, and the first click into
+                  the game grabs the mouse instead of attacking.</li>
               <li>Still a restart: removing a registered entry, an enum constant, a mixin or an access widener entry that
                   was there at startup; a JDK or Minecraft type in a class's hierarchy; <code>fabric.mod.json</code> and
                   build files (restarted without Gradle when nothing else changed).</li>

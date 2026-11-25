@@ -300,6 +300,31 @@ final class Win32 {
         } catch (Throwable t) { throw rethrow(t); }
     }
 
+    private static final MethodHandle
+            GetLastInputInfo = fn("GetLastInputInfo", JAVA_INT, ADDRESS),
+            GetTickCount = L.downcallHandle(K32.find("GetTickCount").orElseThrow(), FunctionDescriptor.of(JAVA_INT));
+
+    /** Milliseconds since the user's last key press, click or mouse move anywhere in the session; -1 if unknown. */
+    static long idleMillis() {
+        try (var a = Arena.ofConfined()) {
+            var lii = a.allocate(8);
+            lii.set(JAVA_INT, 0, 8);
+            if ((int) GetLastInputInfo.invokeExact(lii) == 0) return -1;
+            return Integer.toUnsignedLong((int) GetTickCount.invokeExact() - lii.get(JAVA_INT, 4));
+        } catch (Throwable t) { return -1; }
+    }
+
+    /** "class 'title' (pid N)" for a log line. */
+    static String describe(long h) {
+        if (h == 0) return "none";
+        try {
+            int pid = processIdOf(h);
+            String t = windowText(h);
+            return className(h) + (t.isEmpty() ? "" : " '" + (t.length() > 60 ? t.substring(0, 60) + "…" : t) + "'")
+                    + " (" + (pid == ProcessHandle.current().pid() ? "IDE" : "pid " + pid) + ")";
+        } catch (Throwable t) { return hex(h); }
+    }
+
     static String hex(long h) { return "0x" + Long.toHexString(h); }
 
     private Win32() {}

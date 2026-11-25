@@ -94,7 +94,8 @@ Windows 10/11 and Linux X11 (IntelliJ on XToolkit), IntelliJ IDEA 2026.3 or newe
 Most edits never need the game to restart. To see how many, 1,080 recent commits of nine large open-source mods
 (Fabric API, Sodium, Lithium, Iris, Create, Applied Energistics 2, Botania, Farmer's Delight, Mod Menu) were sorted by
 what a running client needs to pick each change up. Then the time each path takes was measured on one machine, on a
-small test mod and on a real multi-project mod (9 Gradle projects, 65 mods):
+small test mod and on a real multi-project mod (9 Gradle projects; Fabric Loader loads 65 mods, most of them Fabric API
+modules, libraries and other mods it runs with, not its own):
 
 | Waiting per edit-run step | Small mod | Multi-project mod |
 |---|---|---|
