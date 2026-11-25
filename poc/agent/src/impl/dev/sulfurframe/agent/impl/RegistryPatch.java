@@ -69,6 +69,7 @@ public final class RegistryPatch {
         return new ClassFileTransformer() {
             @Override public byte[] transform(ClassLoader loader, String name, Class<?> redefined, ProtectionDomain pd, byte[] bytes) {
                 if (redefined == null && KEY_BINDINGS.equals(name)) return keyBindingHook(bytes, log);
+                if (redefined == null && KNOT_DELEGATE.equals(name)) return classRescue(bytes, log);
                 if (redefined == null && ("net/minecraft/registry/SimpleRegistry".equals(name) || "net/minecraft/core/MappedRegistry".equals(name)))
                     return freezeWatch(bytes, log);
                 if (redefined == null && ("net/minecraft/client/render/entity/EntityRenderDispatcher".equals(name)
@@ -255,6 +256,69 @@ public final class RegistryPatch {
      * registry class loads, freeze() first hands the registry to a watcher (a JDK Consumer in a system property, set only
      * during a run), which logs who called it.
      */
+    static final String KNOT_DELEGATE = "net/fabricmc/loader/impl/launch/knot/KnotClassDelegate";
+    /** System property: Function<Object[]{delegate, name, allowFromParent}, byte[]> (agent's ClassRescue). */
+    public static final String CLASS_RESCUE = "dev.sulfurframe.classRescue";
+
+    /**
+     * Fabric's class loader reads a class's bytes in getRawClassByteArray(String, boolean). That method is renamed
+     * sf$rawClassBytes0 and a new one in its place asks the agent's hook (which calls the original and, for a class file
+     * a build is rewriting, waits for it); without the hook it calls the original directly.
+     */
+    static byte[] classRescue(byte[] bytes, java.util.function.Consumer<String> log) {
+        final String m0 = "getRawClassByteArray", desc = "(Ljava/lang/String;Z)[B", renamed = "sf$rawClassBytes0";
+        try {
+            ClassReader r = new ClassReader(bytes);
+            final String owner = r.getClassName();
+            ClassWriter w = new ClassWriter(r, ClassWriter.COMPUTE_MAXS);
+            final int[] found = {0};
+            final int[] access = {0};
+            final String[][] exceptions = {null};
+            r.accept(new ClassVisitor(Opcodes.ASM9, w) {
+                @Override public MethodVisitor visitMethod(int acc, String m, String d, String sig, String[] ex) {
+                    if (m.equals(m0) && d.equals(desc)) { found[0]++; access[0] = acc; exceptions[0] = ex; return super.visitMethod(acc, renamed, d, sig, ex); }
+                    return super.visitMethod(acc, m, d, sig, ex);
+                }
+            }, 0);
+            if (found[0] != 1 || (access[0] & Opcodes.ACC_STATIC) != 0) { log.accept("class rescue: " + m0 + " not found in Fabric's class loader, left alone"); return null; }
+            MethodVisitor mv = w.visitMethod(access[0], m0, desc, null, exceptions[0]);
+            mv.visitCode();
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperties", "()Ljava/util/Properties;", false);
+            mv.visitLdcInsn(CLASS_RESCUE);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/Properties", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+            mv.visitVarInsn(Opcodes.ASTORE, 3);
+            mv.visitVarInsn(Opcodes.ALOAD, 3);
+            Label hook = new Label();
+            mv.visitJumpInsn(Opcodes.IFNONNULL, hook);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitVarInsn(Opcodes.ILOAD, 2);
+            mv.visitMethodInsn((access[0] & Opcodes.ACC_PRIVATE) != 0 ? Opcodes.INVOKESPECIAL : Opcodes.INVOKEVIRTUAL, owner, renamed, desc, false);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitLabel(hook);
+            mv.visitFrame(Opcodes.F_FULL, 4, new Object[]{owner, "java/lang/String", Opcodes.INTEGER, "java/lang/Object"}, 0, new Object[0]);
+            mv.visitVarInsn(Opcodes.ALOAD, 3);
+            mv.visitTypeInsn(Opcodes.CHECKCAST, "java/util/function/Function");
+            mv.visitInsn(Opcodes.ICONST_3);
+            mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+            mv.visitInsn(Opcodes.DUP); mv.visitInsn(Opcodes.ICONST_0); mv.visitVarInsn(Opcodes.ALOAD, 0); mv.visitInsn(Opcodes.AASTORE);
+            mv.visitInsn(Opcodes.DUP); mv.visitInsn(Opcodes.ICONST_1); mv.visitVarInsn(Opcodes.ALOAD, 1); mv.visitInsn(Opcodes.AASTORE);
+            mv.visitInsn(Opcodes.DUP); mv.visitInsn(Opcodes.ICONST_2); mv.visitVarInsn(Opcodes.ILOAD, 2);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
+            mv.visitInsn(Opcodes.AASTORE);
+            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/Function", "apply", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+            mv.visitTypeInsn(Opcodes.CHECKCAST, "[B");
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            log.accept("class rescue: Fabric's class loader waits for class files a build is rewriting");
+            return w.toByteArray();
+        } catch (Throwable t) {
+            log.accept("class rescue: patch failed: " + t);
+            return null;
+        }
+    }
+
     private static byte[] freezeWatch(byte[] bytes, java.util.function.Consumer<String> log) {
         try {
             ClassReader r = new ClassReader(bytes);

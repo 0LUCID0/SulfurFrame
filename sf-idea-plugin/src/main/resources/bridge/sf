@@ -1,0 +1,64 @@
+#!/bin/sh
+# SulfurFrame: the running Minecraft game for coding agents. `sf help` lists the commands.
+# Finds the IDE session whose project folder holds the current directory (or the only one), drops a request file
+# there and prints the answer. Written by the SulfurFrame plugin into ~/.sulfurframe/bin; edits are overwritten.
+home="${SULFURFRAME_HOME:-$HOME/.sulfurframe}"
+root="$home/bridge"
+if [ "$1" = "run" ] || [ "$1" = "relay" ]; then   # no IDE: the host (or the feedback relay) runs here, in the foreground
+  java="${SF_JAVA:-$(head -n 1 "$home/bin/host.java.txt" 2>/dev/null | tr -d '\r')}"
+  jar="${SF_HOST_JAR:-$(head -n 1 "$home/bin/host.classpath.txt" 2>/dev/null | tr -d '\r')}"
+  if [ -z "$jar" ]; then echo "sf run: no SulfurFrame jar known yet: open IntelliJ with SulfurFrame once, or set SF_HOST_JAR" >&2; exit 3; fi
+  exec "${java:-java}" --enable-native-access=ALL-UNNAMED -cp "$jar" dev.sulfurframe.idea.HeadlessHost "$@"
+fi
+norm() {
+  p="$1"
+  if command -v cygpath >/dev/null 2>&1; then p=$(cygpath -m "$p" 2>/dev/null || echo "$p"); fi
+  printf '%s/' "$p" | sed 's#\\#/#g' | tr 'A-Z' 'a-z'
+}
+here=$(norm "$(pwd)")
+# the session whose project folder holds this folder (the longest match), among those alive: their IDE or sf run
+# touches "alive" every 10 s, so a folder left by one that died (older than a minute) is skipped
+session=""; best=0; open=""
+for d in "$root"/*/; do
+  [ -f "$d/session.txt" ] || continue
+  [ -n "$(find "$d/alive" -mmin -1 2>/dev/null)" ] || continue
+  projraw=$(head -n 1 "$d/session.txt" | tr -d '\r')
+  open="$open
+  $projraw"
+  proj=$(norm "$projraw")
+  case "$here" in "$proj"*) if [ ${#proj} -gt $best ]; then session="$d"; best=${#proj}; fi ;; esac
+done
+if [ -z "$session" ] && [ "$1" = "feedback" ]; then   # no IDE: the report is still kept, without the game's state
+  shift
+  dir="$home/feedback/inbox"; mkdir -p "$dir"
+  name=$(basename "$(pwd)" | sed 's/[^A-Za-z0-9._-]/_/g')
+  f="$dir/$(date +%Y%m%d-%H%M%S)-$name.md"
+  {
+    echo "# SulfurFrame feedback (no IDE session)"; echo
+    echo "## What the agent reported"; echo; echo "$*"; echo
+    echo "## State"; echo; echo "no SulfurFrame IDE answered; folder $(pwd)"
+  } > "$f"
+  echo "saved: $f"; exit 0
+fi
+if [ -z "$session" ]; then
+  if [ -n "$open" ]; then echo "sf: no SulfurFrame session for $(pwd); run sf from inside one of these projects:$open" >&2
+  else echo "sf: no SulfurFrame session is running. Open the project in IntelliJ with SulfurFrame 0.3.0 or newer (the first with sf), or start the game with: sf run" >&2; fi
+  exit 3
+fi
+id="$$-$(date +%s)"
+req="$session/req"
+printf '%s\n' "$*" > "$req/$id.part" && mv "$req/$id.part" "$req/$id.req"
+i=0
+while [ ! -f "$req/$id.res" ]; do
+  sleep 0.2; i=$((i + 1))
+  if [ -f "$req/$id.req" ] && [ $i -ge 25 ]; then rm -f "$req/$id.req"; echo "sf: the IDE did not take the request (is it open and responsive?)" >&2; exit 3; fi
+  [ $i -ge 3600 ] && { echo "sf: no answer in 12 minutes" >&2; exit 3; }
+  if [ ! -f "$session/session.txt" ]; then   # the IDE closed or sf run ended meanwhile
+    if [ "$1" = "quit" ]; then echo "the game saved and quit"; exit 0; fi
+    echo "sf: the session ended (IntelliJ closed or sf run finished)" >&2; exit 3
+  fi
+done
+code=$(head -n 1 "$req/$id.res" | sed 's/^#exit //' | tr -d '\r')
+tail -n +2 "$req/$id.res"
+rm -f "$req/$id.res"
+exit "${code:-2}"

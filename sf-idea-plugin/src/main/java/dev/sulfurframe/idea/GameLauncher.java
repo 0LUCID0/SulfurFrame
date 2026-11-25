@@ -61,9 +61,13 @@ final class GameLauncher {
                 }
                 log.accept("game runs on JetBrains Runtime " + jbr.getParent().getParent().getFileName() + " (enhanced hotswap: methods and fields can change)");
             } else {
-                log.accept("no JetBrains Runtime " + profile.javaMajor() + " found (~/.jdks): hotswap limited to method bodies"
-                        + (JbrDownloader.available(profile.javaMajor()) ? " (a download is offered)" : ""));
-                JbrDownloader.offer(profile.javaMajor(), log, restartAction);
+                if (headless) log.accept("no JetBrains Runtime " + profile.javaMajor() + " found (~/.jdks): hotswap limited to method bodies"
+                        + " (install JBR " + profile.javaMajor() + " into ~/.jdks for more)");
+                else {   // the download goes through the IDE (notification, progress)
+                    log.accept("no JetBrains Runtime " + profile.javaMajor() + " found (~/.jdks): hotswap limited to method bodies"
+                            + (JbrDownloader.available(profile.javaMajor()) ? " (a download is offered)" : ""));
+                    JbrDownloader.offer(profile.javaMajor(), log, restartAction);
+                }
             }
             if (!gameArgs.isEmpty()) {
                 Path init = tmp("sf-args.init.gradle");
@@ -75,10 +79,11 @@ final class GameLauncher {
             }
             // Which game is ours: the agent rides along from the start and writes its PID into a file unique to this
             // launch. Only that process's window is embedded, never a Minecraft started meanwhile by something else.
-            if (!extraJvmArgs.isEmpty()) {   // e.g. the debugger's JDWP agent
+            final List<String> jvmArgs = jvmArgs(target);
+            if (!jvmArgs.isEmpty()) {   // e.g. the debugger's JDWP agent
                 Path init = tmp("sf-jvmargs.init.gradle");
                 Files.writeString(init, JVM_ARGS_SCRIPT, StandardCharsets.UTF_8);
-                cmd.addAll(List.of("--init-script", init.toString(), "-PsfJvmArgs=" + Base64.getEncoder().encodeToString(String.join("\n", extraJvmArgs).getBytes(StandardCharsets.UTF_8))));
+                cmd.addAll(List.of("--init-script", init.toString(), "-PsfJvmArgs=" + Base64.getEncoder().encodeToString(String.join("\n", jvmArgs).getBytes(StandardCharsets.UTF_8))));
             }
             String agentSpec = agentSpec(target);
             if (agentSpec != null) {
@@ -103,12 +108,12 @@ final class GameLauncher {
             }
             long started = System.currentTimeMillis();
             start(pb, onEnd, "started " + wrapper + " " + target.runTask() + " for " + profile);
-            final List<String> extra = extraJvmArgs, args = List.copyOf(gameArgs);
+            final List<String> extra = jvmArgs, args = List.copyOf(gameArgs);
             final Path mine = marker, agent = agentJar;
             watch(before, mine, started, (pid, h) -> {
                 // remember how the game was started, for the next launch without Gradle
                 if (mine != null && QuickRelaunch.enabled()) {
-                    var spec = QuickRelaunch.capture(SulfurPanel.key(target), pid, mine, agent, extra, args, jbr, started, log);
+                    var spec = QuickRelaunch.capture(target.key(), pid, mine, agent, extra, args, jbr, started, log);
                     if (spec != null) cache.put(spec.key(), spec);
                 }
                 onWindow.accept(pid, h);
@@ -123,10 +128,10 @@ final class GameLauncher {
     private final Map<String, QuickRelaunch.Spec> cache = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** The cached start of this target, or null (never run through Gradle in this IDE session). */
-    QuickRelaunch.Spec cached(Workspace.Target target) { return cache.get(SulfurPanel.key(target)); }
+    QuickRelaunch.Spec cached(Workspace.Target target) { return cache.get(target.key()); }
 
     /** Forget the cached start (the next launch goes through Gradle). */
-    void forget(Workspace.Target target) { cache.remove(SulfurPanel.key(target)); }
+    void forget(Workspace.Target target) { cache.remove(target.key()); }
 
     /**
      * Start the game straight from a cached command line ({@link QuickRelaunch}): no Gradle. The agent (with a new
@@ -142,7 +147,7 @@ final class GameLauncher {
                 log.accept("game arguments: " + String.join(" ", gameArgs));
                 if (gameArgs.stream().anyMatch(a -> a.startsWith("--quickPlay"))) SharedInstance.skipAccessibilityOnboarding(SharedInstance.runDir(target), target.profile().minecraftVersion(), log);
             }
-            var cmd = QuickRelaunch.command(spec, extraJvmArgs, agentSpec, gameArgs);
+            var cmd = QuickRelaunch.command(spec, jvmArgs(target), agentSpec, gameArgs);
             String classpath = QuickRelaunch.moveLongClasspath(cmd);
             var pb = new ProcessBuilder(cmd).directory(spec.cwd().toFile()).redirectErrorStream(true);
             pb.environment().clear();
@@ -217,6 +222,8 @@ final class GameLauncher {
 
     /** Starts the game again (Restart into the same world), for "restart now" after a JBR download; set by the panel. */
     volatile Runnable restartAction;
+    /** Started from a terminal without IntelliJ (HeadlessHost): nothing that needs the IDE. */
+    volatile boolean headless;
 
     /** Self-test runs are silent by default (-Dsulfurframe.mute=false to hear them); -Dsulfurframe.mute=true mutes any run. */
     static boolean muted() {
@@ -234,6 +241,16 @@ final class GameLauncher {
 
     /** More JVM arguments for the next launch (debugger). */
     void setExtraJvmArgs(List<String> args) { extraJvmArgs = List.copyOf(args); }
+
+    /**
+     * This launch's JVM arguments: the extra ones, and on Java 21+ -XX:+EnableDynamicAgentLoading, since every hotswap,
+     * reload and sf command attaches the agent again and Java 21 printed four warning lines into the game log each time.
+     */
+    private List<String> jvmArgs(Workspace.Target target) {
+        var out = new ArrayList<>(extraJvmArgs);
+        if (target.profile().javaMajor() >= 21) out.add("-XX:+EnableDynamicAgentLoading");
+        return out;
+    }
 
     static final String JVM_ARGS_SCRIPT = """
             def sfJvm = gradle.startParameter.projectProperties['sfJvmArgs']

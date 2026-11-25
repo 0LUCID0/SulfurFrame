@@ -21,13 +21,14 @@ import java.util.function.Supplier;
  * Tool window content: which client to run (every runnable target found in the opened folder), controls, the
  * embedded game, a short log.
  */
-final class SulfurPanel extends JPanel {
+final class SulfurPanel extends JPanel implements GameHost {
     final GameView embedder;
     private final GameLauncher launcher;
     private final JComboBox<Workspace.Target> targets = new JComboBox<>();
     private final JTextArea log = new JTextArea(5, 40);
     String logText() { return log.getText(); }
     void setSwapOnSave(boolean on) { swapOnSave.setSelected(on); }
+    boolean swapOnSaveSelected() { return swapOnSave.isSelected(); }
 
     /** The settings page changed something: show it here (no events, nothing is stored again). */
     void syncSettings() {
@@ -169,7 +170,7 @@ final class SulfurPanel extends JPanel {
         });
     }
 
-    static String key(Workspace.Target t) { return t.buildRoot() + "|" + t.projectPath() + (t.task().equals("runClient") ? "" : "|" + t.task()); }
+    static String key(Workspace.Target t) { return t.key(); }
 
     void runClient() { runClient(List.of()); }
 
@@ -262,6 +263,8 @@ final class SulfurPanel extends JPanel {
         gameLogPanel = new GameLogPanel(project, this::selectedTarget, this::restartAsync, this::log);
         var t = selectedTarget();
         if (t != null) gameLogPanel.follow(t);
+        bridge = Bridge.start(this, projectDir);
+        com.intellij.openapi.util.Disposer.register(project, () -> { var b = bridge; if (b != null) b.stop(); });
         // the first scan ran in the constructor, before there was a project: the run configurations come now
         var found = new java.util.ArrayList<Workspace.Target>();
         for (int i = 0; i < targets.getItemCount(); i++) found.add(targets.getItemAt(i));
@@ -272,7 +275,7 @@ final class SulfurPanel extends JPanel {
     final JCheckBox shareWorlds = new JCheckBox("Shared worlds", Settings.sharedWorlds());
 
     /** The client the IDE's selected run configuration starts (if it is one of ours), else the last one used. */
-    Workspace.Target selectedTarget() {
+    public Workspace.Target selectedTarget() {
         if (project != null && !project.isDisposed()) {
             var sel = com.intellij.execution.RunManager.getInstance(project).getSelectedConfiguration();
             if (sel != null && sel.getConfiguration() instanceof SulfurRunConfiguration c) { var t = targetByKey(c.target); if (t != null) return t; }
@@ -281,10 +284,10 @@ final class SulfurPanel extends JPanel {
     }
 
     /** Compile the selected target and reload what changed into the running game (background thread). */
-    void hotswapAsync() {
+    public void hotswapAsync() {
         var t = selectedTarget();
         long pid = embedder.gamePid();
-        Thread.ofPlatform().daemon().name("sf-hotswap").start(() -> {
+        work("sf-hotswap", () -> {
             hotswapper.swap(t, pid, agentJar);
             var restartNeeded = hotswapper.lastResult.stream().filter(s -> s.startsWith("restart needed")).toList();
             Path rollback = hotswapper.failedInitSnapshot;
@@ -303,7 +306,7 @@ final class SulfurPanel extends JPanel {
     private volatile boolean restarting;
     private volatile long lastOffer;
 
-    void restartAsync() { Thread.ofPlatform().daemon().name("sf-restart").start(this::restart); }
+    public void restartAsync() { work("sf-restart", this::restart); }
 
     /**
      * Quick restart for what hotswap cannot do (new registrations, mod metadata, access wideners, build changes):
@@ -352,7 +355,7 @@ final class SulfurPanel extends JPanel {
     // ------------------------------------------------------------------ worlds: snapshots, test world
 
     /** Folder name of the world open in the running game ("" if none / no game). */
-    String openWorld() throws Exception {
+    public String openWorld() throws Exception {
         long pid = embedder.gamePid();
         if (pid <= 0 || ProcessHandle.of(pid).isEmpty()) return "";
         Path wf = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "world-" + pid + "-q.txt");
@@ -470,7 +473,7 @@ final class SulfurPanel extends JPanel {
     void inspectAsync() { Thread.ofPlatform().daemon().name("sf-inspect").start(() -> { if (inspect()) SwingUtilities.invokeLater(this::showLook); }); }
 
     /** Ask the agent what the crosshair is on (block or entity, classes, NBT). Blocking. */
-    boolean inspect() {
+    public boolean inspect() {
         long pid = embedder.gamePid();
         if (pid <= 0) { log("inspect: no game"); return false; }
         try {
@@ -683,7 +686,7 @@ final class SulfurPanel extends JPanel {
     private volatile Path statsFile;
 
     /** Ask the game's agent to write its numbers (fps, tick time, memory) every second, for the status bar. */
-    void startStats(long pid) {
+    public void startStats(long pid) {
         Thread.ofPlatform().daemon().name("sf-stats").start(() -> {
             try {
                 Path f = Path.of(System.getProperty("java.io.tmpdir"), "sulfurframe", "stats-" + pid + ".txt");
@@ -697,7 +700,7 @@ final class SulfurPanel extends JPanel {
     }
 
     /** The game's latest numbers (empty when there is no fresh report). */
-    java.util.Map<String, String> stats() {
+    public java.util.Map<String, String> stats() {
         Path f = statsFile;
         var m = new java.util.LinkedHashMap<String, String>();
         try {
@@ -763,7 +766,7 @@ final class SulfurPanel extends JPanel {
             offerRestart(String.join(", ", startup.stream().map(f -> f.getFileName().toString()).distinct().toList()) + " changed (read only when the game starts)");
         if (!mixinConfigs.isEmpty()) {
             long pid = embedder.gamePid();
-            Thread.ofPlatform().daemon().name("sf-mixins").start(() -> {
+            work("sf-mixins", () -> {
                 for (Path f : mixinConfigs) {
                     String why = hotswapper.addMixins(t, pid, agentJar, f);
                     if (why != null) offerRestart(why);
@@ -777,7 +780,7 @@ final class SulfurPanel extends JPanel {
                 && f.toString().replace('\\', '/').contains("/resources/")).toList();
         if (!wideners.isEmpty()) {   // first, then the code that may use what it widens
             long pid = embedder.gamePid();
-            Thread.ofPlatform().daemon().name("sf-widen").start(() -> {
+            work("sf-widen", () -> {
                 for (Path f : wideners) {
                     String why = hotswapper.widenLive(t, pid, agentJar, f);
                     if (why != null) offerRestart(why);
@@ -787,17 +790,60 @@ final class SulfurPanel extends JPanel {
         } else if (!code.isEmpty()) hotswapAsync();
         if (!res.isEmpty()) {
             long pid = embedder.gamePid();
-            Thread.ofPlatform().daemon().name("sf-resources").start(() -> hotswapper.reloadResources(t, pid, agentJar, res));
+            work("sf-resources", () -> hotswapper.reloadResources(t, pid, agentJar, res));
         }
     }
 
-    void log(String s) {
+    private final java.util.ArrayDeque<String> journal = new java.util.ArrayDeque<>();
+    private long journalSeq;
+    /** Swaps, reloads and restarts running now, and how many have started so far (agent bridge: sf wait). */
+    private final java.util.concurrent.atomic.AtomicInteger busy = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicLong activity = new java.util.concurrent.atomic.AtomicLong();
+    private volatile Bridge bridge;
+
+    public long journalSeq() { synchronized (journal) { return journalSeq; } }
+
+    /** Log lines numbered after {@code seq} (as many as are still kept). */
+    public List<String> journalSince(long seq) {
+        synchronized (journal) {
+            int skip = (int) Math.max(0, journal.size() - (journalSeq - seq));
+            return journal.stream().skip(skip).toList();
+        }
+    }
+
+    public int busy() { return busy.get(); }
+    public long activity() { return activity.get(); }
+    private volatile long lastWorkStartSeq, lastWorkEndMillis;
+    public long lastWorkStartSeq() { return lastWorkStartSeq; }
+    public long lastWorkEndMillis() { return lastWorkEndMillis; }
+    public long gamePid() { return embedder.gamePid(); }
+    public boolean gameAttached() { return embedder.attached(); }
+    public Hotswapper hotswapper() { return hotswapper; }
+    public java.util.Map<String, String> lastLook() { return lastLook; }
+    @Override public String runTests(List<String> names) throws Exception { return AutoTest.runOnRunningGame(this, names); }
+
+    /** Runs {@code r} on a daemon thread, counted as work (sf wait waits for it). */
+    private void work(String name, Runnable r) {
+        busy.incrementAndGet();
+        activity.incrementAndGet();
+        lastWorkStartSeq = journalSeq();
+        try {
+            Thread.ofPlatform().daemon().name(name).start(() -> { try { r.run(); } finally { lastWorkEndMillis = System.currentTimeMillis(); busy.decrementAndGet(); } });
+        } catch (RuntimeException e) { busy.decrementAndGet(); throw e; }
+    }
+
+    public void log(String s) {
         // a crash soon after init code ran again: offer the world from before it
         Path init = hotswapper == null ? null : hotswapper.lastInitSnapshot;
         if (s.startsWith("game crashed:") && init != null && System.currentTimeMillis() - hotswapper.lastInitSnapshotAt < 120_000 && init != lastRollbackOffer)
             Thread.ofPlatform().daemon().start(() -> offerInitRollback(s + " (shortly after init code ran again)", init));
         String line = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + " " + s;
         System.out.println("[SulfurFrame] " + line);
+        synchronized (journal) {   // for the agent bridge (sf status / wait): the newest 500 lines, numbered
+            journal.addLast(line);
+            if (journal.size() > 500) journal.removeFirst();
+            journalSeq++;
+        }
         UsageLog.append((AutoTest.enabled() ? "autotest:" : "") + (project == null ? "-" : project.getName()), s);
         SwingUtilities.invokeLater(() -> { log.append(line + "\n"); log.setCaretPosition(log.getDocument().getLength()); });
     }
@@ -835,7 +881,7 @@ final class SulfurPanel extends JPanel {
         }
     }
 
-    Path agentJar() { return agentJar; }
+    public Path agentJar() { return agentJar; }
 
     /** For the self-test. */
     int targetCount() { return targets.getItemCount(); }

@@ -29,6 +29,8 @@ public final class Workspace {
      */
     public record Target(Path buildRoot, String projectPath, Path dir, ProjectProfile profile, String where, String task) {
         public Target(Path buildRoot, String projectPath, Path dir, ProjectProfile profile, String where) { this(buildRoot, projectPath, dir, profile, where, "runClient"); }
+        /** Identity of a client across scans: build root, project path, run task (run configurations, launch cache). */
+        public String key() { return buildRoot + "|" + projectPath + (task.equals("runClient") ? "" : "|" + task); }
         public String runTask() { return projectPath.equals(":") ? task : projectPath + ":" + task; }
         public boolean hasWrapper() { return Files.exists(buildRoot.resolve("gradlew.bat")) || Files.exists(buildRoot.resolve("gradlew")); }
         public String label() { return profile + "  —  " + where + (task.equals("runClient") ? "" : "  [" + task + "]") + (hasWrapper() ? "" : "  (no gradlew)"); }

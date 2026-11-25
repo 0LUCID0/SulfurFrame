@@ -82,6 +82,33 @@ public class RegistryPatchSelfTest {
         try { rc.getMethod("freeze").invoke(r1); } finally { System.getProperties().remove(RegistryPatch.FREEZE_WATCH); }
         expect("freeze watch: told who froze, then froze as before", seen.size() == 1 && seen.get(0) == r1 && rc.getField("frozen").getBoolean(r1), true);
 
+        // ---- class rescue: Fabric's class loader asks the hook for a class's bytes (the hook calls the original)
+        var knot = compile("package net.fabricmc.loader.impl.launch.knot; public class KnotClassDelegate {"
+                + " public int calls; private byte[] getRawClassByteArray(String name, boolean parent) throws java.io.IOException {"
+                + " calls++; return name.equals(\"there\") ? new byte[]{1, 2} : null; }"
+                + " public byte[] get(String name) throws java.io.IOException { return getRawClassByteArray(name, false); } }");
+        String kn = "net/fabricmc/loader/impl/launch/knot/KnotClassDelegate";
+        var l7 = new Loader(Map.of(kn.replace('/', '.'), RegistryPatch.loadTimeHooks(s -> { }).transform(null, kn, null, null, knot.get(kn))));
+        Class<?> kc = l7.loadClass(kn.replace('/', '.'));
+        Object kd = kc.getConstructor().newInstance();
+        Object plain = kc.getMethod("get", String.class).invoke(kd, "there");   // no hook: the original answers
+        List<String> asked = new ArrayList<>();
+        System.getProperties().put(RegistryPatch.CLASS_RESCUE, (java.util.function.Function<Object[], Object>) args -> {
+            asked.add((String) args[1]);
+            try {
+                var orig = args[0].getClass().getDeclaredMethod("sf$rawClassBytes0", String.class, boolean.class);
+                orig.setAccessible(true);
+                Object b = orig.invoke(args[0], args[1], args[2]);
+                return b != null ? b : new byte[]{9};   // the rescue's answer for a missing one
+            } catch (Exception e) { throw new RuntimeException(e); }
+        });
+        Object viaHook, rescued;
+        try { viaHook = kc.getMethod("get", String.class).invoke(kd, "there"); rescued = kc.getMethod("get", String.class).invoke(kd, "gone"); }
+        finally { System.getProperties().remove(RegistryPatch.CLASS_RESCUE); }
+        expect("class rescue: original without the hook, the hook's answer with it", java.util.Arrays.equals((byte[]) plain, new byte[]{1, 2})
+                && java.util.Arrays.equals((byte[]) viaHook, new byte[]{1, 2}) && java.util.Arrays.equals((byte[]) rescued, new byte[]{9})
+                && asked.equals(List.of("there", "gone")) && kc.getField("calls").getInt(kd) == 3, true);
+
         // ---- renamed registration copy: its Registry.register calls go through a bridge that asks the hook
         var holder = compile("package t; import net.minecraft.registry.Registry; public class Holder {"
                 + " public static final Object A = Registry.register(null, \"old\", new Object());"

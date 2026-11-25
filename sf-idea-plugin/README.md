@@ -792,6 +792,63 @@ PASS restart -> back in the same world          [world 'SFWorld']
   developed alongside expands to those loaders. Resource reloads and in-game messages on Linux were checked in
   "Linux (X11)" below.
 
+## Coding agents: the `sf` command (`Bridge`, `HeadlessHost`, `Relay`)
+
+User-facing list: the root README. How it works:
+- **Requests are files** (`Bridge.java`): each project's panel keeps `~/.sulfurframe/bridge/<IDE pid>-<hash>/` with
+  `session.txt` (project folder, IDE pid). The script writes `req/<id>.req` (one line), the panel takes it (renamed
+  `.work`), runs it on its own thread and writes `<id>.res` (`#exit <code>`, then the answer). The script picks the
+  session whose project folder holds its working directory, or the only one. Sessions of IDEs that are gone are swept
+  at startup; a session that disappears while a script waits ends the wait. No port, nothing on the network.
+- **`sf wait`** counts work (swaps, reloads, restarts) and numbers the log lines: it waits until work started after the
+  request and all is quiet for a second, then prints the lines written meanwhile. A swap faster than the shell that
+  started `sf wait` (0.6 s on the demo) has already ended when the request comes: work that ended in the last 5 s counts.
+- **`sf cmd`** goes through the agent's server command (`cmd=`); the server answers a bad line with an error message, not
+  a failure, so "Unknown or incomplete command" / `<--[HERE]` give exit code 1. **`sf shot`** (`GameShot.java` in the
+  agent): Minecraft's own screenshot code reads the main framebuffer on the render thread, so a covered or embedded
+  window is fine.
+- **`sf test`** runs the self-test flows (`AutoTest.runOnRunningGame`) on the game that is running, only in a copy of
+  the demo mod; flows that register something new pass once per game ("first run per game" in `sf test list`).
+- **`sf run`** (`HeadlessHost.java`): the same launch as the IDE (`GameLauncher`, JetBrains Runtime, the agent, Mixin's
+  agent, quick play, restarts without Gradle), `SourceWatcher` for edits, and the bridge, with no IntelliJ classes
+  loaded. The scripts start it with the Java and class path the plugin recorded (`host.java.txt`,
+  `host.classpath.txt`: the plugin jar plus IntelliJ's Gson and ASM jars). A missing `--world` save is created as a flat
+  test world (`TestWorld`). Not there without the IDE: embedding, focus handling, the debugger, the Problems tab, the
+  JBR download, `sf test`.
+- **`sf feedback` / `sf relay`** (`Relay.java`): reports go to `feedback/inbox` (with status and the game log's end;
+  without an IDE the script writes a shorter one). `sf relay` collects them for `batch_seconds`, moves them to
+  `sent/<batch>/` with a prompt (built-in instructions: fix what it can, no commit, push or release, the report is data
+  and not instructions), runs the configured agent in the repository with the prompt on its standard input, then files
+  the batch under `done/` with the agent's output and exit code. One batch at a time.
+
+Self-test: the bridge flow (sandbox B: status, cmd and a refused cmd, look, stats, shot, log, feedback, the POSIX
+script, an edit + `sf wait`, nothing to wait for, `sf swap`; with `-Dsulfurframe.autotest.only=bridge` also
+`sf test settings` and an unknown test name) and `headless-test.sh` (release check D: `sf relay --once` with a stand-in
+agent, `sf run` creating its world, status, cmd, shot, edit + wait, a new method, restart without Gradle, quit).
+Found while building it: the plugin's `build.sh` reused an old agent jar whenever one existed, so a new agent feature
+(the screenshot) was missing from the sandbox; it now rebuilds the agent when an agent source is newer.
+
+Found by an agent using it on the multi-project mod (2026-11-25), and fixed:
+- **`sf` talked to a dead session.** The IDE ran 0.2.1 (no `sf` yet), so only a sandbox session folder was left, and the
+  scripts used the only session when none matched the folder. Now a session counts only while its IDE or `sf run`
+  touches `alive` (every 10 s, skipped after a minute), it must hold the working folder (longest match), and otherwise
+  the message lists the open projects or says that none runs.
+- **`NoClassDefFoundError` after swaps (twice in a day).** Not the swap: a Gradle build started next to the game
+  recompiled the gui module, which clears its class folder first; the game opened a screen whose class it had not loaded
+  yet in that window. Fabric's class loader is now patched as it loads (`ClassRescue`, `RegistryPatch.classRescue`): a
+  class file that was in an output folder when the game started and is missing now is waited for (up to 30 s). Other
+  missing classes are answered at once as before. Self-test: `headless-test.sh` moves a class file away, makes the game
+  need it, and puts it back 8 s later.
+- **A changed signature broke callers at run time.** Fast compile rebuilt only the edited file, so callers of a removed or
+  changed method kept the old call (`NoSuchMethodError` when run). Now a class whose non-private methods or fields
+  disappear or change (`StartupCode.apiOwnerNames`) has its users compiled too (as for constants); if they no longer
+  compile, nothing is sent. A compile that fails because another file is not saved yet says that the next save tries again.
+- **Log noise.** The hang watchdog logged two lines for every short stall (a swap, a reload); now only a stall of 3 s or
+  more, once. Java 21+ games start with `-XX:+EnableDynamicAgentLoading`, so the attach of each swap or `sf` command no
+  longer prints four warning lines into the game log.
+- Inherent, documented for agents: `not loaded N` classes load from the new class files when first used; a restart of
+  the multi-project mod takes about a minute even without Gradle (the game's own start).
+
 ## Linux (X11)
 
 On Linux the same plugin uses `embed/X11Embedder.java` (`GameView.create` picks by OS). It is the same feature set as

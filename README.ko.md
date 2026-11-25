@@ -152,6 +152,30 @@ IntelliJ IDEA를 내려받습니다. 설치된 IDE를 쓰려면 `-PideaHome=<설
 릴리스: `PUBLISH_TOKEN`을 설정하고(서명하려면 `CERTIFICATE_CHAIN`, `PRIVATE_KEY`, `PRIVATE_KEY_PASSWORD`도)
 `./gradlew publishPlugin`.
 
+## 코딩 에이전트 (`sf`)
+
+터미널에서 모드를 작업하는 LLM 에이전트(Claude Code, Codex, Gemini CLI, aider...)도 게임을 쓸 수 있습니다.
+SulfurFrame이 `~/.sulfurframe/bin`에 작은 `sf` 명령을 둡니다(POSIX 셸은 `sf`, Windows는 `sf.cmd`/`sf.ps1`).
+프로젝트 폴더에서 실행합니다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `sf status` | 게임, 월드, 마지막 스왑·리로드·init 실행 결과, 최근 로그 |
+| `sf wait` | 디스크에서 고친 뒤: 그 변경이 시작한 스왑을 기다렸다가 결과 출력 |
+| `sf swap` | 지금 컴파일하고 스왑 |
+| `sf cmd <명령어>` | 열린 월드에서 명령어 실행, 게임이 한 말 출력(게임이 거부하면 종료 코드 1) |
+| `sf look`, `sf stats`, `sf shot` | 조준점 대상, fps와 메모리, 스크린샷(PNG 경로) |
+| `sf log [n] [글자]` | 게임 로그의 마지막 줄 |
+| `sf restart`, `sf quit` | 같은 월드로 재시작(필요 없으면 Gradle 없이), 저장하고 종료 |
+| `sf test [이름]` | 실행 중인 게임에 SulfurFrame 자체 런타임 테스트(데모 모드에서만) |
+| `sf run [--world W]` | **IntelliJ 없이**: 터미널에서 게임을 띄우고, 저장한 변경을 스왑하고, 위 명령에 답함 |
+| `sf feedback <글>` | SulfurFrame이 잘못 동작했을 때: 그 순간의 상태와 함께 로컬에 저장 |
+| `sf relay` | 그 피드백을 SulfurFrame을 고치는 에이전트에게 넘김(`~/.sulfurframe/relay.conf`에서 설정) |
+
+종료 코드: 0 완료, 1 게임이 거부, 2 오류, 3 응답하는 IDE나 `sf run`이 없음. 요청은 `~/.sulfurframe/bridge`의
+파일로 주고받고, 네트워크로 듣는 것은 없습니다. Settings | Tools | SulfurFrame에서 끌 수 있습니다. `sf run`에는
+Java 25와, 라이브러리 두 개를 빌려 쓰기 위한 IntelliJ 설치가 필요합니다(IDE를 켤 필요는 없음).
+
 ## 구성
 
 - `sf-idea-plugin/` – 플러그인(설계 메모와 테스트 기록은 [README](sf-idea-plugin/README.ko.md))

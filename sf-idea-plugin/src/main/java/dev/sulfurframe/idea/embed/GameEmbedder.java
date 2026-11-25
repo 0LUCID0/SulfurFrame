@@ -36,6 +36,7 @@ public final class GameEmbedder implements GameView {
     private volatile long game, gamePid, canvasHwnd, parked;
     private volatile long savedStyle, savedExStyle;
     private volatile boolean inputDetached;
+    private volatile long detachedAt;
     final Throttler throttler;
     private final ExecutorService focusHelper = Executors.newSingleThreadExecutor(r -> Thread.ofPlatform().daemon().name("sf-focus").unstarted(r));
     private long subclassed, origProc, stub;
@@ -427,8 +428,13 @@ public final class GameEmbedder implements GameView {
                 if (h == 0 || c == 0 || !Win32.isWindow(h)) { misses = 0; continue; }
                 misses = Win32.isResponsive(h, 200) ? 0 : misses + 1;
                 int ideTid = Win32.threadIdOf(Win32.getAncestor(c, Win32.GA_ROOT)), gameTid = Win32.threadIdOf(h);
-                if (misses >= 2 && !inputDetached) { Win32.attachThreadInput(gameTid, ideTid, false); inputDetached = true; log.accept("game not responding: input queues detached"); }
-                else if (misses == 0 && inputDetached) { Win32.attachThreadInput(gameTid, ideTid, true); inputDetached = false; log.accept("game responsive again"); }
+                // a short stall (a swap, a resource reload, a world loading) is normal: only one that lasted is logged
+                if (misses >= 2 && !inputDetached) { Win32.attachThreadInput(gameTid, ideTid, false); inputDetached = true; detachedAt = System.currentTimeMillis(); }
+                else if (misses == 0 && inputDetached) {
+                    Win32.attachThreadInput(gameTid, ideTid, true); inputDetached = false;
+                    long ms = System.currentTimeMillis() - detachedAt;
+                    if (ms >= 3000) log.accept(String.format("game was not responding for %.1f s (its input was kept apart from the IDE's meanwhile)", ms / 1000.0));
+                }
             }
         });
     }

@@ -155,6 +155,30 @@ JDK 25 is needed (Gradle finds it in `~/.jdks` or a standard install). The build
 Release: set `PUBLISH_TOKEN` (and optionally `CERTIFICATE_CHAIN`, `PRIVATE_KEY`, `PRIVATE_KEY_PASSWORD` for signing),
 then `./gradlew publishPlugin`.
 
+## Coding agents (`sf`)
+
+An LLM agent working on your mod from a terminal (Claude Code, Codex, Gemini CLI, aider...) can use the game too:
+SulfurFrame writes a small `sf` command into `~/.sulfurframe/bin` (`sf` for POSIX shells, `sf.cmd`/`sf.ps1` for
+Windows). Run it from the project folder.
+
+| Command | What it does |
+|---|---|
+| `sf status` | game, world, what the last swap / reload / init run did, the latest log lines |
+| `sf wait` | after an edit on disk: waits for the swap it starts and prints its result |
+| `sf swap` | compile and swap now |
+| `sf cmd <command>` | a command in the open world, with what it said (exit code 1 when the game refused it) |
+| `sf look`, `sf stats`, `sf shot` | what the crosshair is on, fps and memory, a screenshot (PNG path) |
+| `sf log [n] [text]` | the game log's last lines |
+| `sf restart`, `sf quit` | restart into the same world (no Gradle when nothing needs it), save and quit |
+| `sf test [names]` | SulfurFrame's own runtime tests on the running game (its demo mod only) |
+| `sf run [--world W]` | **without IntelliJ**: starts the game in the terminal, swaps saved changes, answers the commands above |
+| `sf feedback <text>` | SulfurFrame did something wrong: saved locally with the state around it |
+| `sf relay` | hands those reports to the agent that works on SulfurFrame (configured in `~/.sulfurframe/relay.conf`) |
+
+Exit codes: 0 done, 1 the game said no, 2 error, 3 no IDE or `sf run` answered. Requests are files in
+`~/.sulfurframe/bridge`; nothing listens on the network. Settings | Tools | SulfurFrame can turn it off. `sf run` needs
+Java 25 and an IntelliJ installation for two of its libraries (the IDE does not have to be open).
+
 ## Layout
 
 - `sf-idea-plugin/` – the plugin (design notes and test results in its [README](sf-idea-plugin/README.md))

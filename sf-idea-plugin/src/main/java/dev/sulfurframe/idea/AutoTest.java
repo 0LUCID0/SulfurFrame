@@ -268,6 +268,8 @@ final class AutoTest {
             try { realModFlow(p, Path.of(realMod)); } catch (Exception ex) { check("real mod flow", false, ex.toString()); }
         } else if (probe != null && Boolean.getBoolean("sulfurframe.autotest.mojang")) {
             try { mojangFlow(p, Path.of(probe)); } catch (Exception ex) { check("mojang flow", false, ex.toString()); }
+        } else if (probe != null && "bridge".equals(System.getProperty("sulfurframe.autotest.only"))) {
+            try { bridgeFlow(p, Path.of(probe)); } catch (Exception ex) { check("bridge flow", false, ex.toString()); }
         } else if (probe != null) {
             try { hotswapFlow(p, Path.of(probe)); } catch (Exception ex) { check("hotswap flow", false, ex.toString()); }
             try { restartFlow(p, Path.of(probe), world); } catch (Exception ex) { check("restart flow", false, ex.toString()); }
@@ -657,6 +659,95 @@ final class AutoTest {
                 && !Files.readString(gameLog).substring(from).contains("[SF-REAL]"), back);
     }
 
+    /** Output and exit code of the installed `sf` script, run from the project folder like a coding agent would. */
+    record Sf(int code, String out) {}
+
+    static Sf sf(Path cwd, String... args) throws Exception {
+        var cmd = new java.util.ArrayList<String>();
+        if (System.getProperty("os.name").startsWith("Windows")) { cmd.add("cmd.exe"); cmd.add("/c"); cmd.add(Bridge.BIN.resolve("sf.cmd").toString()); }
+        else { cmd.add("sh"); cmd.add(Bridge.BIN.resolve("sf").toString()); }
+        cmd.addAll(java.util.List.of(args));
+        var pb = new ProcessBuilder(cmd).directory(cwd.toFile()).redirectErrorStream(true);
+        var proc = pb.start();
+        String out = new String(proc.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        return new Sf(proc.waitFor(), out.strip());
+    }
+
+    /** POSIX `sf` from Git Bash too (agents on Windows often run a POSIX shell). */
+    private static Sf sfPosix(Path cwd, String... args) throws Exception {
+        Path sh = Path.of("C:\\Program Files\\Git\\usr\\bin\\sh.exe");
+        if (!System.getProperty("os.name").startsWith("Windows") || !Files.exists(sh)) return null;
+        var cmd = new java.util.ArrayList<>(java.util.List.of(sh.toString(), "-l", "-c", "cd \"$0\" && sh ~/.sulfurframe/bin/sf \"$@\"", cwd.toString().replace('\\', '/')));
+        cmd.addAll(java.util.List.of(args));
+        var proc = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        String out = new String(proc.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        return new Sf(proc.waitFor(), out.strip());
+    }
+
+    /**
+     * The agent bridge as a coding agent uses it: `sf` from the project folder (status, cmd, look, stats, shot, log),
+     * an edit on disk followed by `sf wait`, and `sf swap`.
+     */
+    private static void bridgeFlow(SulfurPanel p, Path probe) throws Exception {
+        var t = p.selectedTarget();
+        Path dir = t.dir();
+        Path gameLog = t.dir().resolve("run/logs/latest.log");
+        check("bridge: probe running", waitForLog(gameLog, "[SF-PROBE]", 120), "");
+        var st = sf(dir, "status");
+        check("sf status -> game running, world open", st.code == 0 && st.out.contains("game: running") && st.out.contains("world '"), st.out);
+        var c = sf(dir, "cmd", "time", "set", "day");
+        check("sf cmd time set day -> what the command said", c.code == 0 && c.out.toLowerCase().contains("time"), c.code + " " + c.out);
+        var bad = sf(dir, "cmd", "notacommand");
+        check("sf cmd with an unknown command -> exit 1 and the reason", bad.code == 1, bad.code + " " + bad.out);
+        var look = sf(dir, "look");
+        check("sf look -> what the crosshair is on", look.code == 0 && look.out.contains("kind="), look.out);
+        var stats = sf(dir, "stats");
+        check("sf stats -> fps", stats.code == 0 && stats.out.contains("fps"), stats.out);
+        var shot = sf(dir, "shot");
+        Path png = shot.code == 0 ? Path.of(shot.out.strip()) : null;
+        check("sf shot -> a PNG of the game", png != null && Files.exists(png) && Files.size(png) > 1000
+                && java.util.Arrays.equals(java.util.Arrays.copyOf(Files.readAllBytes(png), 4), new byte[]{(byte) 0x89, 'P', 'N', 'G'}), shot.code + " " + shot.out);
+        var log = sf(dir, "log", "3");
+        check("sf log 3 -> the game log's last 3 lines", log.code == 0 && log.out.lines().count() == 3, log.out);
+        var fb = sf(dir, "feedback", "self-test: the bridge flow checks feedback");
+        Path fbFile = fb.code == 0 && fb.out.startsWith("saved: ") ? Path.of(fb.out.substring(7).strip()) : null;
+        String fbText = fbFile != null && Files.exists(fbFile) ? Files.readString(fbFile) : "";
+        check("sf feedback -> saved locally with the game's state", fbText.contains("self-test: the bridge flow") && fbText.contains("game: running")
+                && fbText.contains("## Game log"), fb.code + " " + fb.out);
+        if (fbFile != null) Files.deleteIfExists(fbFile);
+        if ("bridge".equals(System.getProperty("sulfurframe.autotest.only"))) {   // sf test from a terminal: one quick flow
+            var tst = sf(dir, "test", "settings");
+            check("sf test settings -> the runtime test ran on this game", tst.code == 0 && tst.out.contains("PASS ") && tst.out.endsWith("failures: 0"), tst.code + " " + tst.out);
+            var unknown = sf(dir, "test", "nosuchtest");
+            check("sf test with an unknown name -> exit 1, the list", unknown.code == 1 && unknown.out.contains("swap"), unknown.code + " " + unknown.out);
+        }
+        var posix = sfPosix(dir, "status");
+        if (posix != null) check("sf (POSIX shell script) status", posix.code == 0 && posix.out.contains("game: running"), posix.code + " " + posix.out);
+        // an edit on disk, as an agent makes it, then sf wait: the swap the source watcher starts, and its log
+        String original = Files.readString(probe);
+        boolean saved = p.swapOnSaveSelected();
+        onEdt(() -> p.setSwapOnSave(true));
+        try {
+            sleep(1500);
+            Files.writeString(probe, original.replace("return \"v1\";", "return \"vB\";").replace("return \"v3x\";", "return \"vB\";"));
+            var w = sf(dir, "wait");
+            check("edit on disk + sf wait -> the swap's result", w.code == 0 && w.out.startsWith("done") && w.out.contains("redefined")
+                    && waitForLog(gameLog, "[SF-PROBE] vB", 15), w.code + " " + w.out);
+            var none = sf(dir, "wait", "5");
+            check("sf wait with nothing to do -> says so", none.code == 0 && none.out.startsWith("nothing to wait for"), none.out);
+            onEdt(() -> p.setSwapOnSave(false));
+            sleep(1500);
+            Files.writeString(probe, original.replace("return \"v1\";", "return \"vS\";").replace("return \"v3x\";", "return \"vS\";"));
+            var s = sf(dir, "swap");
+            check("sf swap -> compiled and swapped now", s.code == 0 && s.out.contains("redefined") && waitForLog(gameLog, "[SF-PROBE] vS", 15), s.code + " " + s.out);
+        } finally {
+            Files.writeString(probe, original);
+            onEdt(() -> p.setSwapOnSave(saved));
+            sleep(1500);
+            swapRetry(p, t);
+        }
+    }
+
     private static String rerunOnce(SulfurPanel p) {
         sleep(1500);
         p.hotswapper.lastRegistration = java.util.List.of();
@@ -735,7 +826,15 @@ final class AutoTest {
      * ticks as "[SF-PROBE] v1". Changes it to v2 (Hotswap button path), v3 (save path: file change seen by the VFS),
      * then adds a method (must be reported as needing a restart).
      */
+    /** The hotswap basics, then the bridge, then the 0.3.0 flows (the full self-test run). */
     private static void hotswapFlow(SulfurPanel p, Path src) throws Exception {
+        hotswapFlow0(p, src);
+        try { bridgeFlow(p, src); } catch (Exception ex) { check("bridge flow", false, ex.toString()); }
+        Path gameLog = p.selectedTarget().dir().resolve("run/logs/latest.log");
+        for (String f : RUNTIME_FLOWS) runtimeFlow(p, f, src, gameLog);
+    }
+
+    private static void hotswapFlow0(SulfurPanel p, Path src) throws Exception {
         var t = p.selectedTarget();
         Path gameLog = t.dir().resolve("run/logs/latest.log");
         check("probe running (v1 in game log)", waitForLog(gameLog, "[SF-PROBE] v1", 120), String.valueOf(gameLog));
@@ -873,13 +972,86 @@ final class AutoTest {
                             && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
             Files.writeString(lang, l);
         }
-        enumFlow(p, src, gameLog);
-        newBlockFlow(p, src, gameLog);
-        settingsFlow(p, src);
-        mixinFlow(p, src, gameLog);
-        awLiveFlow(p, src, gameLog);
-        mixinChangeFlow(p, src, gameLog);
-        hierarchyFlow(p, src, gameLog);   // last: the way back to Object needs a restart (JBR refuses it), which comes next
+    }
+
+    /** The 0.3.0 flows after the hotswap basics, in order; hierarchy last (going back to Object needs a restart). */
+    static final List<String> RUNTIME_FLOWS = List.of("enum", "block", "settings", "mixin", "aw", "mixinchange", "hierarchy");
+
+    private static void runtimeFlow(SulfurPanel p, String name, Path src, Path gameLog) throws Exception {
+        switch (name) {
+            case "enum" -> enumFlow(p, src, gameLog);
+            case "block" -> newBlockFlow(p, src, gameLog);
+            case "settings" -> settingsFlow(p, src);
+            case "mixin" -> mixinFlow(p, src, gameLog);
+            case "aw" -> awLiveFlow(p, src, gameLog);
+            case "mixinchange" -> mixinChangeFlow(p, src, gameLog);
+            case "hierarchy" -> hierarchyFlow(p, src, gameLog);
+            default -> throw new IllegalArgumentException(name);
+        }
+    }
+
+    /** Flows `sf test` can run on the game that is running; "quick" is the default (no restart, safe to repeat). */
+    static final java.util.Map<String, String> SF_TESTS = new java.util.LinkedHashMap<>();
+    static {
+        SF_TESTS.put("swap", "method bodies, new members, on save, outside edits, constants, mixin body, resources");
+        SF_TESTS.put("bridge", "the sf commands themselves");
+        SF_TESTS.put("init", "onInitialize run again: listeners replaced, commands");
+        SF_TESTS.put("settings", "settings of existing blocks and items");
+        SF_TESTS.put("mixinchange", "an existing mixin's body changed; a new @Unique field asks for a restart");
+        SF_TESTS.put("worlddata", "world data change -> the world is opened again");
+        SF_TESTS.put("enum", "a new enum constant (first run per game)");
+        SF_TESTS.put("block", "a new block and item registered (first run per game)");
+        SF_TESTS.put("registries", "other registries, loot tables, model plugins (first run per game)");
+        SF_TESTS.put("mixin", "a new mixin added (first run per game)");
+        SF_TESTS.put("aw", "access widener entry added and taken out");
+        SF_TESTS.put("hierarchy", "hierarchy changes (ends with a restart)");
+        SF_TESTS.put("restart", "fabric.mod.json change, restart into the same world");
+    }
+    static final List<String> SF_QUICK = List.of("swap", "settings", "mixinchange", "init", "bridge");
+
+    /**
+     * SulfurFrame's runtime tests on the game running now (agent bridge: `sf test`). Only in a copy of the demo mod
+     * (the tests edit its sources and put them back). Returns the PASS / FAIL lines and the failure count.
+     */
+    static synchronized String runOnRunningGame(SulfurPanel p, List<String> names) throws Exception {
+        var t = p.selectedTarget();
+        Path probe = t == null ? null : t.dir().resolve("src/main/java/dev/sulfurframe/showcase/SfHotswapProbe.java");
+        if (probe == null || !Files.exists(probe))
+            throw new Bridge.Failure("sf test runs SulfurFrame's own runtime tests and needs its demo mod (a copy of demo/showcase-mod,"
+                    + " demo/tools/test-copy.sh); for your mod use sf swap / wait / cmd / shot");
+        for (String n : names) if (!SF_TESTS.containsKey(n)) throw new Bridge.Failure("unknown test '" + n + "'; tests: " + String.join(", ", SF_TESTS.keySet()));
+        var savedLines = new ArrayList<>(lines);   // a self-test run in this IDE keeps its own results
+        int savedFailures = failures;
+        lines.clear();
+        failures = 0;
+        boolean swapOnSave = p.swapOnSaveSelected();
+        Path gameLog = t.dir().resolve("run/logs/latest.log");
+        Path main = modInitializerNextTo(probe);
+        onEdt(() -> p.setSwapOnSave(true));   // the swap flow saves files and expects them swapped
+        try {
+            for (String n : names) {
+                lines.add("== " + n);
+                try {
+                    switch (n) {
+                        case "swap" -> hotswapFlow0(p, probe);
+                        case "bridge" -> bridgeFlow(p, probe);
+                        case "init" -> { if (main != null) entryRerunFlow(p, main, gameLog); }
+                        case "worlddata" -> worldDataFlow(p, gameLog);
+                        case "registries" -> { if (main != null) registriesFlow(p, main, gameLog); }
+                        case "restart" -> restartFlow(p, probe, p.openWorld());
+                        default -> runtimeFlow(p, n, probe, gameLog);
+                    }
+                } catch (Exception ex) { check(n + " flow", false, ex.toString()); }
+            }
+        } finally {
+            onEdt(() -> p.setSwapOnSave(swapOnSave));
+        }
+        var out = new ArrayList<>(lines);
+        out.add("failures: " + failures);
+        lines.clear();
+        lines.addAll(savedLines);
+        failures = savedFailures;
+        return String.join("\n", out);
     }
 
     /**

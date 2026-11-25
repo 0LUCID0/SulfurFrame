@@ -62,7 +62,7 @@ public final class SfAgent {
         // "reload=assets+data": resources changed (the IDE copied them into the dev resource dir)
         // "world=<file>": write the open world's folder name; "quit": save and exit (IDE quick restart)
         // "register=<list file>": run changed registration code again, registering only what is new (RuntimeRegister)
-        String redefine = null, register = null, mixins = null, rejoin = null, widen = null, save = null, reload = null, world = null, command = null, done = null, look = null, stats = null;
+        String redefine = null, register = null, mixins = null, rejoin = null, widen = null, save = null, reload = null, world = null, command = null, done = null, look = null, stats = null, shot = null;
         boolean quit = false;
         StringBuilder rest = new StringBuilder();
         if (args != null) for (String kv : args.split(",")) {
@@ -79,9 +79,10 @@ public final class SfAgent {
             else if (kv.startsWith("done=")) done = kv.substring(5);
             else if (kv.startsWith("look=")) look = kv.substring(5);
             else if (kv.startsWith("stats=")) stats = kv.substring(6);
+            else if (kv.startsWith("shot=")) shot = kv.substring(5);
             else if (!kv.isEmpty()) rest.append(rest.length() == 0 ? "" : ",").append(kv);
         }
-        if (redefine != null || register != null || mixins != null || rejoin != null || widen != null || save != null || reload != null || world != null || quit || command != null || look != null || stats != null) {
+        if (redefine != null || register != null || mixins != null || rejoin != null || widen != null || save != null || reload != null || world != null || quit || command != null || look != null || stats != null || shot != null) {
             if (!installed) install(rest.toString(), inst, attached);
             // with init code to run again, the redefinition happens inside that run (old listeners out first)
             if (register != null) RuntimeRegister.run(inst, register, redefine);
@@ -95,6 +96,7 @@ public final class SfAgent {
             if (command != null) GameSession.serverCommand(inst, command, done);
             if (look != null) LookAt.write(inst, look);
             if (stats != null) GameStats.start(inst, stats);
+            if (shot != null) GameShot.take(inst, shot, done);   // "shot=<png>,done=<file>": a screenshot (agent bridge)
             if (quit) GameSession.quit();
             return;
         }
@@ -118,6 +120,7 @@ public final class SfAgent {
             if (!attached) {   // before Minecraft loads: lets changed init code run again (RuntimeRegister)
                 Class<?> rp = Class.forName("dev.sulfurframe.agent.impl.RegistryPatch", true, impl);
                 inst.addTransformer((ClassFileTransformer) rp.getMethod("loadTimeHooks", Consumer.class).invoke(null, log), false);
+                ClassRescue.install();   // a class file a build is rewriting is waited for (RegistryPatch.classRescue)
             }
             SfHooks.log("installed (" + (attached ? "attached" : "premain") + ", Java " + System.getProperty("java.version")
                     + "), coding fps cap " + SfHooks.codingFps);

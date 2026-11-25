@@ -9,6 +9,7 @@
 #   gradle   buildPlugin, check (fixture self-tests), verifyPlugin
 #   A        new user: fresh copy of demo/showcase-mod, no run/options.txt, no JetBrains Runtime (-Dsulfurframe.noJbr)
 #   B        regular: fresh copy, JetBrains Runtime used (structural hotswap, restarts with and without Gradle)
+#   D        without IntelliJ: headless-test.sh (sf run, the sf commands, sf relay with a stand-in agent)
 #   C        Linux: xvfb-test.sh runclient in WSL (Xvfb + openbox)
 # Writes %TEMP%/sf-release-check/summary.txt (and one result file per run); exit 1 if anything failed.
 set -uo pipefail
@@ -79,6 +80,14 @@ run_sandbox() {   # name, extra -D options...
 run_sandbox A-new-user -Dsulfurframe.noJbr=true
 extraB=(); [ $WORLDS = 1 ] && extraB+=(-Dsulfurframe.autotest.worlds=true); [ $DOWNLOAD = 1 ] && extraB+=(-Dsulfurframe.autotest.jbrdownload=true)
 run_sandbox B-regular "${extraB[@]}"
+
+# ---- without IntelliJ: sf run on a fresh copy, the sf commands, sf relay (the built plugin from build.sh)
+[ -f sf-idea-plugin/build/SulfurFrame/lib/sulfurframe.jar ] || (cd sf-idea-plugin && bash build.sh >/dev/null 2>&1)
+bash sf-idea-plugin/headless-test.sh > "$OUT/D-headless.txt" 2>&1
+pass=$(grep -c '^PASS' "$OUT/D-headless.txt"); fail=$(grep -c '^FAIL' "$OUT/D-headless.txt")
+say "D-headless: $pass passed, $fail failed"
+grep '^FAIL' "$OUT/D-headless.txt" | sed 's/^/  /' | tee -a "$SUM"
+grep -q '^failures: 0' "$OUT/D-headless.txt" || FAILED=1
 
 # ---- Linux (WSL, Xvfb + openbox): the plugin's own Run client with every scenario, on a fresh copy of the demo mod
 if [ $LINUX = 1 ]; then

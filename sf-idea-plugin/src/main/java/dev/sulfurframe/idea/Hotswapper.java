@@ -515,11 +515,30 @@ final class Hotswapper {
             var startup = new ArrayList<String>();
             rerunnable.clear();
             var constantOwners = new LinkedHashSet<String>();
+            apiOwners.clear();
             foreignHierarchy.clear();
             collectChanged(changed, startup, constantOwners, t);
             // A changed compile-time constant (static final int/float/String...) is copied into every class that reads
             // it; fast compile only rebuilt the edited file, so the readers would go on with the old value. Recompile
             // the sources that mention the class and send what that changes too. (Gradle does this itself.)
+            // A method or field other classes use is gone or changed its signature: their old code would fail at run time
+            // (NoSuchMethodError). Compile them against the new one; if they no longer compile, nothing is sent.
+            if (!apiOwners.isEmpty() && r == FastCompile.Result.OK) {
+                var owners = new LinkedHashSet<>(apiOwners);
+                int users = fast.compileUsersOf(t, owners);
+                if (users < 0 && fast.sourceSets(t) != null) {   // the errors are in the log above
+                    log.accept("hotswap: " + String.join(", ", owners) + " changed a method or field that other files use, and they no longer compile"
+                            + " against it: fix them (nothing was sent)");
+                    lastResult = List.of("compile failed: callers of " + String.join(", ", owners));
+                    sourcesSince = started - 1;   // the same files again with the next save
+                    return false;
+                }
+                if (users > 0) {
+                    collectChanged(changed, startup, constantOwners, t);
+                    log.accept("hotswap: " + String.join(", ", owners) + " changed a signature other files use: recompiled " + users + " file(s) that use it");
+                }
+                constantOwners.removeAll(owners);   // compiled already
+            }
             if (!constantOwners.isEmpty() && r == FastCompile.Result.OK) {
                 int users = fast.compileUsersOf(t, constantOwners);
                 if (users < 0) log.accept("hotswap: constant changed in " + constantOwners + " but its users could not be recompiled: restart to apply it everywhere");
@@ -697,7 +716,7 @@ final class Hotswapper {
         var p = GradleJava.apply(new ProcessBuilder(cmd).directory(t.buildRoot().toFile()).redirectErrorStream(true), t).start();
         var out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         if (p.waitFor() != 0) {
-            log.accept("hotswap: compile failed");
+            log.accept("hotswap: compile failed (nothing sent; the next save compiles again, so a change spread over several files goes in once they all compile)");
             out.lines().filter(l -> l.contains("error:") || l.startsWith("> ") || l.contains("What went wrong")).limit(8).forEach(l -> log.accept("  " + l.strip()));
             return false;
         }
@@ -733,6 +752,9 @@ final class Hotswapper {
      * A newer file is not yet a changed class: a Gradle build rewrites every class file of a module, and sending them
      * all (751 for a one-line edit) crashed the game inside the JVM's class redefinition.
      */
+    /** Classes whose methods or fields other classes use changed (StartupCode.apiOwnerNames), during one swap. */
+    private final Set<String> apiOwners = new LinkedHashSet<>();
+
     private void collectChanged(List<Path> changed, List<String> startup, Set<String> constantOwners, Workspace.Target t) throws IOException {
         Map<Path, Long> now = scan(t);
         for (var e : now.entrySet()) {
@@ -760,6 +782,7 @@ final class Hotswapper {
                 else rerunnable.remove(c);
             } catch (Throwable ignored) { }
             try { constantOwners.addAll(StartupCode.constantOwnerNames(old, after)); } catch (Throwable ignored) { }
+            try { apiOwners.addAll(StartupCode.apiOwnerNames(old, after)); } catch (Throwable ignored) { }
             try {
                 var sup = StartupCode.supertypeChanges(old, after);
                 if (!sup.isEmpty()) { foreignHierarchy.put(c, sup); bytesBefore.put(c, old); }

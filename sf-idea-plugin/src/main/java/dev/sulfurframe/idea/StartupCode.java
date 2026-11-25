@@ -172,6 +172,40 @@ final class StartupCode {
         return Arrays.stream(n.split("\\$")).filter(s -> !s.isEmpty() && !Character.isDigit(s.charAt(0))).distinct().toList();
     }
 
+    /**
+     * The class's simple names when a method or field other classes can use (not private) is gone or changed its
+     * descriptor or static-ness: their callers, compiled against the old one, would fail at run time
+     * (NoSuchMethodError / NoSuchFieldError) unless they are compiled again. Empty when nothing like that changed.
+     */
+    static List<String> apiOwnerNames(byte[] before, byte[] after) {
+        if (before == null || after == null) return List.of();
+        var now = members(after);
+        for (String m : members(before)) if (!now.contains(m)) return simpleNames(after);
+        return List.of();
+    }
+
+    private static List<String> simpleNames(byte[] cls) {
+        String n = simpleName(cls);
+        return Arrays.stream(n.split("\\$")).filter(s -> !s.isEmpty() && !Character.isDigit(s.charAt(0))).distinct().toList();
+    }
+
+    /** "m name desc static?" / "f name desc static?" of every non-private, non-synthetic member. */
+    static Set<String> members(byte[] cls) {
+        var out = new TreeSet<String>();
+        new ClassReader(cls).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public FieldVisitor visitField(int access, String name, String desc, String sig, Object value) {
+                if ((access & (Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC)) == 0) out.add("f " + name + " " + desc + " " + ((access & Opcodes.ACC_STATIC) != 0));
+                return null;
+            }
+            @Override public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                if ((access & (Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_BRIDGE)) == 0 && !name.equals("<clinit>"))
+                    out.add("m " + name + " " + desc + " " + ((access & Opcodes.ACC_STATIC) != 0));
+                return null;
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return out;
+    }
+
     /** name -> value of every non-private static final field with a ConstantValue (a private one has no other readers). */
     static Map<String, Object> constants(byte[] cls) {
         var out = new TreeMap<String, Object>();

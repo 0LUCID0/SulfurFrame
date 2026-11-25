@@ -16,7 +16,8 @@ newest_jdk25() {
 JDK="${JDK:-$(newest_jdk25)}"
 [ -n "$JDK" ] || { echo "no JDK 25 found; set JDK=<jdk>/bin" >&2; exit 1; }
 AGENT="../poc/agent/sf-agent.jar"
-[ -f "$AGENT" ] || (cd ../poc/agent && bash build.sh)
+# again whenever an agent source is newer than the jar (a stale jar once hid a new agent feature from the sandbox)
+if [ ! -f "$AGENT" ] || [ -n "$(find ../poc/agent/src -newer "$AGENT" -type f | head -1)" ]; then (cd ../poc/agent && bash build.sh) || exit 1; fi
 rm -rf build && mkdir -p build/classes build/SulfurFrame/lib
 "$JDK/javac" -Xlint:-restricted -nowarn --release 25 -cp "$(cygpath -w "$IDEA_HOME/lib")/*;$(cygpath -w "$IDEA_HOME/plugins/java/lib")/*;$(cygpath -w "$IDEA_HOME/plugins/java/lib/modules")/*" -d build/classes $(find src/main/java -name '*.java')
 cp -r src/main/resources/* build/classes/

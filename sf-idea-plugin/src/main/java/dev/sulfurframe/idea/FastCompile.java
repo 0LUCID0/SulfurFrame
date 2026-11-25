@@ -259,7 +259,7 @@ final class FastCompile {
                     .redirectErrorStream(true).start();
             String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             if (p.waitFor() == 0) return true;
-            log.accept("hotswap: compile failed");
+            log.accept("hotswap: compile failed (nothing sent; the next save compiles again, so a change spread over several files goes in once they all compile)");
             out.lines().filter(l -> l.contains("error")).limit(8).forEach(l -> log.accept("  " + l.strip()));
             return false;
         } finally {
@@ -293,7 +293,7 @@ final class FastCompile {
             ok = task.call();
         }
         if (!ok) {
-            log.accept("hotswap: compile failed");
+            log.accept("hotswap: compile failed (nothing sent; the next save compiles again, so a change spread over several files goes in once they all compile)");
             diags.getDiagnostics().stream().filter(d -> d.getKind() == javax.tools.Diagnostic.Kind.ERROR).limit(8)
                     .forEach(d -> log.accept("  " + (d.getSource() == null ? "" : Path.of(d.getSource().toUri()).getFileName() + ":" + d.getLineNumber() + ": ") + d.getMessage(null)));
         }

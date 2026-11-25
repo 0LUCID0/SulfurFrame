@@ -9,7 +9,7 @@ import java.awt.*;
 /** Settings | Tools | SulfurFrame. Switches are IDE-wide; the dev mods list can also be kept per project. */
 public final class SulfurConfigurable implements Configurable {
     private final Project project;
-    private JCheckBox hotswapOnSave, sharedWorlds, keepRatio, capFps;
+    private JCheckBox hotswapOnSave, sharedWorlds, keepRatio, capFps, agentBridge;
     private JSpinner codingFps;
     private DevModsEditor devMods;
 
@@ -22,6 +22,7 @@ public final class SulfurConfigurable implements Configurable {
         sharedWorlds = new JCheckBox("Shared worlds: one game folder per Minecraft version for all projects (" + SharedInstance.root() + ")");
         keepRatio = new JCheckBox("Keep the game at 16:9 (black bars) instead of stretching it to the panel");
         capFps = new JCheckBox("While you type in the editor, cap the game at");
+        agentBridge = new JCheckBox("Coding agents may use the running game through the sf command (" + Bridge.BIN.resolve("sf") + "; applies when the project opens again)");
         codingFps = new JSpinner(new SpinnerNumberModel(15, 1, 240, 1));
         capFps.addActionListener(e -> codingFps.setEnabled(capFps.isSelected()));
         var fpsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -29,7 +30,7 @@ public final class SulfurConfigurable implements Configurable {
 
         var general = new JPanel();
         general.setLayout(new BoxLayout(general, BoxLayout.Y_AXIS));
-        for (JComponent c : new JComponent[]{hotswapOnSave, sharedWorlds, keepRatio, fpsRow}) { c.setAlignmentX(0); general.add(c); }
+        for (JComponent c : new JComponent[]{hotswapOnSave, sharedWorlds, keepRatio, fpsRow, agentBridge}) { c.setAlignmentX(0); general.add(c); }
         general.setBorder(BorderFactory.createTitledBorder("Game"));
         devMods = new DevModsEditor(project);
         devMods.component.setBorder(BorderFactory.createTitledBorder("Dev mods"));
@@ -43,7 +44,7 @@ public final class SulfurConfigurable implements Configurable {
 
     @Override public boolean isModified() {
         return hotswapOnSave.isSelected() != Settings.hotswapOnSave() || sharedWorlds.isSelected() != Settings.sharedWorlds()
-                || keepRatio.isSelected() != Settings.keepRatio()
+                || keepRatio.isSelected() != Settings.keepRatio() || agentBridge.isSelected() != Settings.agentBridge()
                 || fps() != Settings.codingFps() || devMods.isModified();
     }
 
@@ -51,6 +52,7 @@ public final class SulfurConfigurable implements Configurable {
         Settings.set(Settings.HOTSWAP_ON_SAVE, hotswapOnSave.isSelected(), true);
         Settings.set(Settings.SHARED_WORLDS, sharedWorlds.isSelected(), false);
         Settings.set(Settings.KEEP_RATIO, keepRatio.isSelected(), true);
+        Settings.set(Settings.AGENT_BRIDGE, agentBridge.isSelected(), true);
         Settings.setCodingFps(fps());
         var host = project == null ? null : PanelHost.of(project);
         devMods.apply(host == null ? null : host.panel::log);
@@ -61,6 +63,7 @@ public final class SulfurConfigurable implements Configurable {
         hotswapOnSave.setSelected(Settings.hotswapOnSave());
         sharedWorlds.setSelected(Settings.sharedWorlds());
         keepRatio.setSelected(Settings.keepRatio());
+        agentBridge.setSelected(Settings.agentBridge());
         int f = Settings.codingFps();
         capFps.setSelected(f > 0);
         codingFps.setValue(f > 0 ? f : 15);
