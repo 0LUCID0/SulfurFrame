@@ -180,6 +180,10 @@ Exit codes: 0 done, 1 the game said no, 2 error, 3 no IDE or `sf run` answered. 
 `~/.sulfurframe/bridge`; nothing listens on the network. Settings | Tools | SulfurFrame can turn it off. `sf run` needs
 Java 25 and an IntelliJ installation for two of its libraries (the IDE does not have to be open).
 
+A ready-made skill teaches an agent the loop (edit, `sf wait`, check, what needs a restart, `sf feedback`): copy
+[`agent-skill/sulfurframe`](agent-skill/sulfurframe/SKILL.md) into your mod's `.claude/skills/` (Claude Code) or
+`.agents/skills/` (Codex and other agents that read that folder).
+
 ## Layout
 
 - `sf-idea-plugin/` – the plugin (design notes and test results in its [README](sf-idea-plugin/README.md))

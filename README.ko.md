@@ -177,6 +177,10 @@ SulfurFrame이 `~/.sulfurframe/bin`에 작은 `sf` 명령을 둡니다(POSIX 셸
 파일로 주고받고, 네트워크로 듣는 것은 없습니다. Settings | Tools | SulfurFrame에서 끌 수 있습니다. `sf run`에는
 Java 25와, 라이브러리 두 개를 빌려 쓰기 위한 IntelliJ 설치가 필요합니다(IDE를 켤 필요는 없음).
 
+에이전트에게 사용 흐름(수정, `sf wait`, 확인, 재시작이 필요한 경우, `sf feedback`)을 알려 주는 스킬이 준비되어
+있습니다. [`agent-skill/sulfurframe`](agent-skill/sulfurframe/SKILL.md) 폴더를 모드 프로젝트의 `.claude/skills/`
+(Claude Code)나 `.agents/skills/`(Codex처럼 그 폴더를 읽는 에이전트)에 복사하세요.
+
 ## 구성
 
 - `sf-idea-plugin/` – 플러그인(설계 메모와 테스트 기록은 [README](sf-idea-plugin/README.ko.md))
