@@ -177,9 +177,22 @@ SulfurFrame이 `~/.sulfurframe/bin`에 작은 `sf` 명령을 둡니다(POSIX 셸
 파일로 주고받고, 네트워크로 듣는 것은 없습니다. Settings | Tools | SulfurFrame에서 끌 수 있습니다. `sf run`에는
 Java 25와, 라이브러리 두 개를 빌려 쓰기 위한 IntelliJ 설치가 필요합니다(IDE를 켤 필요는 없음).
 
-에이전트에게 사용 흐름(수정, `sf wait`, 확인, 재시작이 필요한 경우, `sf feedback`)을 알려 주는 스킬이 준비되어
-있습니다. [`agent-skill/sulfurframe`](agent-skill/sulfurframe/SKILL.md) 폴더를 모드 프로젝트의 `.claude/skills/`
-(Claude Code)나 `.agents/skills/`(Codex처럼 그 폴더를 읽는 에이전트)에 복사하세요.
+에이전트에게 사용 흐름(수정, `sf wait`, 확인, 재시작이 필요한 경우, `sf feedback`)을 알려 주는 스킬
+[`skills/sulfurframe`](skills/sulfurframe/SKILL.md)이 준비되어 있습니다. 이 저장소에서 바로 설치할 수 있습니다.
+
+- **Claude Code**(이 저장소의 마켓플레이스에 있는 플러그인):
+  ```
+  /plugin marketplace add 0LUCID0/Sulfur_Frame
+  /plugin install sulfurframe@sulfurframe
+  ```
+  셸에서는 같은 명령을 `claude plugin ...`으로 씁니다. 새 버전은 `/plugin marketplace update sulfurframe`으로 받습니다.
+- **Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot 등 다른 에이전트**([`skills`](https://github.com/vercel-labs/skills) CLI, Node.js 22 이상):
+  ```
+  npx skills add 0LUCID0/Sulfur_Frame
+  ```
+  모드 프로젝트 폴더에서 실행합니다. 에이전트를 고르려면 `-a <에이전트>`, 모든 프로젝트에 쓰려면 `-g`를 붙입니다.
+- **직접 복사:** `skills/sulfurframe` 폴더를 모드 프로젝트의 `.claude/skills/`(Claude Code)나 `.agents/skills/`(Codex처럼
+  그 폴더를 읽는 에이전트)에 복사합니다.
 
 ## 구성
 

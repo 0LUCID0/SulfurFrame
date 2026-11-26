@@ -180,9 +180,22 @@ Exit codes: 0 done, 1 the game said no, 2 error, 3 no IDE or `sf run` answered. 
 `~/.sulfurframe/bridge`; nothing listens on the network. Settings | Tools | SulfurFrame can turn it off. `sf run` needs
 Java 25 and an IntelliJ installation for two of its libraries (the IDE does not have to be open).
 
-A ready-made skill teaches an agent the loop (edit, `sf wait`, check, what needs a restart, `sf feedback`): copy
-[`agent-skill/sulfurframe`](agent-skill/sulfurframe/SKILL.md) into your mod's `.claude/skills/` (Claude Code) or
-`.agents/skills/` (Codex and other agents that read that folder).
+A ready-made skill, [`skills/sulfurframe`](skills/sulfurframe/SKILL.md), teaches an agent the loop: edit, `sf wait`,
+check, what needs a restart, `sf feedback`. Install it from this repository:
+
+- **Claude Code** (a plugin from this repository's marketplace):
+  ```
+  /plugin marketplace add 0LUCID0/Sulfur_Frame
+  /plugin install sulfurframe@sulfurframe
+  ```
+  The same commands work from a shell as `claude plugin ...`. `/plugin marketplace update sulfurframe` gets later versions.
+- **Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot and other agents** (the [`skills`](https://github.com/vercel-labs/skills) CLI, Node.js 22+):
+  ```
+  npx skills add 0LUCID0/Sulfur_Frame
+  ```
+  Run it in your mod's folder; add `-a <agent>` to pick the agent, or `-g` for every project.
+- **By hand:** copy the `skills/sulfurframe` folder into your mod's `.claude/skills/` (Claude Code) or `.agents/skills/`
+  (Codex and the other agents that read that folder).
 
 ## Layout
 

@@ -1,0 +1,15 @@
+{
+  "name": "sulfurframe",
+  "owner": { "name": "0LUCID0" },
+  "description": "SulfurFrame: the running Minecraft dev client for coding agents",
+  "plugins": [
+    {
+      "name": "sulfurframe",
+      "source": "./skills/sulfurframe",
+      "description": "Teaches the agent SulfurFrame's sf command: check a change in the running game (sf wait, cmd, log, shot), restart into the same world, report problems with sf feedback.",
+      "homepage": "https://github.com/0LUCID0/Sulfur_Frame",
+      "license": "MIT",
+      "strict": false
+    }
+  ]
+}
