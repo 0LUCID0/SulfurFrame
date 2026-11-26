@@ -511,9 +511,14 @@ The game log went `v1 ×5 → v2 → v3`, and **the game did not restart.**
   path>`, `-Dmixin.hotSwap=true`). Mixin then loads a stand-in class with the same name for every Mixin class, and when
   that class is redefined, it re-reads the Mixin and applies it to its targets again. So our hotswap only has to
   redefine the Mixin class as usual (log "Redefining mixin ...").
-- **Resources:** saves under `src/*/resources` are detected, copied straight into the source set's resource output folder
-  that Gradle reported (what `processResources` fills and the dev game reads), and the agent is called.
-  - under `assets/` (textures, models, languages, sounds and so on): reload the client resources (like F3+T)
+- **Resources:** saves under `src/*/resources` of any module of the build (a run like `runAllModsClient` runs several)
+  are detected, copied straight into the resource output folder Gradle reported for the source set that holds them (what
+  `processResources` fills and the dev game reads), each copied file is logged, and the agent is called.
+  - only translation files (`assets/*/lang/*.json`): the language alone is read again, no full resource reload (log
+    "resources: lang reloaded: N file(s)"), and the open screen is laid out again (what a window resize does), so text a
+    screen resolved when it was built shows the new strings. A screen that keeps its widgets across a resize, or text
+    stored elsewhere (a HUD that caches a string), shows the new text the next time it is built.
+  - other files under `assets/` (textures, models, sounds and so on): reload the client resources (like F3+T)
   - under `data/` (recipes, loot tables, tags and so on): `/reload` on the integrated server. Only while a world is open.
   - Mod metadata such as `fabric.mod.json` and `mods.toml` is filled in with values by `processResources`, so it is not
     copied; instead a restart is suggested.
@@ -611,7 +616,11 @@ Runtime (new fields) needs it here too.
 - **Lambda names (`LambdaNames`):** javac numbers lambdas per enclosing method (`lambda$m$0`, `lambda$m$1`), so a lambda
   added in front renumbers the ones after it, and a lambda object made earlier (a listener, a stored Supplier) would run
   another lambda's body. Before sending, the new class's lambdas get their old names (same body, same name; same place,
-  same name; a new lambda, a name nobody had).
+  same name; a new lambda, a name nobody had). A lambda **removed** from the code (or a method reference to a method of
+  the class) keeps its old method in the new class, with the fields and methods of the class its body uses that the new
+  code dropped (same name and type, so the JVM keeps a static field's value): objects made before the swap (a draw
+  callback of an open screen) still call it, and without it the game crashed with NoSuchMethodError. The new code does
+  not use it; the log says "hotswap: kept [...]".
 - **World data (dynamic registries):** when a file the server reads only when a world opens changes (`data/<ns>/worldgen/`,
   `damage_type/`, `enchantment/`...), the world is left and opened again instead of `/reload`, without quitting the game
   (after any resource reload has finished).

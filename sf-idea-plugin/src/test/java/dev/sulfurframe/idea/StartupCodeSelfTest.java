@@ -99,6 +99,25 @@ public class StartupCodeSelfTest {
         byte[] l4 = compile("t.L", String.format(lam, "", "a") + "").get("t/L");
         expect("nothing changed -> same bytes", LambdaNames.stabilize(l1, l4) == l4, true);
 
+        // a removed lambda: an object made from it before the swap still calls its method (NoSuchMethodError crashed a
+        // settings screen that was open). The old method stays, with the field and helper of the class it uses.
+        String rem = "package t; public class R { static String TAG = \"t\"; private static String h(String s) { return s + TAG; }"
+                + " public static Runnable a() { %s return () -> System.out.print(\"a\"); } }";
+        byte[] r1 = compile("t.R", String.format(rem, "Runnable d = () -> System.out.print(h(\"d\")); d.run();")).get("t/R");
+        byte[] r2 = compile("t.R", String.format(rem, "").replace("static String TAG = \"t\"; private static String h(String s) { return s + TAG; }", "")).get("t/R");
+        var kept = new ArrayList<String>();
+        byte[] kr = LambdaNames.keepRemoved(r1, LambdaNames.stabilize(r1, r2), kept);
+        expect("removed lambda kept (with the helper it calls)", kept, List.of("lambda$a$0", "h"));
+        // loaded fresh here, TAG has no initializer any more (null); in the game the JVM keeps the value it had
+        expect("  the field it reads kept, and the kept lambda runs (old objects call it)", runStatic(kr, "t.R", "lambda$a$0"), "dnull");
+        expect("nothing removed -> same bytes", LambdaNames.keepRemoved(r1, r1, new ArrayList<>()) == r1, true);
+        // the next swap (or the callers' recompile in the same swap) compares against the class with the kept method,
+        // where no call site refers to it any more: it must stay all the same (the game crashed on a loot listener)
+        var again = new ArrayList<String>();
+        byte[] kr2 = LambdaNames.keepRemoved(kr, LambdaNames.stabilize(kr, r2), again);
+        expect("a kept lambda stays at the next swap", again, List.of("lambda$a$0", "h"));
+        expect("  and still runs", runStatic(kr2, "t.R", "lambda$a$0"), "dnull");
+
         if (failures.isEmpty()) System.out.println("startup code checks passed");
         else { failures.forEach(f -> System.out.println("FAIL " + f)); System.exit(1); }
     }
@@ -129,6 +148,24 @@ public class StartupCodeSelfTest {
         var was = System.out;
         System.setOut(new java.io.PrintStream(buf, true));
         try { for (String m : methods) ((Runnable) c.getMethod(m).invoke(null)).run(); }
+        finally { System.setOut(was); }
+        return buf.toString();
+    }
+
+    /** Load the class on its own and call one of its static methods (private too), capturing what it prints. */
+    private static String runStatic(byte[] cls, String name, String method) throws Exception {
+        var loader = new ClassLoader(StartupCodeSelfTest.class.getClassLoader()) {
+            @Override protected Class<?> findClass(String n) throws ClassNotFoundException {
+                if (!n.equals(name)) throw new ClassNotFoundException(n);
+                return defineClass(n, cls, 0, cls.length);
+            }
+        };
+        var m = loader.loadClass(name).getDeclaredMethod(method);
+        m.setAccessible(true);
+        var buf = new java.io.ByteArrayOutputStream();
+        var was = System.out;
+        System.setOut(new java.io.PrintStream(buf, true));
+        try { m.invoke(null); }
         finally { System.setOut(was); }
         return buf.toString();
     }

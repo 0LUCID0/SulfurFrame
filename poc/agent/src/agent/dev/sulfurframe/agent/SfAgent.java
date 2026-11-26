@@ -59,7 +59,7 @@ public final class SfAgent {
 
     private static synchronized void install(String args, Instrumentation inst, boolean attached) {
         // "redefine=<list file>": hotswap request from the IDE (each request is a fresh attach)
-        // "reload=assets+data": resources changed (the IDE copied them into the dev resource dir)
+        // "reload=assets+data" or "reload=lang": resources changed (the IDE copied them into the dev resource dir)
         // "world=<file>": write the open world's folder name; "quit": save and exit (IDE quick restart)
         // "register=<list file>": run changed registration code again, registering only what is new (RuntimeRegister)
         String redefine = null, register = null, mixins = null, rejoin = null, widen = null, save = null, reload = null, world = null, command = null, done = null, look = null, stats = null, shot = null;
@@ -91,7 +91,7 @@ public final class SfAgent {
             if (widen != null) AccessWiden.run(inst, widen);   // "widen=<list>": access widener entries added (AccessWiden)
             if (rejoin != null) GameSession.rejoin(inst, rejoin);
             if (save != null) GameSession.saveWorld(inst, save);   // "save=<done file>": write the world out (snapshots)   // "rejoin=<done file>": leave and open the world again
-            if (reload != null) ResourceReload.reload(inst, reload.contains("assets"), reload.contains("data"));
+            if (reload != null) ResourceReload.reload(inst, reload.contains("assets"), reload.contains("data"), reload.equals("lang"));
             if (world != null) GameSession.writeWorld(inst, world);
             if (command != null) GameSession.serverCommand(inst, command, done);
             if (look != null) LookAt.write(inst, look);

@@ -89,5 +89,93 @@ final class LambdaNames {
         return out;
     }
 
+    /**
+     * A lambda (or a method reference to a method of the class) that the new version no longer has: objects made from
+     * it before the swap (a listener, a draw callback of a screen that is open) still call its method by name, and after
+     * the redefinition that is a NoSuchMethodError. So the old method goes into the new class as it was, with the
+     * methods and fields of the class its code uses that the new version dropped (same name and type: the JVM keeps a
+     * static field's value). They are unused by the new code and go away with the next restart's compile. Returns the
+     * new class (the same array when nothing is missing); {@code kept} gets the methods put back.
+     */
+    static byte[] keepRemoved(byte[] before, byte[] after, List<String> kept) {
+        if (before == null || after == null) return after;
+        var old = Members.of(before);
+        var now = Members.of(after);
+        var keepMethods = new LinkedHashSet<String>();
+        var keepFields = new LinkedHashSet<String>();
+        var todo = new ArrayDeque<String>();
+        for (String m : old.bound) if (!now.methods.containsKey(m) && old.methods.containsKey(m)) todo.add(m);
+        // one kept by an earlier swap (or by an earlier pass of this one, the callers' recompile) has no call site left
+        // in the old class, but the objects bound to it are still there: every lambda body counts
+        for (String m : old.methods.keySet()) if (LAMBDA.matcher(m.substring(0, m.indexOf('('))).matches() && !now.methods.containsKey(m)) todo.add(m);
+        while (!todo.isEmpty()) {
+            String m = todo.poll();
+            if (!keepMethods.add(m)) continue;
+            for (String u : old.uses.getOrDefault(m, Set.of())) {
+                if (u.startsWith("F ")) { String f = u.substring(2); if (!now.fields.containsKey(f) && old.fields.containsKey(f)) keepFields.add(f); }
+                else if (!now.methods.containsKey(u) && old.methods.containsKey(u) && !keepMethods.contains(u)) todo.add(u);
+            }
+        }
+        if (keepMethods.isEmpty()) return after;
+        ClassWriter w = new ClassWriter(0);
+        new ClassReader(after).accept(new ClassVisitor(Opcodes.ASM9, w) {
+            @Override public void visitEnd() {
+                for (String f : keepFields) {
+                    var d = old.fields.get(f);
+                    FieldVisitor fv = w.visitField(d.access, d.name, d.desc, d.signature, d.value);
+                    if (fv != null) fv.visitEnd();
+                }
+                new ClassReader(before).accept(new ClassVisitor(Opcodes.ASM9) {
+                    @Override public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                        return keepMethods.contains(name + desc) ? w.visitMethod(access, name, desc, signature, exceptions) : null;
+                    }
+                }, 0);
+                super.visitEnd();
+            }
+        }, 0);
+        keepMethods.forEach(m -> kept.add(m.substring(0, m.indexOf('('))));
+        return w.toByteArray();
+    }
+
+    /** A class's methods and fields (name+desc), the methods its lambdas and method references are bound to, and what each method uses of its own class. */
+    private static final class Members {
+        record Field(int access, String name, String desc, String signature, Object value) {}
+        final Map<String, Integer> methods = new HashMap<>();
+        final Map<String, Field> fields = new HashMap<>();
+        final Set<String> bound = new LinkedHashSet<>();
+        final Map<String, Set<String>> uses = new HashMap<>();
+
+        static Members of(byte[] cls) {
+            var r = new ClassReader(cls);
+            String owner = r.getClassName();
+            var m = new Members();
+            r.accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override public FieldVisitor visitField(int access, String name, String desc, String signature, Object value) {
+                    m.fields.put(name + desc, new Field(access, name, desc, signature, value));
+                    return null;
+                }
+                @Override public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                    String self = name + desc;
+                    m.methods.put(self, access);
+                    var used = m.uses.computeIfAbsent(self, k -> new LinkedHashSet<>());
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override public void visitFieldInsn(int op, String o, String n, String d) { if (o.equals(owner)) used.add("F " + n + d); }
+                        @Override public void visitMethodInsn(int op, String o, String n, String d, boolean itf) { if (o.equals(owner)) used.add(n + d); }
+                        @Override public void visitInvokeDynamicInsn(String n, String d, Handle bsm, Object... args) {
+                            boolean lambda = bsm.getOwner().equals("java/lang/invoke/LambdaMetafactory");
+                            for (Object a : args)
+                                if (a instanceof Handle h && h.getOwner().equals(owner)) {
+                                    String target = h.getName() + h.getDesc();
+                                    if (h.getTag() >= Opcodes.H_GETFIELD && h.getTag() <= Opcodes.H_PUTSTATIC) used.add("F " + target);
+                                    else { used.add(target); if (lambda) m.bound.add(target); }
+                                }
+                        }
+                    };
+                }
+            }, 0);
+            return m;
+        }
+    }
+
     private LambdaNames() {}
 }

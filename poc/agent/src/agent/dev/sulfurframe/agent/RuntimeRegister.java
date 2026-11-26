@@ -240,8 +240,8 @@ final class RuntimeRegister {
         // new entries: models, translations (client) and loot tables, tags (server); init code alone: renderers and
         // the like (client), and no /reload, which holds the server for seconds
         boolean commands = out.contains("data reload needed");   // /reload: command tree, loot tables, data listeners
-        if (!added.isEmpty()) ResourceReload.reload(inst, true, true);
-        else if (clientEntry || commands) ResourceReload.reload(inst, clientEntry, commands);
+        if (!added.isEmpty()) ResourceReload.reload(inst, true, true, false);
+        else if (clientEntry || commands) ResourceReload.reload(inst, clientEntry, commands, false);
         GameMessage.show(inst, added.isEmpty() ? "§aInit code ran again" : "§aRegistered " + added.size() + " new: " + String.join(", ", shortIds));
     }
 

@@ -769,7 +769,6 @@ final class SulfurPanel extends JPanel implements GameHost {
         var t = selectedTarget();
         if (!swapOnSave.isSelected() || t == null || !embedder.attached()) return;
         if (!gameAlive(embedder.gamePid())) return;   // crashed or quit: what was saved goes in when it starts again
-        Path dir = t.dir().toAbsolutePath().normalize();
         var all = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(t.buildRoot().toAbsolutePath().normalize())).toList();
         // a mixins.json with only added mixins goes into the running game (Hotswapper.addMixins); anything else waits
         var mixinConfigs = all.stream().filter(f -> f.getFileName().toString().endsWith("mixins.json")).toList();
@@ -787,10 +786,11 @@ final class SulfurPanel extends JPanel implements GameHost {
                 }
             });
         }
-        // code from any module of the build (a run config like runAllModsClient runs several; the hotswap compiles and
-        // compares every source set on its class path); resources only from the target's own module
+        // code and resources from any module of the build (a run config like runAllModsClient runs several; the hotswap
+        // compiles and compares every source set on its class path, and a resource goes to the output of the source set
+        // whose folder holds it)
         var code = all.stream().filter(f -> !needsRestart(f) && (f.toString().endsWith(".java") || f.toString().endsWith(".kt"))).toList();
-        var res = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(dir) && !needsRestart(f) && !code.contains(f)
+        var res = all.stream().filter(f -> !needsRestart(f) && !code.contains(f)
                 && f.toString().replace('\\', '/').contains("/resources/")).toList();
         if (!wideners.isEmpty()) {   // first, then the code that may use what it widens
             long pid = embedder.gamePid();

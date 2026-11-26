@@ -50,15 +50,16 @@ final class Hotswapper {
 
     /**
      * Saved resource files: copy them where the dev game reads resources (the source set's resource output, what
-     * processResources fills), then ask the agent to reload: assets/ -> client reload (F3+T), data/ -> /reload.
+     * processResources fills), then ask the agent to reload: only lang/*.json -> the language alone, other assets/ ->
+     * client reload (F3+T), data/ -> /reload. Each copied file is logged.
      * Files processResources expands (mod metadata) are left alone: they need a restart anyway.
      */
     boolean reloadResources(Workspace.Target t, long gamePid, Path agentJar, List<Path> files) {
         if (t == null || gamePid <= 0 || agentJar == null) return false;
         var sets = fast.sourceSets(t);
         if (sets == null) { log.accept("resources: class path not read yet (Run client first)"); return false; }
-        boolean assets = false, data = false, worldData = false;
-        int copied = 0;
+        boolean assets = false, data = false, worldData = false, langOnly = true;
+        var copied = new ArrayList<String>();
         try {
             for (Path f : files) {
                 Path abs = f.toAbsolutePath().normalize();
@@ -67,15 +68,17 @@ final class Hotswapper {
                     log.accept("resources: " + name + " changed: restart the game to apply"); continue;
                 }
                 for (var s : sets) {
-                    if (s.resOut() == null) continue;
+                    if (s.resOut() == null || isTestSet(s.name())) continue;
                     for (Path srcDir : s.resSrcDirs()) {
                         Path root = srcDir.toAbsolutePath().normalize();
                         if (!abs.startsWith(root)) continue;
                         Path rel = root.relativize(abs);
                         Path to = s.resOut().resolve(rel);
                         Files.createDirectories(to.getParent());
-                        if (Files.exists(abs)) Files.copy(abs, to, StandardCopyOption.REPLACE_EXISTING); else Files.deleteIfExists(to);
-                        copied++;
+                        boolean exists = Files.exists(abs);
+                        if (exists) Files.copy(abs, to, StandardCopyOption.REPLACE_EXISTING); else Files.deleteIfExists(to);
+                        copied.add(rel.toString().replace(java.io.File.separatorChar, '/') + (exists ? "" : " (deleted)") + " -> " + s.name());
+                        if (!isLang(rel)) langOnly = false;
                         String top = rel.getName(0).toString();
                         if (top.equals("assets")) assets = true;
                         else if (top.equals("data")) {
@@ -86,7 +89,10 @@ final class Hotswapper {
                     }
                 }
             }
-            if (copied == 0) return false;
+            if (copied.isEmpty()) return false;
+            int n = copied.size();
+            log.accept("resources: " + n + " file(s) copied: " + String.join(", ", copied.size() > 12 ? copied.subList(0, 12) : copied)
+                    + (n > 12 ? " and " + (n - 12) + " more" : ""));
             if (worldData) {   // read only when a world opens: leave it and open it again (the game keeps running)
                 data = false;
                 Path done = agentJar.getParent().resolve("rejoin-" + gamePid + ".txt");
@@ -96,23 +102,34 @@ final class Hotswapper {
                 String answer = Files.exists(done) ? Files.readString(done).strip() : "no answer";
                 lastRejoin = answer;
                 log.accept("resources: world data changed: " + (answer.equals("done") ? "left the world and opened it again" : "could not open the world again (" + answer + ")"));
-                if (!assets) { lastResources = "world data (" + copied + " file(s))"; return answer.equals("done"); }
+                if (!assets) { lastResources = "world data (" + n + " file(s))"; return answer.equals("done"); }
             }
-            String what = (assets ? "assets" : "") + (assets && data ? "+" : "") + (data ? "data" : "");
+            // only translations: the language alone is read again (no full resource reload), and the open screen is
+            // laid out again so text it fetched when it was built shows the new strings
+            String what = langOnly ? "lang" : (assets ? "assets" : "") + (assets && data ? "+" : "") + (data ? "data" : "");
             try {
                 var vm = com.sun.tools.attach.VirtualMachine.attach(Long.toString(gamePid));
                 try { vm.loadAgent(agentJar.toString(), "codingFps=" + Settings.codingFps() + ",reload=" + what); } finally { vm.detach(); }
             } catch (com.sun.tools.attach.AgentLoadException e) {
                 if (!String.valueOf(e.getMessage()).endsWith(": 0")) throw e;
             }
-            lastResources = what + " (" + copied + " file(s))";
-            log.accept("resources: " + copied + " file(s) copied, reload " + what);
+            lastResources = what + " (" + n + " file(s))";
+            log.accept(langOnly ? "resources: lang reloaded: " + n + " file(s) (language only, open screen laid out again)"
+                    : "resources: reload " + what);
             return true;
         } catch (Exception e) {
             log.accept("resources failed: " + e);
             return false;
         }
     }
+
+    /** assets/<namespace>/lang/<code>.json: a translation file, read by the language manager alone. */
+    static boolean isLang(Path rel) {
+        return rel.getNameCount() == 4 && rel.getName(0).toString().equals("assets") && rel.getName(2).toString().equals("lang")
+                && rel.getName(3).toString().endsWith(".json");
+    }
+
+    static boolean isTestSet(String name) { return name.equals("test") || name.endsWith("Test") || name.endsWith(":test"); }
 
     /**
      * Registration code changed and the classes were redefined: have the agent run it again in the game, registering
@@ -654,7 +671,7 @@ final class Hotswapper {
             int copied = 0;
             var wideners = new ArrayList<Path>();
             for (var s : sets) {
-                if (s.name().equals("test") || s.name().endsWith("Test") || s.name().endsWith(":test")) continue;
+                if (isTestSet(s.name())) continue;
                 if (s.resOut() == null) continue;
                 for (Path srcDir : s.resSrcDirs()) {
                     if (!Files.isDirectory(srcDir)) continue;
@@ -732,7 +749,7 @@ final class Hotswapper {
         var sets = fast.sourceSets(t);
         if (sets != null)
             for (var s : sets) {
-                if (s.name().equals("test") || s.name().endsWith("Test") || s.name().endsWith(":test")) continue;
+                if (isTestSet(s.name())) continue;
                 roots.add(s.out());
                 if (s.kotlin() != null) roots.add(s.kotlin().out());
             }
@@ -768,6 +785,12 @@ final class Hotswapper {
             // rewritten too, so a restart, a new mixin or the next comparison sees what the game runs
             try {
                 byte[] stable = LambdaNames.stabilize(old, after);
+                // a lambda the new code dropped: objects made from it before the swap still call it, so it stays
+                var kept = new ArrayList<String>();
+                stable = LambdaNames.keepRemoved(old, stable, kept);
+                if (!kept.isEmpty())
+                    log.accept("hotswap: kept " + kept + " in " + new org.jetbrains.org.objectweb.asm.ClassReader(stable).getClassName().replace('/', '.')
+                            + " (removed from the code, but objects made before the swap may still call it; unused by the new code)");
                 if (stable != after) {
                     Files.write(c, stable);
                     after = stable;

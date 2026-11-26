@@ -894,6 +894,22 @@ final class AutoTest {
             check("new static field set by its initializer -> has its value in the running game, no restart", waitForLog(gameLog, "[SF-PROBE] v5s filled", 20)
                             && p.hotswapper.lastStartupChanges.isEmpty(),
                     p.hotswapper.lastResult + " " + p.hotswapper.lastRegistration);
+            // a lambda object made before the swap, then the lambda removed from the code: the object still calls its
+            // method (an open screen's draw callback crashed the game with NoSuchMethodError); the old method stays
+            String hold = "private static java.util.function.Supplier<String> SF_HOLD;\n\n    private SfHotswapProbe() {}";
+            Files.writeString(src, original.replace("return \"v1\";", "if (SF_HOLD == null) SF_HOLD = () -> \"held\"; return \"vL1 \" + SF_HOLD.get();")
+                    .replace("private SfHotswapProbe() {}", hold));
+            sleep(1500);
+            swapRetry(p, t);
+            boolean made = waitForLog(gameLog, "[SF-PROBE] vL1 held", 20);
+            int mark = p.logText().length();
+            Files.writeString(src, original.replace("return \"v1\";", "return \"vL2 \" + (SF_HOLD == null ? \"none\" : SF_HOLD.get());")
+                    .replace("private SfHotswapProbe() {}", hold));
+            sleep(1500);
+            swapRetry(p, t);
+            check("lambda removed while an object made from it lives -> its method kept, the object still runs, no restart",
+                    made && waitForLog(gameLog, "[SF-PROBE] vL2 held", 20) && p.logText().substring(mark).contains("hotswap: kept [lambda$message$"),
+                    p.hotswapper.lastResult + " made=" + made);
         } else {
             check("hotswap: added method -> restart needed (no JBR)", p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed")),
                     String.valueOf(p.hotswapper.lastResult));
@@ -973,15 +989,31 @@ final class AutoTest {
             Files.writeString(kt, k);
         }
 
-        // resources: copy into the dev resource dir + client reload (F3+T)
+        // resources: copy into the dev resource dir + client reload (F3+T); translations alone: the language only
         Path lang = langFileOf(t.dir());
         if (lang != null) {
             String l = Files.readString(lang);
-            Files.writeString(lang, l + "\n");
+            String key = "sf.autotest.lang", value = "SF lang " + System.currentTimeMillis() % 100000;
+            int brace = l.indexOf('{');
+            boolean empty = l.substring(brace + 1).strip().startsWith("}");
+            Files.writeString(lang, l.substring(0, brace + 1) + "\n  \"" + key + "\": \"" + value + "\"" + (empty ? "" : ",") + l.substring(brace + 1));
+            int mark = p.logText().length();
             boolean ok = p.hotswapper.reloadResources(t, p.embedder.gamePid(), agentJarOf(p), java.util.List.of(lang));
-            check("resource change -> client reload", ok && p.hotswapper.lastResources.startsWith("assets")
-                            && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
+            boolean reloaded = ok && p.hotswapper.lastResources.startsWith("lang") && waitForLog(gameLog, "resources: language reloaded", 15);
+            sleep(500);
+            command(p, "tellraw @a {\"translate\":\"" + key + "\"}");
+            check("translation file changed -> language reloaded alone, the new key shows in the running game, copied file logged",
+                    reloaded && waitForLog(gameLog, "[CHAT] " + value, 10) && p.logText().substring(mark).contains("lang/" + lang.getFileName()),
+                    p.hotswapper.lastResources);
+            // any other asset with it: the client's full reload
+            Path probe = lang.getParent().getParent().resolve("sf-reload-probe.txt");
+            Files.writeString(probe, "probe\n");
             Files.writeString(lang, l);
+            boolean full = p.hotswapper.reloadResources(t, p.embedder.gamePid(), agentJarOf(p), java.util.List.of(lang, probe));
+            check("resource change -> client reload", full && p.hotswapper.lastResources.startsWith("assets")
+                            && waitForLog(gameLog, "resources: client reload started", 15), p.hotswapper.lastResources);
+            Files.deleteIfExists(probe);
+            p.hotswapper.reloadResources(t, p.embedder.gamePid(), agentJarOf(p), java.util.List.of(probe));
         }
     }
 

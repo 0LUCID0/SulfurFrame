@@ -5,7 +5,8 @@ import java.lang.reflect.Method;
 
 /**
  * Reloads resources in the running game after the IDE copied changed files into the dev resource dir.
- *   assets (textures, models, lang, sounds...): the client's resource reload, what F3+T does
+ *   lang (only translation files, assets/NAMESPACE/lang/CODE.json, changed): the language manager alone, then the open screen laid out again
+ *   assets (textures, models, sounds...): the client's resource reload, what F3+T does
  *   data (recipes, loot tables, tags...): "/reload" on the integrated server, if a world is open
  * Named dev environments only (Mojang names: NeoForge/Forge dev and vanilla 26.x; Yarn: Fabric dev), like
  * {@link GameMessage}. Java 8, reflection only.
@@ -22,7 +23,7 @@ final class ResourceReload {
     };
     private static final long IDLE_WAIT_MS = 120_000;
 
-    static void reload(final Instrumentation inst, final boolean assets, final boolean data) {
+    static void reload(final Instrumentation inst, final boolean assets, final boolean data, final boolean lang) {
         try {
             for (final String[] n : NAMES) {
                 Class<?> found = null;
@@ -31,14 +32,14 @@ final class ResourceReload {
                 final Class<?> mc = found;
                 final Object client = mc.getMethod("getInstance").invoke(null);
                 if (client == null) return;
-                if (idle(mc, client, n)) { start(inst, mc, client, n, assets, data); return; }
+                if (idle(mc, client, n)) { start(inst, mc, client, n, assets, data, lang); return; }
                 SfHooks.log("resources: game is loading, reload waits until it is idle");
                 Thread t = new Thread(new Runnable() {
                     public void run() {
                         try {
                             long until = System.currentTimeMillis() + IDLE_WAIT_MS;
                             while (!idle(mc, client, n) && System.currentTimeMillis() < until) Thread.sleep(250);
-                            start(inst, mc, client, n, assets, data);
+                            start(inst, mc, client, n, assets, data, lang);
                         } catch (Throwable e) { SfHooks.log("resources: reload failed: " + e); }
                     }
                 }, "sf-resource-reload");
@@ -69,8 +70,15 @@ final class ResourceReload {
         }
     }
 
-    private static void start(Instrumentation inst, Class<?> mc, final Object client, final String[] n, boolean assets, boolean data) {
+    private static void start(Instrumentation inst, final Class<?> mc, final Object client, final String[] n, boolean assets, boolean data, boolean lang) {
         try {
+            if (lang) {
+                mc.getMethod("execute", Runnable.class).invoke(client, new Runnable() {
+                    public void run() { reloadLanguage(mc, client); }
+                });
+                GameMessage.show(inst, "§aLanguage reloaded");
+                return;
+            }
             if (assets) {
                 final Method reload = mc.getMethod(n[1]);
                 mc.getMethod("execute", Runnable.class).invoke(client, new Runnable() {
@@ -105,6 +113,49 @@ final class ResourceReload {
             GameMessage.show(inst, "§aResources reloaded" + (assets && data ? " (assets + data)" : assets ? " (assets)" : " (data)"));
         } catch (Throwable t) {
             SfHooks.log("resources: reload failed: " + t);
+        }
+    }
+
+    /**
+     * Only translation files changed: the language manager reads them again from the resource manager (the dev resource
+     * folder is read as it is now), with no full resource reload. Then the open screen is laid out again, what a window
+     * resize does, so text it fetched when it was built (a Text.translatable resolved with getString() into a widget)
+     * shows the new strings. Client thread.
+     */
+    private static void reloadLanguage(Class<?> mc, Object client) {
+        try {
+            Object languages = mc.getMethod("getLanguageManager").invoke(client);
+            Object resources = mc.getMethod("getResourceManager").invoke(client);
+            Method load = null;
+            for (Method m : languages.getClass().getMethods()) {   // Yarn: reload(ResourceManager); Mojang: onResourceManagerReload
+                if ((m.getName().equals("reload") || m.getName().equals("onResourceManagerReload")) && m.getParameterTypes().length == 1
+                        && m.getParameterTypes()[0].isInstance(resources)) { load = m; break; }
+            }
+            if (load == null) { SfHooks.log("resources: no language reload method found"); return; }
+            load.invoke(languages, resources);
+            String screenNote = "no screen open";
+            Object screen = null;
+            for (String f : new String[]{"screen", "currentScreen"}) {
+                try { java.lang.reflect.Field fl = mc.getField(f); screen = fl.get(client); break; } catch (NoSuchFieldException ignored) { }
+            }
+            if (screen != null) {
+                screenNote = screen.getClass().getSimpleName() + " laid out again";
+                try {
+                    int w = screen.getClass().getField("width").getInt(screen), h = screen.getClass().getField("height").getInt(screen);
+                    Method resize = null;
+                    for (Method m : screen.getClass().getMethods()) {
+                        Class<?>[] p = m.getParameterTypes();
+                        if (m.getName().equals("resize") && p.length == 3 && p[0].isInstance(client) && p[1] == int.class && p[2] == int.class) { resize = m; break; }
+                    }
+                    if (resize == null) screenNote = screen.getClass().getSimpleName() + " kept (no resize method)";
+                    else resize.invoke(screen, client, w, h);
+                } catch (Throwable t) {
+                    screenNote = screen.getClass().getSimpleName() + " could not be laid out again (" + t + ")";
+                }
+            }
+            SfHooks.log("resources: language reloaded (translation files only, no full reload); " + screenNote);
+        } catch (Throwable t) {
+            SfHooks.log("resources: language reload failed: " + t);
         }
     }
 
