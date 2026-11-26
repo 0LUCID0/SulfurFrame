@@ -127,7 +127,7 @@ through Gradle, and its low end counts files with every restart skipping it. The
 - From [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/36205-sulfurframe): *Settings → Plugins →
   Marketplace*, search for **SulfurFrame**.
 - From a release zip: download `SulfurFrame-<version>.zip` from
-  [Releases](https://github.com/0LUCID0/Sulfur_Frame/releases), then *Settings → Plugins → ⚙ → Install Plugin from Disk…*.
+  [Releases](https://github.com/0LUCID0/SulfurFrame/releases), then *Settings → Plugins → ⚙ → Install Plugin from Disk…*.
 
 Open a Fabric mod project, then use the **SulfurFrame** tool window's *Run client*.
 
@@ -185,13 +185,13 @@ check, what needs a restart, `sf feedback`. Install it from this repository:
 
 - **Claude Code** (a plugin from this repository's marketplace):
   ```
-  /plugin marketplace add 0LUCID0/Sulfur_Frame
+  /plugin marketplace add 0LUCID0/SulfurFrame
   /plugin install sulfurframe@sulfurframe
   ```
   The same commands work from a shell as `claude plugin ...`. `/plugin marketplace update sulfurframe` gets later versions.
 - **Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot and other agents** (the [`skills`](https://github.com/vercel-labs/skills) CLI, Node.js 22+):
   ```
-  npx skills add 0LUCID0/Sulfur_Frame
+  npx skills add 0LUCID0/SulfurFrame
   ```
   Run it in your mod's folder; add `-a <agent>` to pick the agent, or `-g` for every project.
 - **By hand:** copy the `skills/sulfurframe` folder into your mod's `.claude/skills/` (Claude Code) or `.agents/skills/`

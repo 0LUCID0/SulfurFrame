@@ -455,7 +455,7 @@ def main():
     render_card(out, "vs-end.mp4", [("SulfurFrame", SANS, 84, SULFUR, 470, 0.1),
                                     ("Free IntelliJ IDEA plugin  \u00b7  open source (MIT)", SANS, 34, WHITE, 590, 0.3),
                                     ("Fabric today. More loaders and Minecraft versions are on the way.", SANS, 30, GREY, 660, 0.5),
-                                    ("JetBrains Marketplace  \u00b7  github.com/0LUCID0/Sulfur_Frame", MONO_R, 26, GREY, 730, 0.7),
+                                    ("JetBrains Marketplace  \u00b7  github.com/0LUCID0/SulfurFrame", MONO_R, 26, GREY, 730, 0.7),
                                     ("Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.", SANS, 20, GREY, 1010, 0.7)],
                 4.5, icon_y=260)
     lst = os.path.join(out, "vs-list.txt")

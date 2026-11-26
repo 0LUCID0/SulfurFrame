@@ -125,7 +125,7 @@ Lithium, Iris, Create, Applied Energistics 2, Botania, Farmer's Delight, Mod Men
 
 - [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/36205-sulfurframe)에서: *Settings → Plugins →
   Marketplace*에서 **SulfurFrame**을 검색합니다.
-- 릴리스 zip으로: [Releases](https://github.com/0LUCID0/Sulfur_Frame/releases)에서 `SulfurFrame-<버전>.zip`을 받은 뒤
+- 릴리스 zip으로: [Releases](https://github.com/0LUCID0/SulfurFrame/releases)에서 `SulfurFrame-<버전>.zip`을 받은 뒤
   *Settings → Plugins → ⚙ → Install Plugin from Disk…*.
 
 Fabric 모드 프로젝트를 열고 **SulfurFrame** 툴윈도우의 *Run client*를 누르면 됩니다.
@@ -182,13 +182,13 @@ Java 25와, 라이브러리 두 개를 빌려 쓰기 위한 IntelliJ 설치가 �
 
 - **Claude Code**(이 저장소의 마켓플레이스에 있는 플러그인):
   ```
-  /plugin marketplace add 0LUCID0/Sulfur_Frame
+  /plugin marketplace add 0LUCID0/SulfurFrame
   /plugin install sulfurframe@sulfurframe
   ```
   셸에서는 같은 명령을 `claude plugin ...`으로 씁니다. 새 버전은 `/plugin marketplace update sulfurframe`으로 받습니다.
 - **Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot 등 다른 에이전트**([`skills`](https://github.com/vercel-labs/skills) CLI, Node.js 22 이상):
   ```
-  npx skills add 0LUCID0/Sulfur_Frame
+  npx skills add 0LUCID0/SulfurFrame
   ```
   모드 프로젝트 폴더에서 실행합니다. 에이전트를 고르려면 `-a <에이전트>`, 모든 프로젝트에 쓰려면 `-g`를 붙입니다.
 - **직접 복사:** `skills/sulfurframe` 폴더를 모드 프로젝트의 `.claude/skills/`(Claude Code)나 `.agents/skills/`(Codex처럼

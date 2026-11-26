@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>dev.sulfurframe</id>
     <name>SulfurFrame</name>
-    <vendor url="https://github.com/0LUCID0/Sulfur_Frame">0LUCID0</vendor>
+    <vendor url="https://github.com/0LUCID0/SulfurFrame">0LUCID0</vendor>
     <!-- version and idea-version are overwritten by the Gradle build (gradle.properties); kept here for build.sh -->
     <version>0.3.0</version>
     <description><![CDATA[
@@ -26,12 +26,12 @@
          need a restart.</p>
       <p>Most edits never need a restart: across 1,080 commits of nine large open-source mods, 65–85% of the changes
          could go straight into the running game, and the waiting per edit-run step dropped by 63–87% (measured on
-         one machine; <a href="https://github.com/0LUCID0/Sulfur_Frame/tree/main/sf-idea-plugin/docs/effect-study">method
+         one machine; <a href="https://github.com/0LUCID0/SulfurFrame/tree/main/sf-idea-plugin/docs/effect-study">method
          and raw data</a>).</p>
       <p>Fabric 1.21.1 on Windows and Linux (X11) for now. It is being built alongside a much bigger mod, and more
          loaders and Minecraft versions are on their way with it.</p>
-      <p><a href="https://github.com/0LUCID0/Sulfur_Frame/issues">Issues</a> ·
-         <a href="https://github.com/0LUCID0/Sulfur_Frame">Source (MIT)</a></p>
+      <p><a href="https://github.com/0LUCID0/SulfurFrame/issues">Issues</a> ·
+         <a href="https://github.com/0LUCID0/SulfurFrame">Source (MIT)</a></p>
       <p>Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.</p>
     ]]></description>
     <idea-version since-build="263"/>
