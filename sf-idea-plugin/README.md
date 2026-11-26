@@ -1028,6 +1028,22 @@ happens):
 - **A cursor showing on the grabbed game.** Without mouse moves GLFW gets no `WM_SETCURSOR` to hide it again after the
   IDE changes the shared cursor; the agent hides it every frame while the mouse is grabbed.
 
+Found in the same session (a crash in the mod's settings screen, 2026-11-26):
+- **A new static field was null.** A swap added `PRESET_BUTTONS` (a map its static initializer creates) to a loaded
+  class; the redefinition leaves a new static field null and the static initializer never runs again, so the next
+  use threw. Now the changed initializer runs in a hidden copy of the class (the agent's `ClinitReplay`, mode
+  `newstatics`) and each new static field still at null / 0 takes the copy's value; existing fields keep theirs.
+  Compile-time constants are not affected (javac writes their value into the class file). Self-test: a probe gets a
+  `static final Map` with an initializer and keeps printing its value.
+- **Saves after a crash tried to attach.** The game had crashed, and every save still tried to hotswap into the dead
+  process ("AttachNotSupportedException"). Now a save or Hotswap checks that the game process runs, says once that
+  the changes go in at the next start, and sends nothing.
+- **A JVM crash on exit.** When the game quit by itself while embedded, the lifeboat took the closing window for an IDE
+  that was killed and called `glfwSetWindowShouldClose` on the freed GLFW window (an access violation in
+  `hs_err_pid*.log`). The lifeboat now only flags the quit, and the render thread asks GLFW at its next frame, while
+  the window certainly exists; a game that is shutting down presents no further frame. Checked: sandbox IDE killed
+  with `Stop-Process -Force` → "Stopping!", "Saving worlds", process gone within 1 s, no crash file.
+
 ## The Java that Gradle and the game use
 - **Gradle's own JDK:** when `JAVA_HOME` in the IDE environment is older than the Java the game needs (Loom for 26.x
   requires a Java 25 Gradle), a JDK of at least that version is found and handed to gradlew (`GradleJava.java`). When the

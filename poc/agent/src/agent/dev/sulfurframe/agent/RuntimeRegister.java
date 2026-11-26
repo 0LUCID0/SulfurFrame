@@ -197,6 +197,11 @@ final class RuntimeRegister {
                 String mode = c.length > 5 ? c[5] : "";
                 reopen(unfrozen, frozen, intrusive, true);   // before each class: something froze them between two before
                 if (redefined && (mode.equals("enum") || mode.equals("switchmap"))) ClinitReplay.run(real, c[1], mode, out);
+                else if (redefined && mode.equals("newstatics")) {
+                    List<String> fields = new ArrayList<String>(Arrays.asList(c[2].split(";")));
+                    fields.remove("<clinit>");
+                    ClinitReplay.run(real, c[1], mode, fields, out);
+                }
                 else if (redefined && c.length > 2 && !c[2].isEmpty()) shadowRun(real, c, out);
                 if (entries.containsKey(c)) { reopen(unfrozen, frozen, intrusive, true); EntryRerun.run(entries.get(c), out); }
             }

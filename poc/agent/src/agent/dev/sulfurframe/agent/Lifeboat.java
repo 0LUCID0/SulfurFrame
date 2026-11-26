@@ -26,7 +26,16 @@ final class Lifeboat {
     private static long fnIsWindow, fnGetParent;
     private static boolean addressFirst;
 
+    /** Set by the watcher; the render thread asks GLFW to close at its next frame, while the window certainly exists. */
+    private static volatile boolean glfwQuitRequested;
+
+    /** Every frame (glfwSwapBuffers hook, render thread). */
     static void glfw(long window) {
+        if (glfwQuitRequested && window != 0) {
+            glfwQuitRequested = false;
+            try { Class.forName("org.lwjgl.glfw.GLFW", false, SfHooks.lwjglClassLoader()).getMethod("glfwSetWindowShouldClose", long.class, boolean.class).invoke(null, window, true); }
+            catch (Throwable t) { SfHooks.log("lifeboat: could not ask the game to quit: " + t); }
+        }
         if (started || window == 0) return;
         glfwWindow = window;
         if (SfHooks.LINUX) { X11Lifeboat.glfw(window); started = true; return; }
@@ -99,7 +108,9 @@ final class Lifeboat {
     static void requestQuit() throws Exception {
         ClassLoader l = SfHooks.lwjglClassLoader();
         if (glfwWindow != 0) {
-            Class.forName("org.lwjgl.glfw.GLFW", false, l).getMethod("glfwSetWindowShouldClose", long.class, boolean.class).invoke(null, glfwWindow, true);
+            // not from this thread: the game's own shutdown destroys the window too, and then the GLFW window is freed
+            // (calling it crashed the JVM on exit). A game still running presents another frame and quits from there.
+            glfwQuitRequested = true;
         } else if (sdlWindow != 0) {
             Class<?> evc = Class.forName("org.lwjgl.sdl.SDL_Event", false, l);
             Object ev = evc.getMethod("calloc").invoke(null);

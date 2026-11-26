@@ -885,6 +885,15 @@ final class AutoTest {
             check("hotswap (JBR): removed field + method applied", redefinedAny(p.hotswapper.lastResult)
                             && p.hotswapper.lastResult.stream().noneMatch(s -> s.startsWith("restart needed")) && waitForLog(gameLog, "[SF-PROBE] v5", 20),
                     String.valueOf(p.hotswapper.lastResult));
+            // a new static field its initializer sets: the redefinition alone leaves it null (the probe would throw on
+            // its next tick); the agent gives it the initializer's value
+            Files.writeString(src, original.replace("return \"v1\";", "return \"v5s \" + SF_NEW.get(\"k\");")
+                    .replace("private SfHotswapProbe() {}", "private static final java.util.Map<String, String> SF_NEW = new java.util.HashMap<>(java.util.Map.of(\"k\", \"filled\"));\n\n    private SfHotswapProbe() {}"));
+            sleep(1500);
+            swapRetry(p, t);
+            check("new static field set by its initializer -> has its value in the running game, no restart", waitForLog(gameLog, "[SF-PROBE] v5s filled", 20)
+                            && p.hotswapper.lastStartupChanges.isEmpty(),
+                    p.hotswapper.lastResult + " " + p.hotswapper.lastRegistration);
         } else {
             check("hotswap: added method -> restart needed (no JBR)", p.hotswapper.lastResult.stream().anyMatch(s -> s.startsWith("restart needed")),
                     String.valueOf(p.hotswapper.lastResult));

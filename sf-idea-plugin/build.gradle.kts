@@ -67,7 +67,9 @@ intellijPlatform {
               <li>Access widener entries added while the game runs apply at once, and can be taken out again.</li>
               <li>Safety: the world is snapshotted before init code runs again, with a restart into it if that fails; a
                   class file that a Gradle build is rewriting is waited for instead of crashing the game; callers of a
-                  changed method or field are compiled too, and the swap is refused if they break.</li>
+                  changed method or field are compiled too, and the swap is refused if they break; a new static field
+                  gets the value its initializer gives it instead of staying null; saves while the game is not running
+                  are not sent.</li>
               <li>Coding agents (Claude Code, Codex, ...): the <code>sf</code> command in <code>~/.sulfurframe/bin</code>
                   checks changes in the running game from a terminal (<code>sf wait</code>, <code>cmd</code>,
                   <code>log</code>, <code>shot</code>, <code>restart</code>...), <code>sf run</code> starts the game

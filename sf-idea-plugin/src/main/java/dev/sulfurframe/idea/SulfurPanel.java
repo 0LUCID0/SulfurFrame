@@ -283,10 +283,23 @@ final class SulfurPanel extends JPanel implements GameHost {
         return (Workspace.Target) targets.getSelectedItem();
     }
 
+    private volatile long reportedDeadPid;
+
+    /** The game process still runs; logs once per game when it does not (saves after a crash used to try to attach). */
+    private boolean gameAlive(long pid) {
+        if (pid != 0 && ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)) return true;
+        if (pid != reportedDeadPid) {
+            reportedDeadPid = pid;
+            log("the game is not running: saved changes go in when it starts again (nothing sent)");
+        }
+        return false;
+    }
+
     /** Compile the selected target and reload what changed into the running game (background thread). */
     public void hotswapAsync() {
         var t = selectedTarget();
         long pid = embedder.gamePid();
+        if (!gameAlive(pid)) return;
         work("sf-hotswap", () -> {
             hotswapper.swap(t, pid, agentJar);
             var restartNeeded = hotswapper.lastResult.stream().filter(s -> s.startsWith("restart needed")).toList();
@@ -755,6 +768,7 @@ final class SulfurPanel extends JPanel implements GameHost {
         if (files.isEmpty()) return;
         var t = selectedTarget();
         if (!swapOnSave.isSelected() || t == null || !embedder.attached()) return;
+        if (!gameAlive(embedder.gamePid())) return;   // crashed or quit: what was saved goes in when it starts again
         Path dir = t.dir().toAbsolutePath().normalize();
         var all = files.stream().filter(f -> f.toAbsolutePath().normalize().startsWith(t.buildRoot().toAbsolutePath().normalize())).toList();
         // a mixins.json with only added mixins goes into the running game (Hotswapper.addMixins); anything else waits

@@ -743,6 +743,11 @@ Alt를 누르고 있는 동안 컨텍스트 메뉴가 열려 있는 Axiom과 함
 - **Minecraft의 포커스 상태가 어긋남.** 게임이 키보드를 가졌는데 Minecraft는 자기 창에 포커스가 없다고 보면(그러면 마우스를 잡지 않음), 에이전트가 최대 0.5초에 한 번 `WM_SETFOCUS`로 포커스를 알려 줍니다. 포커스가 잠깐 없는 동안 생긴 잡기나 놓기는 버리지 않고 기다립니다.
 - **잡힌 게임 위에 커서가 보임.** 마우스를 움직이지 않으면 IDE가 공유 커서를 바꾼 뒤 GLFW가 다시 숨길 `WM_SETCURSOR`를 받지 못합니다. 마우스가 잡혀 있는 동안 에이전트가 매 프레임 숨깁니다.
 
+같은 세션에서 찾은 것들(모드의 설정 화면에서 난 크래시, 2026-11-26):
+- **새 static 필드가 null이었음.** 핫스왑이 이미 로드된 클래스에 `PRESET_BUTTONS`(static 초기화 블록이 만드는 맵)를 추가했습니다. 재정의는 새 static 필드를 null로 두고 static 초기화 블록은 다시 돌지 않아서, 다음 사용에서 예외가 났습니다. 이제 바뀐 초기화 블록을 숨겨진 사본 클래스에서 돌리고(에이전트의 `ClinitReplay`, `newstatics` 모드), 아직 null / 0인 새 static 필드만 사본의 값을 받습니다. 기존 필드는 그대로입니다. 컴파일 상수는 해당 없습니다(javac가 값을 클래스 파일에 씀). 자동 테스트: probe에 초기값이 있는 `static final Map`을 넣고 그 값이 계속 찍히는지 확인합니다.
+- **크래시 뒤 저장이 붙으려 했음.** 게임이 크래시한 뒤에도 저장할 때마다 죽은 프로세스에 핫스왑을 시도했습니다("AttachNotSupportedException"). 이제 저장이나 Hotswap 때 게임 프로세스가 살아 있는지 먼저 보고, 없으면 다음 시작 때 들어간다고 한 번 알리고 아무것도 보내지 않습니다.
+- **종료 때 JVM 크래시.** 임베드된 게임이 스스로 종료할 때, lifeboat가 닫히는 창을 IDE가 강제 종료된 것으로 보고 이미 해제된 GLFW 창에 `glfwSetWindowShouldClose`를 불렀습니다(`hs_err_pid*.log`에 access violation). 이제 lifeboat는 종료 요청 표시만 하고, 렌더 스레드가 다음 프레임에 GLFW에 요청합니다. 그때는 창이 확실히 있고, 종료 중인 게임은 다음 프레임이 없습니다. 확인: 샌드박스 IDE를 `Stop-Process -Force`로 종료 → "Stopping!", "Saving worlds", 1초 안에 프로세스 종료, 크래시 파일 없음.
+
 ## Gradle과 게임이 쓰는 Java
 - **Gradle 자체의 JDK:** IDE 환경의 `JAVA_HOME`이 게임에 필요한 Java보다 낮으면(26.x용 Loom은 Java 25 Gradle을 요구), 그 버전 이상인 JDK를 찾아 gradlew에 넘깁니다(`GradleJava.java`). 프로젝트가 Gradle JVM을 직접 정해 두었으면(`org.gradle.java.home`, 또는 `gradle/gradle-daemon-jvm.properties`의 데몬 툴체인) 데몬은 Gradle이 고르지만, gradlew 런처 자체는 여전히 `JAVA_HOME`으로 뜹니다. 그래서 그때도 `JAVA_HOME`이 Java 17보다 낮으면(예: Java 8) 17 이상인 JDK를 넘깁니다. 클래스패스 스캔과 핫스왑 컴파일도 같은 JDK라 데몬 하나를 같이 씁니다.
 - **게임의 JBR:** 실행 태스크의 `javaLauncher`를 툴체인으로 직접 정하는 빌드(예: `javaLauncher.set(javaToolchains.launcherFor { 21 })`)에서는 `executable`만 바꾸면 "Toolchain from `executable` property does not match…", 비우면 "Cannot query … javaLauncher … no value"로 실패합니다. 그래서 JBR이 완전한 JDK(javac 있음)이면 `org.gradle.java.installations.paths`로 알려 주고 `javaLauncher`를 "JetBrains <버전>" 툴체인으로 바꿉니다. init 스크립트는 `afterEvaluate`에서 등록해 빌드 스크립트의 설정보다 나중에 적용됩니다.

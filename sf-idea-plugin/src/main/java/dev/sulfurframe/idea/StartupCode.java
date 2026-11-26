@@ -48,9 +48,10 @@ final class StartupCode {
      *            entry point object after what they hooked up before is taken out
      *   called   classes the entry points call (internal names), whose earlier registrations are taken out as well
      *            (the caller keeps only the project's own classes)
-     *   mode     "" (registration code: renamed copy), "enum" (new constants from the changed static initializer) or
-     *            "switchmap" (javac's holder of a switch over an enum: its arrays computed again), see the agent's
-     *            ClinitReplay
+     *   mode     "" (registration code: renamed copy), "enum" (new constants from the changed static initializer),
+     *            "switchmap" (javac's holder of a switch over an enum: its arrays computed again) or "newstatics" (new
+     *            static fields take the values the changed initializer gives them; statics then lists their names after
+     *            "&lt;clinit&gt;"), see the agent's ClinitReplay
      */
     record Rerun(List<String> statics, List<String> entries, Set<String> called, String mode) {}
 
@@ -80,6 +81,17 @@ final class StartupCode {
         if (!b.getOrDefault("<clinit>()V", "").equals(a.getOrDefault("<clinit>()V", ""))) {
             if (isEnum[0]) return new Rerun(List.of("<clinit>"), List.of(), Set.of(), "enum");
             if (switchMap[0]) return new Rerun(List.of("<clinit>"), List.of(), Set.of(), "switchmap");
+            // new static fields the static initializer sets: the redefinition leaves them null (a crash on first use);
+            // registration classes get theirs from the shadow run below
+            if (!registers[0]) {
+                var added = new ArrayList<>(initializedStatics(after));
+                added.removeAll(initializedStatics(before));
+                if (!added.isEmpty()) {
+                    var statics = new ArrayList<String>(List.of("<clinit>"));
+                    statics.addAll(added);
+                    return new Rerun(statics, List.of(), Set.of(), "newstatics");
+                }
+            }
         }
         var statics = new ArrayList<String>();
         var entries = new ArrayList<String>();
@@ -107,6 +119,18 @@ final class StartupCode {
         }
         if (statics.isEmpty() && entries.isEmpty()) return null;
         return new Rerun(statics, entries, entries.isEmpty() ? Set.of() : calledByEntry, "");
+    }
+
+    /** Static fields without a compile-time constant value (the static initializer gives them theirs). */
+    static Set<String> initializedStatics(byte[] cls) {
+        var out = new TreeSet<String>();
+        new ClassReader(cls).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public FieldVisitor visitField(int acc, String name, String desc, String sig, Object value) {
+                if ((acc & Opcodes.ACC_STATIC) != 0 && (acc & Opcodes.ACC_SYNTHETIC) == 0 && value == null) out.add(name);
+                return null;
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return out;
     }
 
     /** Superclass and interfaces (internal names) that were added or removed between the two versions. */

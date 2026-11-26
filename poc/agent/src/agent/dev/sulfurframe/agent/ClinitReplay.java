@@ -27,6 +27,10 @@ final class ClinitReplay {
     private static int copies;
 
     static void run(Class<?> real, String classFile, String mode, List<String> out) throws Throwable {
+        run(real, classFile, mode, Collections.<String>emptyList(), out);
+    }
+
+    static void run(Class<?> real, String classFile, String mode, List<String> fields, List<String> out) throws Throwable {
         byte[] bytes = Files.readAllBytes(Paths.get(classFile));
         String copyName = real.getName().replace('.', '/') + "$SfInit" + (++copies);
         Class<?> patch = Class.forName("dev.sulfurframe.agent.impl.RegistryPatch", true, SfAgent.impl());
@@ -34,6 +38,7 @@ final class ClinitReplay {
         Class<?> copy = defineHiddenNestmate(real, copyBytes);   // initialized: its static initializer has run
         if (mode.equals("enum")) enumConstants(real, copy, out);
         else if (mode.equals("switchmap")) switchMaps(real, copy, out);
+        else if (mode.equals("newstatics")) newStatics(real, copy, fields, out);
     }
 
     private static void enumConstants(Class<?> real, Class<?> copy, List<String> out) throws Throwable {
@@ -109,6 +114,43 @@ final class ClinitReplay {
         try { hidden = define.invoke(lookup, bytes, true, nestmate); }
         catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
         return (Class<?>) hidden.getClass().getMethod("lookupClass").invoke(hidden);
+    }
+
+    /**
+     * New static fields the changed initializer sets: the redefinition added them with null / 0, and the real class's
+     * initializer never runs again. Each one still at that default takes the copy's value; existing fields keep theirs.
+     */
+    private static void newStatics(Class<?> real, Class<?> copy, List<String> fields, List<String> out) throws Throwable {
+        Object unsafe = unsafe();
+        Class<?> uc = unsafe.getClass();
+        List<String> set = new ArrayList<String>();
+        for (String name : fields) {
+            Field f, cf;
+            try { f = real.getDeclaredField(name); cf = copy.getDeclaredField(name); } catch (NoSuchFieldException e) { continue; }
+            if (!Modifier.isStatic(f.getModifiers())) continue;
+            f.setAccessible(true); cf.setAccessible(true);
+            Object now = f.get(null), value = cf.get(null);
+            Class<?> t = f.getType();
+            if (!t.isPrimitive()) {
+                if (now != null || value == null) continue;
+                putStatic(unsafe, f, value);
+            } else {
+                if (value == null || value.equals(now) || !isDefault(now)) continue;
+                Object base = uc.getMethod("staticFieldBase", Field.class).invoke(unsafe, f);
+                long off = (Long) uc.getMethod("staticFieldOffset", Field.class).invoke(unsafe, f);
+                String n = t.getName();
+                String put = "put" + Character.toUpperCase(n.charAt(0)) + n.substring(1) + "Volatile";
+                uc.getMethod(put, Object.class, long.class, t).invoke(unsafe, base, off, value);
+            }
+            set.add(name);
+        }
+        if (!set.isEmpty()) out.add("new static fields of " + real.getName() + " set by its initializer: " + set);
+    }
+
+    private static boolean isDefault(Object v) {
+        if (v instanceof Boolean) return !(Boolean) v;
+        if (v instanceof Character) return (Character) v == 0;
+        return v instanceof Number && ((Number) v).doubleValue() == 0;
     }
 
     private static Object unsafe() throws Exception {
