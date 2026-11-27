@@ -58,6 +58,11 @@ Notes on reading the result:
   from the new class files the first time the game uses them. Use the feature (`sf cmd`, open the screen) to see it.
 - **Callers of a change:** when other files call a changed method or field, SulfurFrame compiles those callers too. If they
   break, it refuses the swap (`... no longer compile against it`). Fix the callers, save, and run `sf wait`.
+- **A module the game loads as a jar:** `sf wait` logs `the game loads <module> from its jar`. Loaded classes run the
+  new code, but classes not loaded yet still come from the old jar until `sf restart`, which builds it again.
+- **New instance fields:** objects made before the swap get 0 / false / null in a new field, not its initializer's
+  value (objects made after get it). An existing object (a settings holder, an open screen) shows the default until it is
+  made again or the game restarts; do not take that for a bug in the new code.
 - **Language reload:** a language-only reload lays out the open screen again. Text a mod cached in its own fields keeps the old
   string until the screen is opened again.
 - **Gradle builds:** avoid running Gradle builds of the mod (`gradlew build`, `compileJava`, tests) while the game runs. They

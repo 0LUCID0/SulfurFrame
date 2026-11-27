@@ -37,6 +37,9 @@ final class Hotswap {
             }
             int ok = 0;
             List<String> restart = new ArrayList<String>();
+            List<Class<?>> classes = new ArrayList<Class<?>>();
+            for (ClassDefinition d : defs) classes.add(d.getDefinitionClass());
+            List<ReflectionFix.Entry> reflected = ReflectionFix.before(inst, classes);   // fields that move keep working through reflection
             try {
                 inst.redefineClasses(defs.toArray(new ClassDefinition[0]));
                 ok = defs.size();
@@ -49,10 +52,12 @@ final class Hotswap {
                     }
                 }
             }
+            List<String> moved = ReflectionFix.after(reflected);
             out.add("redefined " + ok);
             out.add("not loaded " + (wanted.size() - loadedNames.size()));
             for (String w : wanted.keySet()) if (!loadedNames.contains(w)) out.add("not loaded: " + w);   // the IDE checks for mixins
             for (String r : restart) out.add("restart needed: " + r);
+            out.addAll(moved);
             out.add("ms " + (System.nanoTime() - t0) / 1_000_000);
             SfHooks.log("hotswap: redefined " + ok + " class(es)" + (restart.isEmpty() ? "" : ", " + restart.size() + " need a restart"));
             if (!restart.isEmpty()) GameMessage.show(inst, "§eHotswap: " + ok + " applied, " + restart.size() + " need a restart");

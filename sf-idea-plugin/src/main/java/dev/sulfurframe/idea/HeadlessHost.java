@@ -140,6 +140,7 @@ public final class HeadlessHost implements GameHost {
         var spec = launcher.cached(target);
         String why = spec == null ? "" : QuickRelaunch.whyNot(spec, target);
         if (why == null) why = hotswapper.prepareRelaunch(target, spec.capturedAt());
+        if (why == null) why = QuickRelaunch.staleJar(spec);
         if (spec != null && why == null && launcher.relaunch(spec, target, args, onWindow, onEnd)) return;
         if (spec != null) { log("starting through Gradle: " + (why != null ? why : "the direct start failed")); launcher.forget(target); }
         hotswapper.clearAwOverlay(target);
@@ -183,7 +184,9 @@ public final class HeadlessHost implements GameHost {
     public void hotswapAsync() {
         long p = pid;
         work("sf-hotswap", () -> {
-            hotswapper.swap(target, p, agentJar);
+            // nothing sent (compile failed, or left to the swap already running): the advice below would repeat the last swap's
+            if (!hotswapper.swapCatchingUp(target, p, agentJar)) return;
+            QuickRelaunch.noteJars(launcher.cached(target), hotswapper.lastChangedFiles, this::log);
             var restart = hotswapper.lastResult.stream().filter(s -> s.startsWith("restart needed")).toList();
             if (!restart.isEmpty()) restartNeeded(restart.size() + " class(es) changed in a way hotswap cannot apply");
             else if (!hotswapper.lastStartupChanges.isEmpty()) restartNeeded("startup code changed (runs only once, at launch): " + String.join(", ", hotswapper.lastStartupChanges));

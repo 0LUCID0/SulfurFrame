@@ -35,7 +35,7 @@ final class Bridge {
         if (projectDir == null || !Settings.agentBridge()) return null;
         try {
             sweepStale();
-            installScripts();
+            installScripts(p::log);
             String id = ProcessHandle.current().pid() + "-" + Integer.toHexString(projectDir.toAbsolutePath().normalize().toString().hashCode());
             Path dir = ROOT.resolve(id);
             Files.createDirectories(dir.resolve("req"));
@@ -76,21 +76,59 @@ final class Bridge {
         } catch (IOException ignored) { }
     }
 
+    /** What the terminal host (`sf run`) loads: this plugin, Gson and IntelliJ's ASM. */
+    static final String[] HOST_CLASSES = {"dev.sulfurframe.idea.Bridge", "com.google.gson.JsonParser", "org.jetbrains.org.objectweb.asm.ClassReader"};
+
+    /**
+     * The jar (or class folder) a class is loaded from. IntelliJ's plugin class loader gives no code source, so the
+     * class file's own URL is read too: {@code jar:file:/...!/a/B.class} or {@code file:/.../a/B.class}.
+     */
+    static Path locationOf(String className) {
+        try {
+            var c = Class.forName(className, false, Bridge.class.getClassLoader());
+            var src = c.getProtectionDomain().getCodeSource();
+            if (src != null && src.getLocation() != null) {
+                Path p = Path.of(src.getLocation().toURI());
+                if (Files.exists(p)) return p;
+            }
+            String res = className.replace('.', '/') + ".class";
+            var cl = c.getClassLoader() != null ? c.getClassLoader() : ClassLoader.getSystemClassLoader();
+            var url = cl.getResource(res);
+            if (url == null) return null;
+            String s = url.toString();
+            Path p = null;
+            if (s.startsWith("jar:")) {
+                int bang = s.indexOf("!/");
+                if (bang > 0) p = Path.of(new java.net.URI(s.substring(4, bang)));
+            } else if (s.startsWith("file:") && s.endsWith(res)) {
+                p = Path.of(new java.net.URI(s.substring(0, s.length() - res.length())));
+            }
+            return p != null && Files.exists(p) ? p : null;
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
     /** The `sf` scripts (POSIX shell, Windows cmd + PowerShell), rewritten when the plugin's copy differs. */
-    static void installScripts() throws IOException {
+    static void installScripts(java.util.function.Consumer<String> log) throws IOException {
         Files.createDirectories(BIN);
         // for `sf run` (no IDE): this Java (Java 25, the IDE's runtime) and this plugin's jar
         try {
             // the plugin's jar and the two IDE libraries the host needs (Gson, IntelliJ's ASM), as a class path
             var cp = new java.util.LinkedHashSet<String>();
-            for (String c : new String[]{"dev.sulfurframe.idea.Bridge", "com.google.gson.JsonParser", "org.jetbrains.org.objectweb.asm.ClassReader"}) {
-                try {
-                    var src = Class.forName(c, false, Bridge.class.getClassLoader()).getProtectionDomain().getCodeSource();
-                    if (src != null) cp.add(Path.of(src.getLocation().toURI()).toString());
-                } catch (Throwable ignored) { }
+            var missing = new ArrayList<String>();
+            for (String c : HOST_CLASSES) {
+                Path p = locationOf(c);
+                if (p != null) cp.add(p.toString()); else missing.add(c);
             }
             var javaCmd = ProcessHandle.current().info().command().orElse(null);
-            if (!cp.isEmpty()) Files.writeString(BIN.resolve("host.classpath.txt"), String.join(java.io.File.pathSeparator, cp) + "\n", StandardCharsets.UTF_8);
+            Path cpFile = BIN.resolve("host.classpath.txt");
+            if (missing.isEmpty()) Files.writeString(cpFile, String.join(java.io.File.pathSeparator, cp) + "\n", StandardCharsets.UTF_8);
+            else {
+                // a class path written by an older install (or a moved folder) would start the wrong jar, or none
+                Files.deleteIfExists(cpFile);
+                log.accept("sf run unavailable: could not find the jar of " + String.join(", ", missing) + " (set SF_HOST_JAR to the class path)");
+            }
             if (javaCmd != null && !(System.getProperty("os.name").startsWith("Windows") && javaCmd.toLowerCase().endsWith("idea64.exe")))
                 Files.writeString(BIN.resolve("host.java.txt"), javaCmd + "\n", StandardCharsets.UTF_8);
             else Files.writeString(BIN.resolve("host.java.txt"), Path.of(System.getProperty("java.home"), "bin", "java") + "\n", StandardCharsets.UTF_8);

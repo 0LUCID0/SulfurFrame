@@ -9,6 +9,8 @@ if ($args.Count -gt 0 -and ($args[0] -eq 'run' -or $args[0] -eq 'relay')) {   # 
     $java = if ($env:SF_JAVA) { $env:SF_JAVA } elseif (Test-Path (Join-Path $bin 'host.java.txt')) { [IO.File]::ReadAllLines((Join-Path $bin 'host.java.txt'), $utf8)[0] } else { 'java' }
     $jar = if ($env:SF_HOST_JAR) { $env:SF_HOST_JAR } elseif (Test-Path (Join-Path $bin 'host.classpath.txt')) { [IO.File]::ReadAllLines((Join-Path $bin 'host.classpath.txt'), $utf8)[0] } else { $null }
     if (-not $jar) { [Console]::Error.WriteLine('sf run: no SulfurFrame jar known yet: open IntelliJ with SulfurFrame once, or set SF_HOST_JAR'); exit 3 }
+    $gone = @($jar.Split(';') | Where-Object { $_ -and -not (Test-Path -LiteralPath $_) })
+    if ($gone.Count -gt 0) { [Console]::Error.WriteLine("sf run: not found (moved or uninstalled): $($gone -join ', '): open IntelliJ with SulfurFrame once, or set SF_HOST_JAR"); exit 3 }
     & $java --enable-native-access=ALL-UNNAMED -cp $jar dev.sulfurframe.idea.HeadlessHost @args
     exit $LASTEXITCODE
 }

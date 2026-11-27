@@ -44,9 +44,21 @@ final class Hotswapper {
 
     /** Startup-only code that changed in the last swap ("Class.method"), see {@link StartupCode}. */
     volatile List<String> lastStartupChanges = List.of();
+    /** Class files the last swap found changed (to see which project jars of the game are behind them). */
+    volatile List<Path> lastChangedFiles = List.of();
 
     /** What the last resource reload did (self-test). */
     volatile String lastResources = "";
+
+    /**
+     * Temporary files of editors and tools next to the real one: {@code sed -i} (sedXXXXXX), Vim swap files, Emacs
+     * locks and backups, IntelliJ's safe write ({@code ___jb_tmp___}), {@code *.tmp}. Not resources of the mod.
+     */
+    static boolean isEditorTemp(String name) {
+        return name.matches("sed[A-Za-z0-9]{6}") || name.endsWith("~") || name.endsWith(".swp") || name.endsWith(".swx")
+                || name.startsWith(".#") || (name.startsWith("#") && name.endsWith("#")) || name.endsWith(".tmp")
+                || name.endsWith("___jb_tmp___") || name.endsWith("___jb_old___");
+    }
 
     /**
      * Saved resource files: copy them where the dev game reads resources (the source set's resource output, what
@@ -64,6 +76,7 @@ final class Hotswapper {
             for (Path f : files) {
                 Path abs = f.toAbsolutePath().normalize();
                 String name = abs.getFileName().toString();
+                if (isEditorTemp(name)) continue;
                 if (needsGradle(name)) {
                     log.accept("resources: " + name + " changed: restart the game to apply"); continue;
                 }
@@ -74,8 +87,9 @@ final class Hotswapper {
                         if (!abs.startsWith(root)) continue;
                         Path rel = root.relativize(abs);
                         Path to = s.resOut().resolve(rel);
-                        Files.createDirectories(to.getParent());
                         boolean exists = Files.exists(abs);
+                        if (!exists && !Files.exists(to)) continue;   // gone before it was copied (a tool's temporary file)
+                        Files.createDirectories(to.getParent());
                         if (exists) Files.copy(abs, to, StandardCopyOption.REPLACE_EXISTING); else Files.deleteIfExists(to);
                         copied.add(rel.toString().replace(java.io.File.separatorChar, '/') + (exists ? "" : " (deleted)") + " -> " + s.name());
                         if (!isLang(rel)) langOnly = false;
@@ -507,10 +521,38 @@ final class Hotswapper {
     /** Last swapped bytes of every class file, to see what a change touched (startup code). */
     private final Map<Path, byte[]> classBytes = new HashMap<>();
 
+    /** A swap was asked for while one ran (a save during it): compile again when that one ends. */
+    private final AtomicBoolean again = new AtomicBoolean();
+
+    /**
+     * {@link #swap}, then again for saves that came in while it ran (up to a few rounds). True if any round sent
+     * something, so the caller's restart advice is about this call and not about an earlier swap.
+     */
+    boolean swapCatchingUp(Workspace.Target t, long gamePid, Path agentJar) {
+        deferred.set(false);
+        boolean ran = swap(t, gamePid, agentJar);
+        if (deferred.get()) return false;   // left to the swap that runs: its caller catches up
+        for (int i = 0; i < 5 && again.getAndSet(false); i++) {
+            deferred.set(false);
+            ran |= swap(t, gamePid, agentJar);
+            if (deferred.get()) break;      // another caller's swap is running and takes the save
+        }
+        return ran;
+    }
+
+    /** Set on the thread whose swap found another one running (and marked {@link #again}). */
+    private final ThreadLocal<Boolean> deferred = ThreadLocal.withInitial(() -> false);
+
     /** Compile, diff, redefine. Blocking; call off the EDT. Returns false if it could not run. */
     boolean swap(Workspace.Target t, long gamePid, Path agentJar) {
         if (t == null || gamePid <= 0 || agentJar == null) { log.accept("hotswap: no running game / agent"); return false; }
-        if (!busy.compareAndSet(false, true)) { log.accept("hotswap: already running"); return false; }
+        while (!busy.compareAndSet(false, true)) {
+            // A save while a swap runs: that swap compiled before it, so it would be lost. Mark it; the running swap's
+            // caller (swapCatchingUp) compiles again when it ends. Re-checked, in case that swap just ended.
+            again.set(true);
+            if (busy.get()) { deferred.set(true); log.accept("hotswap: already running; compiling again when it ends"); return false; }
+        }
+        again.set(false);   // this swap compiles every save made before it
         try {
             long t0 = System.currentTimeMillis();
             boolean fresh = snapshot == null;   // attached without a snapshot: don't know which sources changed
@@ -565,6 +607,7 @@ final class Hotswapper {
                 }
             }
             lastStartupChanges = List.copyOf(startup);
+            lastChangedFiles = List.copyOf(changed);
             // A superclass / interface change is fine for the JetBrains Runtime between the project's own types, but adding
             // a JDK interface (Supplier) to one class made it null unrelated Supplier fields in Minecraft, and the game
             // crashed. Those classes are not sent; they need a restart.

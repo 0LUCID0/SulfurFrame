@@ -223,6 +223,7 @@ final class SulfurPanel extends JPanel implements GameHost {
                 var spec = launcher.cached(t);
                 String why = spec == null ? "" : QuickRelaunch.whyNot(spec, t);
                 if (why == null) why = hotswapper.prepareRelaunch(t, spec.capturedAt());
+                if (why == null) why = QuickRelaunch.staleJar(spec);
                 if (spec != null && why == null && launcher.relaunch(spec, t, gameArgs, onWindow, onEnd)) return;
                 if (spec != null) { log("starting through Gradle: " + (why != null ? why : "the direct start failed")); launcher.forget(t); }
                 hotswapper.clearAwOverlay(t);   // Loom applies the current access widener to its jar again
@@ -301,7 +302,9 @@ final class SulfurPanel extends JPanel implements GameHost {
         long pid = embedder.gamePid();
         if (!gameAlive(pid)) return;
         work("sf-hotswap", () -> {
-            hotswapper.swap(t, pid, agentJar);
+            // nothing sent (compile failed, or left to the swap already running): the advice below would repeat the last swap's
+            if (!hotswapper.swapCatchingUp(t, pid, agentJar)) return;
+            QuickRelaunch.noteJars(launcher.cached(t), hotswapper.lastChangedFiles, this::log);
             var restartNeeded = hotswapper.lastResult.stream().filter(s -> s.startsWith("restart needed")).toList();
             Path rollback = hotswapper.failedInitSnapshot;
             if (rollback != null) offerInitRollback("init code ran again and failed: " + String.join("; ",

@@ -8,6 +8,9 @@ if [ "$1" = "run" ] || [ "$1" = "relay" ]; then   # no IDE: the host (or the fee
   java="${SF_JAVA:-$(head -n 1 "$home/bin/host.java.txt" 2>/dev/null | tr -d '\r')}"
   jar="${SF_HOST_JAR:-$(head -n 1 "$home/bin/host.classpath.txt" 2>/dev/null | tr -d '\r')}"
   if [ -z "$jar" ]; then echo "sf run: no SulfurFrame jar known yet: open IntelliJ with SulfurFrame once, or set SF_HOST_JAR" >&2; exit 3; fi
+  case "$jar" in *\;*) sep=';' ;; *) sep=':' ;; esac
+  gone=$(printf '%s\n' "$jar" | tr "$sep" '\n' | while IFS= read -r e; do [ -n "$e" ] && [ ! -e "$e" ] && printf '%s ' "$e"; done | sed 's/ $//')
+  if [ -n "$gone" ]; then echo "sf run: not found (moved or uninstalled): $gone: open IntelliJ with SulfurFrame once, or set SF_HOST_JAR" >&2; exit 3; fi
   exec "${java:-java}" --enable-native-access=ALL-UNNAMED -cp "$jar" dev.sulfurframe.idea.HeadlessHost "$@"
 fi
 norm() {

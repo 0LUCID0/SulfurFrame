@@ -127,6 +127,106 @@ final class QuickRelaunch {
         return null;
     }
 
+    /** The game's class path: -cp (also inside argument files) or CLASSPATH. */
+    static List<Path> classpath(Spec spec) {
+        var out = new ArrayList<Path>();
+        var args = new ArrayList<String>();
+        for (String a : spec.jvm()) {
+            if (a.startsWith("@") && !a.startsWith("@@")) {
+                try { args.addAll(argFileTokens(Files.readString(Path.of(a.substring(1))))); } catch (Exception ignored) { }
+            } else args.add(a);
+        }
+        String cp = null;
+        for (int i = 0; i + 1 < args.size(); i++)
+            if (args.get(i).equals("-cp") || args.get(i).equals("-classpath") || args.get(i).equals("--class-path")) cp = args.get(i + 1);
+        if (cp == null) cp = spec.env().get("CLASSPATH");
+        if (cp == null) return out;
+        for (String e : cp.split(java.io.File.pathSeparator)) {
+            if (e.isBlank()) continue;
+            try { out.add(Path.of(e)); } catch (InvalidPathException ignored) { }
+        }
+        return out;
+    }
+
+    /** Tokens of a java argument file: whitespace separated, "..." or '...' quoted, \ escapes inside quotes. */
+    static List<String> argFileTokens(String text) {
+        var out = new ArrayList<String>();
+        var cur = new StringBuilder();
+        boolean in = false; char q = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (q != 0) {
+                if (c == q) q = 0;
+                else if (c == '\\' && i + 1 < text.length()) cur.append(text.charAt(++i));
+                else cur.append(c);
+            } else if (c == '"' || c == '\'') { q = c; in = true; }
+            else if (Character.isWhitespace(c)) { if (in) { out.add(cur.toString()); cur.setLength(0); in = false; } }
+            else { cur.append(c); in = true; }
+        }
+        if (in) out.add(cur.toString());
+        return out;
+    }
+
+    /** A project's own jar ({@code <project>/build/libs/x.jar}): its build folder, else null. */
+    static Path buildDirOfJar(Path jar) {
+        Path libs = jar.getParent();
+        if (!jar.getFileName().toString().endsWith(".jar") || libs == null || !libs.getFileName().toString().equals("libs")) return null;
+        Path build = libs.getParent();
+        return build != null && build.getFileName().toString().equals("build") && Files.isDirectory(build.resolve("classes")) ? build : null;
+    }
+
+    /**
+     * The jars of the game's class path that a project builds and that are older than its compiled classes: the game
+     * would start with the old code (Gradle's jar task makes them again; a direct start would not). Null: none.
+     */
+    static String staleJar(Spec spec) {
+        for (Path jar : classpath(spec)) {
+            Path build = buildDirOfJar(jar);
+            if (build == null || !Files.isRegularFile(jar)) continue;
+            try {
+                long built = Files.getLastModifiedTime(jar).toMillis();
+                try (var files = Files.walk(build.resolve("classes"))) {
+                    var newer = files.filter(f -> f.toString().endsWith(".class")).filter(f -> {
+                        try { return Files.getLastModifiedTime(f).toMillis() > built + 1000; } catch (IOException e) { return false; }
+                    }).findFirst();
+                    if (newer.isPresent()) return "the game loads " + jar.getFileName() + " (" + build.getParent().getFileName()
+                            + "), which is older than its compiled classes: Gradle builds it again";
+                }
+            } catch (IOException ignored) { }
+        }
+        return null;
+    }
+
+    /** Of the class files a swap compiled, the jars on the game's class path that their projects build (new code not in them yet). */
+    static Set<Path> jarsOf(Spec spec, Collection<Path> classFiles) {
+        var builds = new HashSet<Path>();
+        for (Path f : classFiles) {
+            for (Path p = f.getParent(); p != null; p = p.getParent()) {
+                if (p.getFileName() != null && p.getFileName().toString().equals("classes") && p.getParent() != null
+                        && p.getParent().getFileName().toString().equals("build")) { builds.add(p.getParent().toAbsolutePath().normalize()); break; }
+            }
+        }
+        var out = new LinkedHashSet<Path>();
+        if (builds.isEmpty()) return out;
+        for (Path jar : classpath(spec)) {
+            Path b = buildDirOfJar(jar);
+            if (b != null && builds.contains(b.toAbsolutePath().normalize())) out.add(jar);
+        }
+        return out;
+    }
+
+    private static final Set<String> jarsTold = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** After a swap: say (once per game and jar) that the game loads a changed project from its jar. */
+    static void noteJars(Spec spec, Collection<Path> classFiles, Consumer<String> log) {
+        if (spec == null || classFiles.isEmpty()) return;
+        for (Path jar : jarsOf(spec, classFiles)) {
+            if (!jarsTold.add(spec.capturedAt() + "|" + jar)) continue;
+            log.accept("hotswap: the game loads " + jar.getParent().getParent().getParent().getFileName() + " from its jar (" + jar.getFileName()
+                    + "): loaded classes run the new code, but classes not loaded yet come from the old jar; a restart builds it again through Gradle");
+        }
+    }
+
     /** The command for the next launch: cached JVM options, this launch's extras and agent, cached and new game arguments. */
     static List<String> command(Spec spec, List<String> extraJvm, String agentSpec, List<String> gameArgs) {
         var cmd = new ArrayList<String>();
