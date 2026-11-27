@@ -209,6 +209,8 @@ final class Bridge {
               sf test [names|all]    SulfurFrame's own runtime tests on this game (its demo mod only); sf test list
               sf feedback <text>     SulfurFrame did something wrong or confusing: saved with the current state for its
                                      developers (~/.sulfurframe/feedback/inbox; sf relay hands it on)
+              sf feedback send [file]  for the user, in their own terminal: open a saved report as a GitHub issue in the
+                                     browser (names and paths replaced; posted only when they press Submit there)
             Exit code: 0 done, 1 the game said no (or no game / no world), 2 error, 3 no IDE answered.
             """;
 
@@ -434,7 +436,9 @@ final class Bridge {
         try { out.append("## Game log (last 60 lines)\n\n```\n").append(gameLog("60")).append("\n```\n"); } catch (Exception ignored) { }
         Files.writeString(f, out.toString(), StandardCharsets.UTF_8);
         p.log("feedback saved for SulfurFrame's developers: " + f);
-        return "saved: " + f;
+        p.offerIssue(f);
+        return "saved: " + f + "\nIt stays on this computer. To send it to SulfurFrame's developers as a GitHub issue, the user runs (in their own terminal): "
+                + "sf feedback send" + (p instanceof SulfurPanel ? ", or uses the notification in IntelliJ" : "");
     }
 
     private static Path tmp(String name) throws IOException {

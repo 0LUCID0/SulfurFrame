@@ -4,14 +4,15 @@
 $sfHome = if ($env:SULFURFRAME_HOME) { $env:SULFURFRAME_HOME } else { Join-Path $HOME '.sulfurframe' }
 $root = Join-Path $sfHome 'bridge'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-if ($args.Count -gt 0 -and ($args[0] -eq 'run' -or $args[0] -eq 'relay')) {   # no IDE: the host (or the feedback relay) runs here, in the foreground
+if ($args.Count -gt 0 -and ($args[0] -eq 'run' -or $args[0] -eq 'relay' -or ($args[0] -eq 'feedback' -and $args.Count -gt 1 -and $args[1] -eq 'send'))) {   # no IDE: the host (or the feedback relay, or sending a report) runs here, in the foreground
     $bin = Join-Path $sfHome 'bin'
     $java = if ($env:SF_JAVA) { $env:SF_JAVA } elseif (Test-Path (Join-Path $bin 'host.java.txt')) { [IO.File]::ReadAllLines((Join-Path $bin 'host.java.txt'), $utf8)[0] } else { 'java' }
     $jar = if ($env:SF_HOST_JAR) { $env:SF_HOST_JAR } elseif (Test-Path (Join-Path $bin 'host.classpath.txt')) { [IO.File]::ReadAllLines((Join-Path $bin 'host.classpath.txt'), $utf8)[0] } else { $null }
     if (-not $jar) { [Console]::Error.WriteLine('sf run: no SulfurFrame jar known yet: open IntelliJ with SulfurFrame once, or set SF_HOST_JAR'); exit 3 }
     $gone = @($jar.Split(';') | Where-Object { $_ -and -not (Test-Path -LiteralPath $_) })
     if ($gone.Count -gt 0) { [Console]::Error.WriteLine("sf run: not found (moved or uninstalled): $($gone -join ', '): open IntelliJ with SulfurFrame once, or set SF_HOST_JAR"); exit 3 }
-    & $java --enable-native-access=ALL-UNNAMED -cp $jar dev.sulfurframe.idea.HeadlessHost @args
+    $hostArgs = if ($args[0] -eq 'feedback') { @('feedback-send') + @($args | Select-Object -Skip 2) } else { $args }
+    & $java --enable-native-access=ALL-UNNAMED -cp $jar dev.sulfurframe.idea.HeadlessHost @hostArgs
     exit $LASTEXITCODE
 }
 function Get-NormPath([string]$p) { $p.Replace([char]92, [char]47).ToLowerInvariant().TrimEnd([char]47) + '/' }
@@ -37,7 +38,8 @@ if (-not $session -and $args.Count -gt 0 -and $args[0] -eq 'feedback') {   # no 
     $nl = "`n"
     $body = "# SulfurFrame feedback (no IDE session)$nl$nl## What the agent reported$nl$nl$text$nl$nl## State$nl${nl}no SulfurFrame IDE answered; folder $((Get-Location).ProviderPath)$nl"
     [IO.File]::WriteAllText($f, $body, $utf8)
-    "saved: $f"; exit 0
+    "saved: $f"
+    "To send it to SulfurFrame's developers as a GitHub issue, the user runs (in their own terminal): sf feedback send"; exit 0
 }
 if (-not $session) {
     if ($open.Count -gt 0) { [Console]::Error.WriteLine("sf: no SulfurFrame session for $((Get-Location).ProviderPath); run sf from inside one of these projects:`n  " + ($open -join "`n  ")) }

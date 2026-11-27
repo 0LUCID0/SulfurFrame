@@ -174,6 +174,7 @@ Windows). Run it from the project folder.
 | `sf test [names]` | SulfurFrame's own runtime tests on the running game (its demo mod only) |
 | `sf run [--world W]` | **without IntelliJ**: starts the game in the terminal, swaps saved changes, answers the commands above |
 | `sf feedback <text>` | SulfurFrame did something wrong: saved locally with the state around it |
+| `sf feedback send` | For you, not the agent: opens a saved report as a GitHub issue in your browser, with names and paths replaced. Nothing is posted until you press Submit (IntelliJ offers the same in a notification) |
 | `sf relay` | hands those reports to the agent that works on SulfurFrame (configured in `~/.sulfurframe/relay.conf`) |
 
 Exit codes: 0 done, 1 the game said no, 2 error, 3 no IDE or `sf run` answered. Requests are files in

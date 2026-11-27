@@ -19,6 +19,8 @@ interface GameHost {
     Hotswapper hotswapper();
     Path agentJar();
     void log(String s);
+    /** A feedback report was saved: offer the person to send it as a GitHub issue (the IDE asks; the terminal host does not). */
+    default void offerIssue(Path report) {}
 
     /** Swaps, reloads and restarts running now / started so far. */
     int busy();

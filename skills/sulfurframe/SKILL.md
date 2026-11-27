@@ -91,8 +91,10 @@ Do not quietly work around it. Report it, then continue:
 `sf feedback "<what you did, what you expected, what happened>"`
 
 Be concrete: the file and the change, the `sf` command and its output, what the game showed. The report is saved locally
-with the current state (logs) in `~/.sulfurframe/feedback/inbox` for SulfurFrame's developers; nothing is sent over the
-network.
+with the current state (logs) in `~/.sulfurframe/feedback/inbox`; nothing is sent over the network. Tell the user you
+left a report: they can send it to SulfurFrame's developers as a GitHub issue themselves, with the IntelliJ notification
+or `sf feedback send` in their own terminal (names and paths are replaced, and it is posted only when they press Submit
+in the browser). Do not run `sf feedback send` yourself; it only opens for a person at a terminal.
 
 Examples worth reporting:
 - a swap that says `redefined`, but the game still runs the old code

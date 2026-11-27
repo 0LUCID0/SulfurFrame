@@ -171,6 +171,7 @@ SulfurFrame이 `~/.sulfurframe/bin`에 작은 `sf` 명령을 둡니다(POSIX 셸
 | `sf test [이름]` | 실행 중인 게임에 SulfurFrame 자체 런타임 테스트(데모 모드에서만) |
 | `sf run [--world W]` | **IntelliJ 없이**: 터미널에서 게임을 띄우고, 저장한 변경을 스왑하고, 위 명령에 답함 |
 | `sf feedback <글>` | SulfurFrame이 잘못 동작했을 때: 그 순간의 상태와 함께 로컬에 저장 |
+| `sf feedback send` | 에이전트가 아니라 사용자가 실행: 저장된 보고를 이름·경로를 가린 GitHub 이슈로 브라우저에 엽니다. Submit을 눌러야 올라갑니다 (IntelliJ 알림에서도 같은 일을 할 수 있음) |
 | `sf relay` | 그 피드백을 SulfurFrame을 고치는 에이전트에게 넘김(`~/.sulfurframe/relay.conf`에서 설정) |
 
 종료 코드: 0 완료, 1 게임이 거부, 2 오류, 3 응답하는 IDE나 `sf run`이 없음. 요청은 `~/.sulfurframe/bridge`의

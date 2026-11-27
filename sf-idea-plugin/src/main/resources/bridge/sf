@@ -4,13 +4,14 @@
 # there and prints the answer. Written by the SulfurFrame plugin into ~/.sulfurframe/bin; edits are overwritten.
 home="${SULFURFRAME_HOME:-$HOME/.sulfurframe}"
 root="$home/bridge"
-if [ "$1" = "run" ] || [ "$1" = "relay" ]; then   # no IDE: the host (or the feedback relay) runs here, in the foreground
+if [ "$1" = "run" ] || [ "$1" = "relay" ] || { [ "$1" = "feedback" ] && [ "$2" = "send" ]; }; then   # no IDE: the host (or the feedback relay, or sending a report) runs here, in the foreground
   java="${SF_JAVA:-$(head -n 1 "$home/bin/host.java.txt" 2>/dev/null | tr -d '\r')}"
   jar="${SF_HOST_JAR:-$(head -n 1 "$home/bin/host.classpath.txt" 2>/dev/null | tr -d '\r')}"
   if [ -z "$jar" ]; then echo "sf run: no SulfurFrame jar known yet: open IntelliJ with SulfurFrame once, or set SF_HOST_JAR" >&2; exit 3; fi
-  case "$jar" in *\;*) sep=';' ;; *) sep=':' ;; esac
+  case "$jar" in *\;*|[A-Za-z]:[\\/]*) sep=';' ;; *) sep=':' ;; esac   # a drive letter: Windows, where ; separates
   gone=$(printf '%s\n' "$jar" | tr "$sep" '\n' | while IFS= read -r e; do [ -n "$e" ] && [ ! -e "$e" ] && printf '%s ' "$e"; done | sed 's/ $//')
   if [ -n "$gone" ]; then echo "sf run: not found (moved or uninstalled): $gone: open IntelliJ with SulfurFrame once, or set SF_HOST_JAR" >&2; exit 3; fi
+  if [ "$1" = "feedback" ]; then shift 2; set -- feedback-send "$@"; fi
   exec "${java:-java}" --enable-native-access=ALL-UNNAMED -cp "$jar" dev.sulfurframe.idea.HeadlessHost "$@"
 fi
 norm() {
@@ -41,7 +42,8 @@ if [ -z "$session" ] && [ "$1" = "feedback" ]; then   # no IDE: the report is st
     echo "## What the agent reported"; echo; echo "$*"; echo
     echo "## State"; echo; echo "no SulfurFrame IDE answered; folder $(pwd)"
   } > "$f"
-  echo "saved: $f"; exit 0
+  echo "saved: $f"
+  echo "To send it to SulfurFrame's developers as a GitHub issue, the user runs (in their own terminal): sf feedback send"; exit 0
 fi
 if [ -z "$session" ]; then
   if [ -n "$open" ]; then echo "sf: no SulfurFrame session for $(pwd); run sf from inside one of these projects:$open" >&2

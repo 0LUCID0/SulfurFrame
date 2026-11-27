@@ -55,6 +55,7 @@ public final class HeadlessHost implements GameHost {
         if (System.getProperty("sulfurframe.mute") == null) System.setProperty("sulfurframe.mute", String.valueOf("1".equals(System.getenv("SF_MUTE"))));
         var a = new ArrayList<>(List.of(args));
         if (!a.isEmpty() && a.get(0).equals("relay")) System.exit(Relay.main(a.subList(1, a.size())));
+        if (!a.isEmpty() && a.get(0).equals("feedback-send")) System.exit(IssueReport.main(a.subList(1, a.size())));
         if (a.isEmpty() || !a.get(0).equals("run")) { System.out.println(usage()); System.exit(a.isEmpty() ? 2 : 0); }
         a.remove(0);
         String want = null, world = "";

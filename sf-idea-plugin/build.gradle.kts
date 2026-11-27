@@ -159,6 +159,7 @@ val selfTests = listOf(
     "OptionsFileSelfTest" to null,
     "MetadataTemplateSelfTest" to null,
     "StartupCodeSelfTest" to null,
+    "IssueReportSelfTest" to null,
 ).map { (name, fixtures) ->
     tasks.register<JavaExec>("run${name.substringAfterLast('.')}") {
         group = "verification"

@@ -568,6 +568,43 @@ final class SulfurPanel extends JPanel implements GameHost {
     }
 
     /** Something changed that needs a restart: say so, with a button that does it (at most every 10 s). */
+    /**
+     * After `sf feedback`: a notification to the person, who can send the report as a GitHub issue. Only they can:
+     * the action opens the new-issue page in their browser, and nothing is posted until they press Submit there.
+     */
+    @Override
+    public void offerIssue(Path report) {
+        SwingUtilities.invokeLater(() -> {
+            try {
+                var n = com.intellij.notification.NotificationGroupManager.getInstance().getNotificationGroup("SulfurFrame")
+                        .createNotification("A coding agent left feedback for SulfurFrame",
+                                "Saved in " + report.getFileName() + ". You can send it to SulfurFrame's developers as a GitHub issue.",
+                                com.intellij.notification.NotificationType.INFORMATION);
+                n.addAction(com.intellij.notification.NotificationAction.createSimpleExpiring("Send as GitHub issue...", () -> sendIssue(report)));
+                n.addAction(com.intellij.notification.NotificationAction.createSimpleExpiring("Show report", () ->
+                        com.intellij.ide.actions.RevealFileAction.openFile(report)));
+                n.notify(project);
+            } catch (Throwable ignored) { }
+        });
+    }
+
+    private void sendIssue(Path report) {
+        try {
+            var issue = IssueReport.build(report);
+            int ok = com.intellij.openapi.ui.Messages.showYesNoDialog(project,
+                    "This opens a new issue on github.com/0LUCID0/SulfurFrame in your browser, filled in with the report:\n\n"
+                            + issue.title() + "\n\nYour home folder, user name, the project's name and world names are replaced. "
+                            + "Nothing is posted until you press Submit on that page, and you can edit it there first.",
+                    "Send Feedback as a GitHub Issue", "Open in Browser", "Cancel", null);
+            if (ok != com.intellij.openapi.ui.Messages.YES) return;
+            com.intellij.ide.BrowserUtil.browse(issue.url());
+            IssueReport.markSent(report);
+            log("feedback: opened " + report.getFileName() + " as a new GitHub issue in the browser (posted only when Submit is pressed there)");
+        } catch (Exception e) {
+            log("feedback: could not prepare the issue: " + e);
+        }
+    }
+
     void offerRestart(String why) {
         log("restart needed: " + why);
         if (System.currentTimeMillis() - lastOffer < 10_000) return;
