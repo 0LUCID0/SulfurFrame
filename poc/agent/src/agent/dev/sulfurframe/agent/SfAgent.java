@@ -62,13 +62,14 @@ public final class SfAgent {
         // "reload=assets+data" or "reload=lang": resources changed (the IDE copied them into the dev resource dir)
         // "world=<file>": write the open world's folder name; "quit": save and exit (IDE quick restart)
         // "register=<list file>": run changed registration code again, registering only what is new (RuntimeRegister)
-        String redefine = null, register = null, mixins = null, rejoin = null, widen = null, save = null, reload = null, world = null, command = null, done = null, look = null, stats = null, shot = null;
+        String redefine = null, register = null, mixins = null, unmixins = null, rejoin = null, widen = null, save = null, reload = null, world = null, command = null, done = null, look = null, stats = null, shot = null;
         boolean quit = false;
         StringBuilder rest = new StringBuilder();
         if (args != null) for (String kv : args.split(",")) {
             if (kv.startsWith("redefine=")) redefine = kv.substring("redefine=".length());
             else if (kv.startsWith("register=")) register = kv.substring("register=".length());
             else if (kv.startsWith("mixins=")) mixins = kv.substring("mixins=".length());
+            else if (kv.startsWith("unmixins=")) unmixins = kv.substring("unmixins=".length());
             else if (kv.startsWith("rejoin=")) rejoin = kv.substring("rejoin=".length());
             else if (kv.startsWith("widen=")) widen = kv.substring("widen=".length());
             else if (kv.startsWith("save=")) save = kv.substring("save=".length());
@@ -82,11 +83,12 @@ public final class SfAgent {
             else if (kv.startsWith("shot=")) shot = kv.substring(5);
             else if (!kv.isEmpty()) rest.append(rest.length() == 0 ? "" : ",").append(kv);
         }
-        if (redefine != null || register != null || mixins != null || rejoin != null || widen != null || save != null || reload != null || world != null || quit || command != null || look != null || stats != null || shot != null) {
+        if (redefine != null || register != null || mixins != null || unmixins != null || rejoin != null || widen != null || save != null || reload != null || world != null || quit || command != null || look != null || stats != null || shot != null) {
             if (!installed) install(rest.toString(), inst, attached);
             // with init code to run again, the redefinition happens inside that run (old listeners out first)
             if (register != null) RuntimeRegister.run(inst, register, redefine);
             else if (redefine != null) Hotswap.redefine(inst, redefine);
+            if (unmixins != null) MixinAdd.remove(inst, unmixins);   // "unmixins=<list>": mixin classes taken out (MixinAdd)
             if (mixins != null) MixinAdd.run(inst, mixins);   // "mixins=<list>": new mixin classes (MixinAdd)
             if (widen != null) AccessWiden.run(inst, widen);   // "widen=<list>": access widener entries added (AccessWiden)
             if (rejoin != null) GameSession.rejoin(inst, rejoin);

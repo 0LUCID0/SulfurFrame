@@ -224,18 +224,23 @@ final class Hotswapper {
                 + answer.stream().filter(s -> s.startsWith("ms ")).map(s -> ", " + s.substring(3) + " ms").findFirst().orElse(""));
     }
 
-    /** Mixin classes already added to the running game per mixins.json (by addMixins), so a second save adds only what is new. */
-    private final Map<Path, Set<String>> hotMixins = new HashMap<>();
+    /**
+     * The mixins ("list:Class") the running game has from each mixins.json: those it started with, plus and minus what
+     * addMixins changed since, so a second save sends only what is new.
+     */
+    private final Map<Path, Set<String>> liveMixins = new HashMap<>();
     private int hotConfigs;
 
     /** What the last addMixins answered (self-test). */
     volatile List<String> lastMixins = List.of();
 
     /**
-     * A saved mixins.json: if the only change is mixin classes added to its lists, they go into the running game (the
-     * agent's MixinAdd) and null is returned; otherwise why a restart is needed. The game's copy in the resource output
-     * (what it loaded at start) is left alone; the new mixins go into an extra config next to it, which Mixin takes
-     * after startup. Targets are read from the classes' @Mixin annotation, after compiling them.
+     * A saved mixins.json: if the only change is mixin classes added to or removed from its lists, that goes into the
+     * running game (the agent's MixinAdd) and null is returned; otherwise why a restart is needed. The game's copy in
+     * the resource output (what it loaded at start) is left alone; the new mixins go into an extra config next to it,
+     * which Mixin takes after startup. Targets are read from the classes' @Mixin annotation, after compiling them. A
+     * removed mixin leaves Mixin's configs and its loaded targets are transformed again without it; one whose
+     * interface (an accessor, an implemented interface) other code still names needs a restart.
      */
     String addMixins(Workspace.Target t, long gamePid, Path agentJar, Path json) {
         String name = json.getFileName().toString();
@@ -252,16 +257,42 @@ final class Hotswapper {
             if (loaded == null || !Files.exists(loaded)) return name + " changed (the game's copy was not found)";
             var before = com.google.gson.JsonParser.parseString(Files.readString(loaded)).getAsJsonObject();
             var after = com.google.gson.JsonParser.parseString(Files.readString(json)).getAsJsonObject();
-            var hot = hotMixins.computeIfAbsent(json.toAbsolutePath().normalize().resolveSibling(name + "@" + gamePid), k -> new HashSet<>());   // per game
+            // what the game runs from this file: what it started with, then the live changes (per game)
+            var live = liveMixins.computeIfAbsent(json.toAbsolutePath().normalize().resolveSibling(name + "@" + gamePid), k -> mixinEntries(before));
             var added = new LinkedHashMap<String, List<String>>();
-            String refused = mixinsAdded(before, after, hot, added);
+            var removed = new ArrayList<String>();
+            String refused = mixinChanges(before, after, live, added, removed);
             if (refused != null) return name + " changed (" + refused + ")";
-            if (added.isEmpty()) return null;
+            if (added.isEmpty() && removed.isEmpty()) return null;
+            String pkg = after.has("package") ? after.get("package").getAsString() : "";
+            if (!removed.isEmpty()) {
+                var classes = new LinkedHashSet<String>();
+                for (String e : removed) { String m = e.substring(e.indexOf(':') + 1); classes.add(pkg.isEmpty() ? m : pkg + "." + m); }
+                for (String c : classes) {
+                    String used = interfaceStillUsed(t, c);
+                    if (used != null) return name + " changed (mixin " + c.substring(c.lastIndexOf('.') + 1) + " removed, but " + used + "): restart to apply";
+                }
+                Path list = agentJar.getParent().resolve("unmixins-" + ProcessHandle.current().pid() + "-" + (++counter) + ".txt");
+                Files.write(list, classes, StandardCharsets.UTF_8);
+                Path result = Path.of(list + ".result");
+                Files.deleteIfExists(result);
+                loadAgent(gamePid, agentJar, "codingFps=" + Settings.codingFps() + ",unmixins=" + list);
+                for (int i = 0; i < 300 && !Files.exists(result); i++) Thread.sleep(100);
+                if (!Files.exists(result)) return name + " changed (no answer from the game)";
+                var answer = Files.readAllLines(result, StandardCharsets.UTF_8);
+                lastMixins = List.copyOf(answer);
+                Files.deleteIfExists(list); Files.deleteIfExists(result);
+                var errors = answer.stream().filter(s -> s.startsWith("error")).toList();
+                if (!errors.isEmpty()) return name + " changed (" + String.join("; ", errors) + ")";
+                removed.forEach(live::remove);
+                log.accept("mixins: " + classes.stream().map(c -> c.substring(c.lastIndexOf('.') + 1)).toList() + " removed from the running game, "
+                        + answer.stream().filter(s -> s.startsWith("applied to")).count() + " loaded target(s) transformed again");
+                if (added.isEmpty()) return null;
+            }
             // the new classes compiled (and anything else saved with them swapped)
             boolean compiled = false;
             for (int i = 0; i < 40 && !(compiled = swap(t, gamePid, agentJar)); i++) Thread.sleep(250);   // busy: a save-triggered swap
             if (!compiled) return name + " changed (its mixins did not compile)";
-            String pkg = after.has("package") ? after.get("package").getAsString() : "";
             var targets = new LinkedHashSet<String>();
             for (var e : added.values())
                 for (String m : e) {
@@ -273,6 +304,9 @@ final class Hotswapper {
                 }
             var config = after.deepCopy();
             for (String list : MIXIN_LISTS) config.remove(list);
+            // a required config refuses a mixin whose target is loaded already (MixinTargetAlreadyLoadedException), which
+            // is every target here: not required, Mixin logs "loaded too early" and goes on; the redefinition applies it
+            config.addProperty("required", false);
             for (var e : added.entrySet()) {
                 var arr = new com.google.gson.JsonArray();
                 e.getValue().forEach(arr::add);
@@ -295,7 +329,7 @@ final class Hotswapper {
             Files.deleteIfExists(list); Files.deleteIfExists(result);
             var errors = answer.stream().filter(s -> s.startsWith("error")).toList();
             if (!errors.isEmpty()) return name + " changed (" + String.join("; ", errors) + ")";
-            for (var e : added.entrySet()) for (String m : e.getValue()) hot.add(e.getKey() + ":" + m);
+            for (var e : added.entrySet()) for (String m : e.getValue()) live.add(e.getKey() + ":" + m);
             log.accept("mixins: " + added.values().stream().flatMap(List::stream).toList() + " added to the running game, "
                     + answer.stream().filter(s -> s.startsWith("applied to")).count() + " loaded target(s) transformed again");
             return null;
@@ -379,20 +413,60 @@ final class Hotswapper {
     static final List<String> MIXIN_LISTS = List.of("mixins", "client", "server");
 
     /**
-     * What a mixins.json change adds, per list ("mixins", "client", "server"), into {@code added}; null if it is only
-     * that, else why it needs a restart. {@code hot}: "list:Class" already added to this game.
+     * What a mixins.json change adds, per list ("mixins", "client", "server"), into {@code added}, and removes
+     * ("list:Class") into {@code removed}; null if it is only that, else why it needs a restart. {@code live}: the
+     * "list:Class" this game runs now.
      */
-    static String mixinsAdded(com.google.gson.JsonObject before, com.google.gson.JsonObject after, Set<String> hot, Map<String, List<String>> added) {
+    static String mixinChanges(com.google.gson.JsonObject before, com.google.gson.JsonObject after, Set<String> live,
+                               Map<String, List<String>> added, List<String> removed) {
         var keys = new HashSet<>(before.keySet());
         keys.addAll(after.keySet());
         for (String k : keys)
-            if (!MIXIN_LISTS.contains(k) && !Objects.equals(before.get(k), after.get(k))) return k + ": only added mixins apply while the game runs";
+            if (!MIXIN_LISTS.contains(k) && !Objects.equals(before.get(k), after.get(k))) return k + ": only added or removed mixins apply while the game runs";
+        var now = mixinEntries(after);
+        for (String e : live) if (!now.contains(e)) removed.add(e);
         for (String list : MIXIN_LISTS) {
-            var was = names(before, list);
-            var now = names(after, list);
-            for (String m : was) if (!now.contains(m)) return "mixin " + m + " removed: restart to apply";
-            var add = now.stream().filter(m -> !was.contains(m) && !hot.contains(list + ":" + m)).toList();
+            var add = names(after, list).stream().filter(m -> !live.contains(list + ":" + m)).toList();
             if (!add.isEmpty()) added.put(list, add);
+        }
+        return null;
+    }
+
+    /** A mixins.json's mixins as "list:Class". */
+    static Set<String> mixinEntries(com.google.gson.JsonObject o) {
+        var out = new LinkedHashSet<String>();
+        for (String list : MIXIN_LISTS) for (String m : names(o, list)) out.add(list + ":" + m);
+        return out;
+    }
+
+    /**
+     * A project class other than the mixin (and its nested classes) that names an interface the mixin puts on its
+     * targets, as "Class uses Interface"; null if none. The mixin's own class file gone, only the mixin's name is looked for.
+     */
+    private String interfaceStillUsed(Workspace.Target t, String mixin) throws IOException {
+        String own = mixin.replace('.', '/');
+        var roots = classRoots(t);
+        var interfaces = new ArrayList<String>();
+        boolean found = false;
+        for (Path root : roots) {
+            Path cls = root.resolve(own + ".class");
+            if (Files.isRegularFile(cls)) { interfaces.addAll(StartupCode.mixinInterfaces(Files.readAllBytes(cls))); found = true; break; }
+        }
+        if (!found) interfaces.add(own);
+        interfaces.removeIf(i -> i.startsWith("java/"));
+        if (interfaces.isEmpty()) return null;
+        for (Path root : roots) {
+            if (!Files.isDirectory(root)) continue;
+            try (Stream<Path> files = Files.walk(root)) {
+                for (Path f : (Iterable<Path>) files.filter(p -> p.toString().endsWith(".class"))::iterator) {
+                    String name = root.relativize(f).toString().replace('\\', '/');
+                    name = name.substring(0, name.length() - ".class".length());
+                    if (name.equals(own) || name.startsWith(own + "$")) continue;
+                    String text = new String(Files.readAllBytes(f), StandardCharsets.ISO_8859_1);   // names sit in the constant pool as-is
+                    for (String i : interfaces)
+                        if (!name.equals(i) && text.contains(i)) return name.replace('/', '.') + " uses " + i.replace('/', '.');
+                }
+            }
         }
         return null;
     }

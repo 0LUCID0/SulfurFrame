@@ -72,15 +72,34 @@ public class StartupCodeSelfTest {
         var m = compile("t.M", "package t; import org.spongepowered.asm.mixin.Mixin; @Mixin(value = String.class, targets = \"a.b.C$D\") class M {}", MIXIN);
         expect("@Mixin targets", StartupCode.mixinTargets(m.get("t/M")), List.of("java.lang.String", "a.b.C$D"));
 
-        // mixins.json: added only, removed, other keys
+        // mixins.json: added, removed, other keys
         var before = json("{\"package\":\"p\",\"client\":[\"A\",\"B\"],\"injectors\":{\"defaultRequire\":1}}");
+        var live = new LinkedHashSet<>(Hotswapper.mixinEntries(before));
+        expect("live from the start", live, Set.of("client:A", "client:B"));
         var added = new LinkedHashMap<String, List<String>>();
-        expect("mixin added to client", Hotswapper.mixinsAdded(before, json("{\"package\":\"p\",\"client\":[\"A\",\"B\",\"C\"],\"mixins\":[\"S\"],\"injectors\":{\"defaultRequire\":1}}"), Set.of(), added), null);
+        var removed = new ArrayList<String>();
+        expect("mixin added to client", Hotswapper.mixinChanges(before, json("{\"package\":\"p\",\"client\":[\"A\",\"B\",\"C\"],\"mixins\":[\"S\"],\"injectors\":{\"defaultRequire\":1}}"), live, added, removed), null);
         expect("  what was added", added, Map.of("client", List.of("C"), "mixins", List.of("S")));
+        expect("  nothing removed", removed, List.of());
         added.clear();
-        expect("already added to this game -> nothing again", Hotswapper.mixinsAdded(before, json("{\"package\":\"p\",\"client\":[\"A\",\"B\",\"C\"],\"injectors\":{\"defaultRequire\":1}}"), Set.of("client:C"), added) == null && added.isEmpty(), true);
-        expect("mixin removed -> restart", Hotswapper.mixinsAdded(before, json("{\"package\":\"p\",\"client\":[\"A\"],\"injectors\":{\"defaultRequire\":1}}"), Set.of(), new HashMap<>()), "mixin B removed: restart to apply");
-        expect("package changed -> restart", Hotswapper.mixinsAdded(before, json("{\"package\":\"q\",\"client\":[\"A\",\"B\"],\"injectors\":{\"defaultRequire\":1}}"), Set.of(), new HashMap<>()), "package: only added mixins apply while the game runs");
+        live.add("client:C");
+        expect("already added to this game -> nothing again", Hotswapper.mixinChanges(before, json("{\"package\":\"p\",\"client\":[\"A\",\"B\",\"C\"],\"injectors\":{\"defaultRequire\":1}}"), live, added, removed) == null && added.isEmpty(), true);
+        removed.clear();
+        expect("mixin removed", Hotswapper.mixinChanges(before, json("{\"package\":\"p\",\"client\":[\"A\"],\"injectors\":{\"defaultRequire\":1}}"), live, added, removed), null);
+        expect("  what was removed (one from the start, one added live)", removed, List.of("client:B", "client:C"));
+        live.removeAll(removed); removed.clear(); added.clear();
+        expect("removed, then back", Hotswapper.mixinChanges(before, json("{\"package\":\"p\",\"client\":[\"A\",\"B\"],\"injectors\":{\"defaultRequire\":1}}"), live, added, removed) == null
+                && added.equals(Map.of("client", List.of("B"))) && removed.isEmpty(), true);
+        added.clear(); live.add("client:B");   // B went back in
+        expect("moved to another list", Hotswapper.mixinChanges(before, json("{\"package\":\"p\",\"client\":[\"B\"],\"mixins\":[\"A\"],\"injectors\":{\"defaultRequire\":1}}"), live, added, removed) == null
+                && added.equals(Map.of("mixins", List.of("A"))) && removed.equals(List.of("client:A")), true);
+        expect("package changed -> restart", Hotswapper.mixinChanges(before, json("{\"package\":\"q\",\"client\":[\"A\",\"B\"],\"injectors\":{\"defaultRequire\":1}}"), live, new HashMap<>(), new ArrayList<>()), "package: only added or removed mixins apply while the game runs");
+
+        // the interfaces a mixin puts on its targets
+        var acc = compile("t.Acc", "package t; import org.spongepowered.asm.mixin.Mixin; @Mixin(String.class) public interface Acc {}", MIXIN);
+        expect("accessor mixin: itself", StartupCode.mixinInterfaces(acc.get("t/Acc")), List.of("t/Acc"));
+        var impl = compile("t.Impl", "package t; import org.spongepowered.asm.mixin.Mixin; @Mixin(String.class) abstract class Impl implements Runnable {}", MIXIN);
+        expect("mixin class: what it implements", StartupCode.mixinInterfaces(impl.get("t/Impl")), List.of("java/lang/Runnable"));
 
         // lambda names: javac numbers lambdas per enclosing method; one added in front of another renumbers it, and an
         // existing object of the old lambda$a$0 would run the new lambda's body. The old ones keep their names.

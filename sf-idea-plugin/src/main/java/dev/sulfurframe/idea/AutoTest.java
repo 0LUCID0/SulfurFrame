@@ -1213,7 +1213,7 @@ final class AutoTest {
     /**
      * A new mixin class is added to showcase.mixins.json while the game runs (Hotswapper.addMixins / MixinAdd): it
      * targets the probe, which is already loaded, and changes what tag() returns; the probe's log line must show it.
-     * Taking it out again needs a restart (it stays in this game).
+     * Taking it out of mixins.json again goes into the running game too: the probe is transformed again without it.
      */
     private static void mixinFlow(SulfurPanel p, Path probe, Path gameLog) throws Exception {
         var t = p.selectedTarget();
@@ -1244,6 +1244,15 @@ final class AutoTest {
             check("new mixin added to mixins.json -> applied to its loaded target, no restart",
                     why == null && p.hotswapper.lastMixins.contains("applied to " + probeClassOf(probe)) && waitForLog(gameLog, "-mixin", 15),
                     why + " " + p.hotswapper.lastMixins);
+            if (why == null) {
+                Files.writeString(json, original);
+                sleep(1500);
+                why = p.hotswapper.addMixins(t, p.embedder.gamePid(), agentJarOf(p), json);
+                check("mixin taken out of mixins.json again -> its target transformed without it, no restart",
+                        why == null && p.hotswapper.lastMixins.contains("removed dev.sulfurframe.showcase.client.mixin.SfNewMixin")
+                                && p.hotswapper.lastMixins.contains("applied to " + probeClassOf(probe)),
+                        why + " " + p.hotswapper.lastMixins);
+            }
         } finally {
             Files.writeString(json, original);
             Files.deleteIfExists(mixin);

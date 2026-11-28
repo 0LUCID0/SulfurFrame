@@ -650,11 +650,13 @@ Limits (a restart is offered):
 - Adding or removing a JDK or Minecraft type as superclass or interface: adding a JDK interface (`Supplier`) made JBR null
   unrelated `Supplier` fields in Minecraft and the game crashed, so such a class is not sent. JBR refuses a superclass
   going back to `Object`.
-- Removing an enum constant, removing a mixin or changing anything else in a `*mixins.json`, removing an access widener
-  entry that was there when the game started, `accesstransformer.cfg`. Why these stay restarts: a removed enum constant
-  is still referenced by objects, saved data and `ordinal()`-indexed tables in the running game, and other constants
-  would shift; taking a mixin out means transforming its targets again from their original bytes, which loses the values
-  of the fields Fabric's Mixin renamed (the guard above) and leaves objects whose state the mixin set.
+- Removing an enum constant, changing anything in a `*mixins.json` besides adding or removing mixins (its package, its
+  injector settings), removing a mixin whose interface other code still names (an accessor or invoker, an interface the
+  mixin implements: code that casts to it would fail), removing a mixin from a target with fields Fabric's Mixin renamed
+  (the guard above), removing an access widener entry that was there when the game started, `accesstransformer.cfg`.
+  A removed enum constant is still referenced by objects, saved data and `ordinal()`-indexed tables in the running game,
+  and other constants would shift. Any other removed mixin goes out live: its targets are transformed again from their
+  original bytes with the mixins that remain; state it already set in objects stays.
 - Whatever `onInitialize` does besides registering (starting a thread, writing a file) happens once more. Writing that
   code so it runs once is the safe way.
 - Removing a registered entry: it stays in the registry until a restart. Minecraft's registries have no removal: raw ids

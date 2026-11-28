@@ -150,6 +150,16 @@ final class StartupCode {
         return out;
     }
 
+    /**
+     * Internal names of the interfaces a mixin puts on its targets: the mixin itself if it is an interface (an accessor
+     * or invoker), else the interfaces it implements. Code that casts to one breaks once the mixin is taken out.
+     */
+    static List<String> mixinInterfaces(byte[] cls) {
+        var r = new ClassReader(cls);
+        if ((r.getAccess() & Opcodes.ACC_INTERFACE) != 0) return List.of(r.getClassName());
+        return List.of(r.getInterfaces());
+    }
+
     /** Binary names of the classes a mixin class targets (@Mixin value = classes, targets = names). */
     static List<String> mixinTargets(byte[] cls) {
         var out = new ArrayList<String>();

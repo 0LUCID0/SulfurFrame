@@ -74,14 +74,15 @@ Notes on reading the result:
 A restart takes about 20-40 s, into the same world, and skips Gradle when the build files are unchanged. It is needed for:
 - removing a registered entry
 - removing an enum constant
-- removing a mixin, or changing a `*.mixins.json` beyond adding to it
+- removing a mixin whose interface other code uses (an accessor or invoker), or changing a `*.mixins.json` beyond
+  adding or removing mixins
 - removing an access widener entry that was there at startup
 - adding a JDK or Minecraft type to a class's hierarchy, or removing one
 - `fabric.mod.json`
 - build files
 
 Everything else applies live: method bodies, new fields and methods, new classes, new blocks, items and entities, a
-changed `onInitialize`, new enum constants, new mixins, added access widener entries, assets, data and translations.
+changed `onInitialize`, new enum constants, new and removed mixins, added access widener entries, assets, data and translations.
 Code in a method that is already running (a loop) keeps the old version until it returns.
 
 ## When SulfurFrame gets it wrong
